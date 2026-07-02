@@ -28,6 +28,8 @@ public class NetworkHandler {
         // Server-bound
         r.playToServer(RetroInputPacket.TYPE, RetroInputPacket.STREAM_CODEC,
                 NetworkHandler::handleInput);
+        r.playToServer(RetroAnalogPacket.TYPE, RetroAnalogPacket.STREAM_CODEC,
+                NetworkHandler::handleAnalog);
         r.playToServer(RetroViewPacket.TYPE, RetroViewPacket.STREAM_CODEC,
                 NetworkHandler::handleView);
         r.playToServer(RetroCoreSelectPacket.TYPE, RetroCoreSelectPacket.STREAM_CODEC,
@@ -56,6 +58,12 @@ public class NetworkHandler {
     private static void handleInput(RetroInputPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             ServerConsoles.handleInput(pkt.pos(), pkt.buttonId(), pkt.pressed());
+        });
+    }
+
+    private static void handleAnalog(RetroAnalogPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            ServerConsoles.handleAnalog(pkt.pos(), pkt.stick(), pkt.axis(), pkt.value());
         });
     }
 
