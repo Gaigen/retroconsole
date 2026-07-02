@@ -674,14 +674,6 @@ public class LibretroCore implements AutoCloseable {
             if (key.equals("reicast_oit_layers")) {
                 defaultValue = "32";
             }
-            // Force NTSC region for consistent timing
-            if (key.equals("reicast_region")) {
-                defaultValue = "USA";
-            }
-            // Language
-            if (key.equals("reicast_language")) {
-                defaultValue = "English";
-            }
 
             coreOptions.put(key, defaultValue);
             LOGGER.info("  core var: {} = {} (default: {})", key, value, defaultValue);
