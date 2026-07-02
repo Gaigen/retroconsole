@@ -106,6 +106,9 @@ public class LibretroCore implements AutoCloseable {
             new java.util.concurrent.atomic.AtomicIntegerArray(16); // 16 buttons
     private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
             new java.util.concurrent.atomic.AtomicIntegerArray(4); // LX, LY, RX, RY
+    // Analog trigger state (L2, R2) — separate from joypad digital buttons
+    private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(2); // L2, R2 (0 or 32767)
 
     // System paths
     private String systemDir;
@@ -281,7 +284,7 @@ public class LibretroCore implements AutoCloseable {
                     return (short) joypadState.get(id);
                 }
             }
-            // Analog sticks: device=5 (ANALOG)
+            // Analog sticks & triggers: device=5 (ANALOG)
             if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
                 // Left stick
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
@@ -292,6 +295,14 @@ public class LibretroCore implements AutoCloseable {
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
                     if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(2);
                     if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(3);
+                }
+                // Analog triggers (L/R or L2/R2) — index=2
+                if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_BUTTON) {
+                    // Flycast may use L(10)/R(11) or L2(12)/R2(13) for Dreamcast triggers
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L ||
+                        id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) return (short) triggerState.get(0);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R ||
+                        id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) return (short) triggerState.get(1);
                 }
             }
             return 0;
@@ -836,6 +847,23 @@ public class LibretroCore implements AutoCloseable {
     public void setButton(int buttonId, boolean pressed) {
         if (buttonId >= 0 && buttonId < 16) {
             joypadState.set(buttonId, pressed ? 1 : 0);
+        }
+        // Dreamcast triggers: L/R → also set L2/R2 digital + analog trigger
+        // Flycast may query either L(10) or L2(12) for the same physical trigger
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L) {
+            joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2, pressed ? 1 : 0);
+            triggerState.set(0, pressed ? 32767 : 0);
+        }
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R) {
+            joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2, pressed ? 1 : 0);
+            triggerState.set(1, pressed ? 32767 : 0);
+        }
+        // Also handle direct L2/R2 presses (future gamepads)
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) {
+            triggerState.set(0, pressed ? 32767 : 0);
+        }
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) {
+            triggerState.set(1, pressed ? 32767 : 0);
         }
     }
 
