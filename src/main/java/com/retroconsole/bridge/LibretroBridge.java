@@ -48,6 +48,7 @@ public interface LibretroBridge extends Library {
     // --- Analog sticks ---
     int RETRO_DEVICE_INDEX_ANALOG_LEFT   = 0;
     int RETRO_DEVICE_INDEX_ANALOG_RIGHT  = 1;
+    int RETRO_DEVICE_INDEX_ANALOG_BUTTON = 2; // L2/R2 triggers as analog
     int RETRO_DEVICE_ID_ANALOG_X         = 0;
     int RETRO_DEVICE_ID_ANALOG_Y         = 1;
 
