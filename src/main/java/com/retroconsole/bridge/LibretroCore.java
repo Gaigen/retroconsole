@@ -8,6 +8,60 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.nio.file.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.Arrays;
+import java.util.List;
+
+/** JNA interface to .libheadless_gl.so — provides headless EGL/Mesa GL context. */
+interface HeadlessGL extends Library {
+    HeadlessGL INSTANCE = Native.load(
+            Paths.get("config/retroconsole/cores/.libheadless_gl.so").toAbsolutePath().toString(),
+            HeadlessGL.class);
+    int hlg_init(int major, int minor);
+    void hlg_destroy();
+    Pointer hlg_get_proc_address(String sym);
+    void hlg_read_pixels(int[] viewport, Pointer pixels);
+    void hlg_dump_hw_render(Pointer data, int size);
+    Pointer hlg_get_framebuffer_ptr();
+    Pointer hlg_get_proc_address_ptr();
+    int hlg_make_current();
+    void hlg_release();
+    void hlg_debug_fbo();
+    void hlg_track_fbo(int fbo);
+    int hlg_resize(int w, int h);
+}
+
+/** Callback: unsigned long hlg_get_framebuffer(void) */
+interface GetFramebufferCb extends Callback { long invoke(); }
+
+/** Callback: void* hlg_get_proc_address(const char* sym) */
+interface GetProcAddressCb extends Callback { Pointer invoke(String sym); }
+
+/** JNA Structure matching struct retro_hw_render_callback (libretro, x86_64). */
+class RetroHwRenderCallback extends Structure {
+    public int context_type;              // offset  0, enum
+    // 4 bytes padding
+    public Pointer context_reset;         // offset  8, function pointer
+    public GetFramebufferCb get_current_framebuffer; // offset 16, callback
+    public GetProcAddressCb get_proc_address;        // offset 24, callback
+    public byte depth;                    // offset 32
+    public byte stencil;                  // offset 33
+    public byte bottom_left_origin;       // offset 34
+    // 1 byte padding
+    public int version_major;             // offset 36, unsigned
+    public int version_minor;             // offset 40, unsigned
+    public byte cache_context;            // offset 44
+    // 3 bytes padding
+    public Pointer context_destroy;       // offset 48, function pointer
+
+    @Override
+    protected List<String> getFieldOrder() {
+        return Arrays.asList("context_type", "context_reset",
+                "get_current_framebuffer", "get_proc_address",
+                "depth", "stencil", "bottom_left_origin",
+                "version_major", "version_minor", "cache_context",
+                "context_destroy");
+    }
+}
 
 /**
  * High-level wrapper around a libretro core.
@@ -34,9 +88,24 @@ public class LibretroCore implements AutoCloseable {
     
     private int pixelFormat = LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888;
 
-    // Input state — written by setInputState(), read by input callback
-    private final int[] joypadState = new int[16]; // 16 buttons
-    private final short[] analogState = new short[4]; // LX, LY, RX, RY
+    // HW render state for Flycast
+    private boolean hwRenderActive = false;
+    // Block GET_VARIABLE after init — Flycast passes junk pointers during retro_run
+    private volatile boolean initComplete = false;
+    // Keep callbacks alive so JNA trampolines aren't GC'd
+    private GetFramebufferCb hwGetFramebuffer;
+    private GetProcAddressCb hwGetProcAddress;
+    private static final Pointer RETRO_HW_FRAME_BUFFER_VALID = Pointer.createConstant(-1);
+
+    // Audio-based frame pacing — Flycast uses audio consumption rate for timing
+    private final AudioPacing audioPacing = new AudioPacing(44100);
+
+    // Input state — written by server thread, read by emulator thread
+    // AtomicIntegerArray for lock-free inter-thread visibility
+    private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(16); // 16 buttons
+    private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(4); // LX, LY, RX, RY
 
     // System paths
     private String systemDir;
@@ -73,6 +142,15 @@ public class LibretroCore implements AutoCloseable {
         // dereference entirely.
         lc.disableFlycastLogCall();
 
+        // Initialize headless GL context (EGL/Mesa) for Flycast HW rendering.
+        // Must happen AFTER disableFlycastLogCall (needs .so loaded) and BEFORE retro_init.
+        try {
+            int glOk = HeadlessGL.INSTANCE.hlg_init(3, 1);
+            LOGGER.info("Headless GL context: {}", glOk != 0 ? "OK" : "FAILED");
+        } catch (Throwable t) {
+            LOGGER.warn("Headless GL init failed (Flycast DC games won't work): {}", t.getMessage());
+        }
+
         lc.core.retro_init();
         LOGGER.info("Core initialized.");
 
@@ -91,7 +169,10 @@ public class LibretroCore implements AutoCloseable {
 
         // Video callback — receives frames from the core
         videoCallback = (data, width, height, pitch) -> {
-            if (width <= 0 || height <= 0) return;
+            if (width <= 0 || height <= 0) {
+                newFrame = true; // HW render: frame is in GL framebuffer
+                return;
+            }
 
             synchronized (frameLock) {
                 if (frameBuffer == null || frameWidth != width || frameHeight != height) {
@@ -101,6 +182,37 @@ public class LibretroCore implements AutoCloseable {
                 }
 
                 int[] fb = frameBuffer;
+                // HW rendering: data is RETRO_HW_FRAME_BUFFER_VALID or null.
+                // Read pixels from GL framebuffer via headless_gl readback.
+                if (hwRenderActive && (data == null || Pointer.nativeValue(data) == -1 || Pointer.nativeValue(data) == 0)) {
+                    try {
+                        // Resize PBuffer to match game resolution
+                        HeadlessGL.INSTANCE.hlg_resize(width, height);
+                        HeadlessGL.INSTANCE.hlg_debug_fbo();
+                        int[] vp = new int[4];
+                        int numPixels = width * height;
+                        Memory nativePixels = new Memory((long) numPixels * 4);
+                        HeadlessGL.INSTANCE.hlg_read_pixels(vp, nativePixels);
+                        int readW = vp[2] > 0 ? vp[2] : width;
+                        int readH = vp[3] > 0 ? vp[3] : height;
+                        for (int y = 0; y < readH && y < height; y++) {
+                            int srcY = readH - 1 - y;
+                            for (int x = 0; x < readW && x < width; x++) {
+                                long off = ((long) srcY * readW + x) * 4;
+                                int r = nativePixels.getByte(off)     & 0xFF;
+                                int g = nativePixels.getByte(off + 1) & 0xFF;
+                                int b = nativePixels.getByte(off + 2) & 0xFF;
+                                fb[y * width + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                            }
+                        }
+                    } catch (Throwable t) {
+                        // GL readback failed — fill with dark gray so we know rendering attempted
+                        java.util.Arrays.fill(fb, 0xFF202020);
+                    }
+                    newFrame = true;
+                    return;
+                }
+
                 switch (pixelFormat) {
                     case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888 -> {
                         int stride = (int) (pitch / 4);
@@ -144,11 +256,15 @@ public class LibretroCore implements AutoCloseable {
         };
         core.retro_set_video_refresh(videoCallback);
 
-        // Audio callbacks — stubs for now (no audio output in Minecraft)
+        // Audio callbacks — use audio production rate for frame pacing.
+        // Flycast relies on audio consumption as its timing signal.
         audioCallback = (left, right) -> { /* discard */ };
         core.retro_set_audio_sample(audioCallback);
 
-        audioBatchCallback = (data, frames) -> frames; /* discard */
+        audioBatchCallback = (data, frames) -> {
+            audioPacing.consumeSamples((int) frames);
+            return frames;
+        };
         core.retro_set_audio_sample_batch(audioBatchCallback);
 
         // Input poll callback
@@ -159,20 +275,23 @@ public class LibretroCore implements AutoCloseable {
         inputStateCallback = (port, device, index, id) -> {
             if (port != 0) return 0;
 
-            if (device == LibretroBridge.RETRO_DEVICE_JOYPAD ||
-                device == LibretroBridge.RETRO_DEVICE_ANALOG) {
+            // Joypad buttons: device=1 (JOYPAD), index=0, id=0..15
+            if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (index == 0 && id >= 0 && id < 16) {
-                    return (short) joypadState[id];
+                    return (short) joypadState.get(id);
                 }
-                // Analog
-                if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
-                    if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
-                        if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return analogState[0];
-                        if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return analogState[1];
-                    } else if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
-                        if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return analogState[2];
-                        if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return analogState[3];
-                    }
+            }
+            // Analog sticks: device=5 (ANALOG)
+            if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
+                // Left stick
+                if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(0);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(1);
+                }
+                // Right stick
+                if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(2);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(3);
                 }
             }
             return 0;
@@ -318,6 +437,69 @@ public class LibretroCore implements AutoCloseable {
             case 13 -> { // RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS
                 return true;
             }
+            case 14 -> { // RETRO_ENVIRONMENT_SET_HW_RENDER
+                if (data == null) return false;
+                try {
+                    int ctxType = data.getInt(0);
+                    String ctxName = switch (ctxType) {
+                        case 0 -> "NONE";
+                        case 1 -> "OPENGL";
+                        case 2 -> "OPENGLES2";
+                        case 3 -> "OPENGL_CORE";
+                        case 4 -> "OPENGLES3";
+                        case 5 -> "OPENGLES_VERSION";
+                        case 6 -> "VULKAN";
+                        default -> "UNKNOWN(" + ctxType + ")";
+                    };
+                    LOGGER.info("Flycast requests HW render: context_type={} ({})", ctxType, ctxName);
+
+                    // Only accept OpenGL/OpenGL Core contexts (1, 3, 4).
+                    // Reject Vulkan (6) — we only have Mesa software OpenGL.
+                    if (ctxType != 1 && ctxType != 3 && ctxType != 4) {
+                        LOGGER.info("Rejecting {} — only OpenGL supported", ctxName);
+                        return false;
+                    }
+
+                    // Dump the raw struct to find actual field offsets
+                    HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
+
+                    // Get raw C function pointers from .libheadless_gl.so
+                    // These are actual machine code addresses Flycast can call directly.
+                    Pointer fbPtr = HeadlessGL.INSTANCE.hlg_get_framebuffer_ptr();
+                    Pointer procPtr = HeadlessGL.INSTANCE.hlg_get_proc_address_ptr();
+                    LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
+                    data.setPointer(16, fbPtr);   // get_current_framebuffer
+                    data.setPointer(24, procPtr);  // get_proc_address
+                    data.setByte(44, (byte) 1);    // cache_context = true
+
+                    // Verify writes persisted
+                    LOGGER.info("  VERIFIED: fb@16={}, proc@24={}, cache@44={}",
+                            data.getPointer(16), data.getPointer(24), data.getByte(44));
+
+                    // CRITICAL: Flycast's GL function table (__rglgen_*) is populated by
+                    // context_reset callback, NOT by get_proc_address directly.
+                    // The frontend MUST call context_reset() after providing the hw_render
+                    // struct so Flycast can load GL functions via get_proc_address.
+                    Pointer contextResetPtr = data.getPointer(8);
+                    if (contextResetPtr != null && Pointer.nativeValue(contextResetPtr) != 0) {
+                        LOGGER.info("  Calling context_reset @ {} to init GL function table", contextResetPtr);
+                        // context_reset is: void (*context_reset)(void)
+                        // Call it as a C function pointer via JNA
+                        var contextReset = com.sun.jna.Function.getFunction(contextResetPtr);
+                        contextReset.invokeVoid(new Object[0]);
+                        LOGGER.info("  context_reset completed");
+                    } else {
+                        LOGGER.warn("  context_reset is NULL!");
+                    }
+
+                    hwRenderActive = true;
+                    LOGGER.info("HW render context provided for {} (headless EGL/Mesa software)", ctxName);
+                    return true;
+                } catch (Throwable t) {
+                    LOGGER.error("Failed to handle SET_HW_RENDER", t);
+                    return false;
+                }
+            }
             case 15 -> { // RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS
                 // Nestopia dereferences data[0] as a device-name string
                 // ("nes", "famicom", ...) and calls strcmp() on it. If we
@@ -333,11 +515,7 @@ public class LibretroCore implements AutoCloseable {
                 return true;
             }
             case 17 -> { // RETRO_ENVIRONMENT_GET_VARIABLE
-                // Disabled: writing back into data->value sometimes hits
-                // read-only memory (Nestopia passes a pointer into its own
-                // .rodata section), causing SIGSEGV inside libc strlen/strcmp.
-                // Returning false makes the core use the variable's default
-                // value, which is acceptable for our purposes.
+                if (!initComplete && data != null && handleGetVariable(data)) return true;
                 return false;
             }
             case 23 -> { // Unknown — Flycast-specific (NOT in standard libretro.h)
@@ -417,6 +595,8 @@ public class LibretroCore implements AutoCloseable {
 
     /** Stores core-declared variable keys so we can respond to GET_VARIABLE. */
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
+    /** Keep allocated Memory alive so GC doesn't free strings before core reads them. */
+    private final java.util.List<Memory> allocatedVarMemory = new java.util.ArrayList<>();
 
     private void handleSetVariables(Pointer data) {
         // Each retro_variable is { const char *key; const char *value; }
@@ -455,29 +635,87 @@ public class LibretroCore implements AutoCloseable {
                 }
             }
 
+            // Flycast speed/accuracy fixes
+            if (key.equals("reicast_sh4clock")) {
+                defaultValue = "200"; // real Dreamcast speed, not 500 MHz OC
+            }
+            if (key.equals("reicast_auto_skip_frame")) {
+                defaultValue = "disabled";
+            }
+            if (key.equals("reicast_frame_skipping")) {
+                defaultValue = "disabled";
+            }
+            if (key.equals("reicast_gdrom_fast_loading")) {
+                defaultValue = "disabled"; // accurate loading times
+            }
+            // Internal resolution — 12800x9600 default kills software renderer
+            if (key.equals("reicast_internal_resolution")) {
+                defaultValue = "640x480"; // native DC resolution
+            }
+            // 32MB RAM mod changes game behavior
+            if (key.equals("reicast_dc_32mb_mod")) {
+                defaultValue = "disabled"; // stock 16MB
+            }
+            // Texture upscaling is expensive on software renderer
+            if (key.equals("reicast_texupscale")) {
+                defaultValue = "1"; // no upscaling
+            }
+            // Widescreen cheats/hacks modify game code, can break timing
+            if (key.equals("reicast_widescreen_cheats")) {
+                defaultValue = "disabled";
+            }
+            if (key.equals("reicast_widescreen_hack")) {
+                defaultValue = "disabled";
+            }
+            // OIT (order-independent transparency) is expensive
+            if (key.equals("reicast_oit_abuffer_size")) {
+                defaultValue = "512MB";
+            }
+            if (key.equals("reicast_oit_layers")) {
+                defaultValue = "32";
+            }
+            // Force NTSC region for consistent timing
+            if (key.equals("reicast_region")) {
+                defaultValue = "USA";
+            }
+            // Language
+            if (key.equals("reicast_language")) {
+                defaultValue = "English";
+            }
+
             coreOptions.put(key, defaultValue);
             LOGGER.info("  core var: {} = {} (default: {})", key, value, defaultValue);
         }
     }
 
     private boolean handleGetVariable(Pointer data) {
-        // retro_variable struct: { const char *key; const char *value; }
-        Pointer keyPtr = data.getPointer(0);
-        if (keyPtr == null) return false;
-        String key = keyPtr.getString(0);
+        // Wrap ENTIRE function — Flycast passes junk pointers during retro_run
+        try {
+            // retro_variable struct: { const char *key; const char *value; }
+            if (data == null) return false;
+            long dataAddr = Pointer.nativeValue(data);
+            if (dataAddr == 0) return false;
 
-        String val = coreOptions.get(key);
-        if (val != null) {
-            // Allocate memory for the value string and write it
-            Memory valMem = new Memory(val.length() + 1);
-            valMem.setString(0, val);
-            data.setPointer(Native.POINTER_SIZE, valMem);
-            LOGGER.debug("GET_VARIABLE {} = {}", key, val);
-            return true;
+            Pointer keyPtr = data.getPointer(0);
+            if (keyPtr == null) return false;
+            long keyAddr = Pointer.nativeValue(keyPtr);
+            if (keyAddr == 0 || keyAddr < 0x10000) return false;
+
+            String key = keyPtr.getString(0);
+            if (key == null || key.isEmpty()) return false;
+
+            String val = coreOptions.get(key);
+            if (val != null) {
+                Memory valMem = new Memory(val.length() + 1);
+                valMem.setString(0, val);
+                allocatedVarMemory.add(valMem);
+                data.setPointer(Native.POINTER_SIZE, valMem);
+                return true;
+            }
+            return false;
+        } catch (Throwable t) {
+            return false; // ANY crash → use default
         }
-
-        LOGGER.debug("GET_VARIABLE {} = (not found)", key);
-        return false;
     }
 
     /**
@@ -531,16 +769,33 @@ public class LibretroCore implements AutoCloseable {
         if (ok) {
             LOGGER.info("Game loaded: {}", romPath.getFileName());
 
+            // Register controller — Flycast requires this to read input
+            core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+            LOGGER.info("Controller registered: port 0 = JOYPAD");
+
             // Query AV info to know initial resolution
             var avInfo = new LibretroBridge.RetroSystemAVInfo();
             core.retro_get_system_av_info(avInfo);
             LOGGER.info("Resolution: {}x{}, FPS: {}, Sample rate: {}",
                     avInfo.geometry.base_width, avInfo.geometry.base_height,
                     avInfo.timing_fps, avInfo.timing_sample_rate);
+
+            // Release EGL context from init thread so the emulator thread
+            // can make it current via hlg_make_current().
+            // MUST happen after context_reset + retro_load_game + av_info.
+            if (hwRenderActive) {
+                try {
+                    HeadlessGL.INSTANCE.hlg_release();
+                    LOGGER.info("EGL context released from init thread");
+                } catch (Throwable t) {
+                    LOGGER.warn("Failed to release EGL context: {}", t.getMessage());
+                }
+            }
         } else {
             LOGGER.error("Core rejected game: {}", romPath.getFileName());
         }
 
+        initComplete = true; // block GET_VARIABLE from retro_run
         return ok;
     }
 
@@ -549,6 +804,10 @@ public class LibretroCore implements AutoCloseable {
      */
     public void runFrame() {
         if (core != null) {
+            // Ensure EGL context is current on this thread (emulator thread != server thread)
+            if (hwRenderActive) {
+                try { HeadlessGL.INSTANCE.hlg_make_current(); } catch (Throwable ignored) {}
+            }
             core.retro_run();
         }
     }
@@ -584,7 +843,7 @@ public class LibretroCore implements AutoCloseable {
      */
     public void setButton(int buttonId, boolean pressed) {
         if (buttonId >= 0 && buttonId < 16) {
-            joypadState[buttonId] = pressed ? 1 : 0;
+            joypadState.set(buttonId, pressed ? 1 : 0);
         }
     }
 
@@ -598,7 +857,7 @@ public class LibretroCore implements AutoCloseable {
     public void setAnalog(int stick, int axis, short value) {
         int idx = stick * 2 + axis;
         if (idx >= 0 && idx < 4) {
-            analogState[idx] = value;
+            analogState.set(idx, value);
         }
     }
 
@@ -659,5 +918,8 @@ public class LibretroCore implements AutoCloseable {
             }
             core = null;
         }
+        hwRenderActive = false;
+        hwGetFramebuffer = null;
+        hwGetProcAddress = null;
     }
 }

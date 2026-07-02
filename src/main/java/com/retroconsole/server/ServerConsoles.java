@@ -102,6 +102,11 @@ public class ServerConsoles {
         if (e != null) e.runtime().setButton(buttonId, pressed);
     }
 
+    public static void handleAnalog(BlockPos pos, int stick, int axis, short value) {
+        Entry e = ENTRIES.get(pos.immutable());
+        if (e != null) e.runtime().setAnalog(stick, axis, value);
+    }
+
     public static void addViewer(BlockPos pos, UUID playerId) {
         VIEWERS.computeIfAbsent(pos.immutable(), k -> new HashSet<>()).add(playerId);
     }

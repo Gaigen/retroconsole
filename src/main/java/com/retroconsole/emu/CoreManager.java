@@ -36,6 +36,46 @@ public class CoreManager {
         } catch (IOException e) {
             LOGGER.error("Failed to create directories", e);
         }
+
+        // Extract bundled native libraries from mod jar
+        extractBundledNatives(coresDir);
+    }
+
+    /**
+     * Extract bundled .libheadless_gl.so from mod resources to cores dir.
+     * Only extracts if the file doesn't exist or is outdated.
+     */
+    private static void extractBundledNatives(Path coresDir) {
+        String[] bundled = { "libheadless_gl.so" };
+        for (String name : bundled) {
+            String resourceName = "/natives/" + name;
+            // Our file is stored as .libheadless_gl.so (dot-prefixed, hidden)
+            String targetName = "." + name;
+            Path target = coresDir.resolve(targetName);
+
+            try (var in = CoreManager.class.getResourceAsStream(resourceName)) {
+                if (in == null) {
+                    LOGGER.debug("No bundled native: {}", resourceName);
+                    continue;
+                }
+
+                // Check if existing file matches by size
+                byte[] bytes = in.readAllBytes();
+                if (Files.exists(target)) {
+                    long existingSize = Files.size(target);
+                    if (existingSize == bytes.length) {
+                        LOGGER.debug("Bundled native {} is up to date ({} bytes)", targetName, bytes.length);
+                        continue;
+                    }
+                }
+
+                Files.write(target, bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+                target.toFile().setExecutable(true);
+                LOGGER.info("Extracted bundled native: {} ({} bytes)", targetName, bytes.length);
+            } catch (IOException e) {
+                LOGGER.warn("Failed to extract bundled native {}: {}", name, e.getMessage());
+            }
+        }
     }
 
     /**
