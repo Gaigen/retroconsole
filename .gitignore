@@ -1,0 +1,27 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# Minecraft / NeoForge
+runs/
+*.log
+hs_err_pid*.log
+crash-reports/
+core.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Caches
+logs/
+*.tmp
+*.bak
