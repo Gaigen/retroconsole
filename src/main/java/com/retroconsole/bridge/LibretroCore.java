@@ -91,8 +91,6 @@ public class LibretroCore implements AutoCloseable {
 
     // HW render state for Flycast
     private boolean hwRenderActive = false;
-    // Block GET_VARIABLE after init — Flycast passes junk pointers during retro_run
-    private volatile boolean initComplete = false;
     // Keep callbacks alive so JNA trampolines aren't GC'd
     private GetFramebufferCb hwGetFramebuffer;
     private GetProcAddressCb hwGetProcAddress;
@@ -113,9 +111,11 @@ public class LibretroCore implements AutoCloseable {
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2); // L2, R2 (0 or 32767)
 
-    // System paths
+    // System paths (persistent native memory for env callbacks)
     private String systemDir;
     private String saveDir;
+    private Memory persistentSystemDir;
+    private Memory persistentSaveDir;
 
     // Loaded game path (for save file naming)
     private String loadedGamePath;
@@ -126,12 +126,19 @@ public class LibretroCore implements AutoCloseable {
      * @param corePath Path to .dll or .so file
      */
     public static LibretroCore load(Path corePath) {
+        return load(corePath, null, null);
+    }
+
+    public static LibretroCore load(Path corePath, String systemDir, String saveDir) {
         LibretroCore lc = new LibretroCore();
         LOGGER.info("Loading libretro core: {}", corePath);
 
         // JNA needs to find the library. We use its absolute path.
         String absPath = corePath.toAbsolutePath().toString();
         lc.corePath = corePath;
+        lc.systemDir = systemDir;
+        lc.saveDir = saveDir;
+        lc.updatePersistentDirMemory();
 
         lc.core = Native.load(absPath, LibretroBridge.class);
         LOGGER.info("Core loaded. API version: {}", lc.core.retro_api_version());
@@ -149,13 +156,18 @@ public class LibretroCore implements AutoCloseable {
         // dereference entirely.
         lc.disableFlycastLogCall();
 
-        // Initialize headless GL context (EGL/Mesa) for Flycast HW rendering.
-        // Must happen AFTER disableFlycastLogCall (needs .so loaded) and BEFORE retro_init.
-        try {
-            int glOk = HeadlessGL.INSTANCE.hlg_init(3, 1);
-            LOGGER.info("Headless GL context: {}", glOk != 0 ? "OK" : "FAILED");
-        } catch (Throwable t) {
-            LOGGER.warn("Headless GL init failed (Flycast DC games won't work): {}", t.getMessage());
+        // Initialize headless GL (Flycast HW only — PPSSPP uses software on headless server).
+        if (lc.isFlycastCore()) {
+            try {
+                int glOk = HeadlessGL.INSTANCE.hlg_init(3, 1);
+                LOGGER.info("Headless GL context: {}", glOk != 0 ? "OK" : "FAILED");
+            } catch (Throwable t) {
+                LOGGER.warn("Headless GL init failed (Flycast DC games won't work): {}", t.getMessage());
+            }
+        }
+
+        if (lc.isPpssppCore()) {
+            lc.seedPpssppDefaults();
         }
 
         lc.core.retro_init();
@@ -282,8 +294,15 @@ public class LibretroCore implements AutoCloseable {
         inputStateCallback = (port, device, index, id) -> {
             if (port != 0) return 0;
 
-            // Joypad buttons: device=1 (JOYPAD), index=0, id=0..15
+            // Joypad buttons: device=1 (JOYPAD), index=0, id=0..15 or MASK=256
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
+                if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
+                    int mask = 0;
+                    for (int i = 0; i < 16; i++) {
+                        if (joypadState.get(i) != 0) mask |= (1 << i);
+                    }
+                    return (short) mask;
+                }
                 if (index == 0 && id >= 0 && id < 16) {
                     return (short) joypadState.get(id);
                 }
@@ -411,23 +430,83 @@ public class LibretroCore implements AutoCloseable {
         return sb.toString().trim();
     }
 
+    private boolean isFlycastCore() {
+        return corePath != null
+                && corePath.getFileName().toString().toLowerCase().contains("flycast");
+    }
+
+    private boolean isPpssppCore() {
+        return corePath != null
+                && corePath.getFileName().toString().toLowerCase().contains("ppsspp");
+    }
+
+    private boolean supportsHwRender() {
+        return isFlycastCore();
+    }
+
+    /** Headless server: force PPSSPP software renderer (HW EGL is unstable on WSL). */
+    private void seedPpssppDefaults() {
+        registerCoreOption("ppsspp_software_rendering", "enabled");
+        registerCoreOption("ppsspp_backend", "opengl");
+        registerCoreOption("ppsspp_internal_resolution", "480x272");
+        registerCoreOption("ppsspp_cpu_core", "JIT");
+        registerCoreOption("ppsspp_fast_memory", "enabled");
+        registerCoreOption("ppsspp_frameskip", "1");
+        registerCoreOption("ppsspp_auto_frameskip", "enabled");
+        registerCoreOption("ppsspp_mulitsample_level", "Disabled");
+        registerCoreOption("ppsspp_texture_scaling_level", "disabled");
+        registerCoreOption("ppsspp_texture_shader", "disabled");
+        registerCoreOption("ppsspp_skip_buffer_effects", "enabled");
+        registerCoreOption("ppsspp_skip_gpu_readbacks", "enabled");
+        registerCoreOption("ppsspp_lazy_texture_caching", "enabled");
+        registerCoreOption("ppsspp_lower_resolution_for_effects", "Balanced");
+        registerCoreOption("ppsspp_gpu_hardware_transform", "enabled");
+        LOGGER.info("PPSSPP defaults: software rendering enabled (headless server)");
+    }
+
+    /** Set directories that cores may query via environment callback. */
+    public void setDirectories(String systemDir, String saveDir) {
+        this.systemDir = systemDir;
+        this.saveDir = saveDir;
+        updatePersistentDirMemory();
+    }
+
+    private void updatePersistentDirMemory() {
+        if (systemDir != null) {
+            persistentSystemDir = new Memory(systemDir.length() + 1);
+            persistentSystemDir.setString(0, systemDir);
+        }
+        if (saveDir != null) {
+            persistentSaveDir = new Memory(saveDir.length() + 1);
+            persistentSaveDir.setString(0, saveDir);
+        }
+    }
+
     private boolean handleEnvironment(int cmd, Pointer data) {
-        switch (cmd) {
-            case 1 -> { // RETRO_ENVIRONMENT_GET_CAN_DUPE
+        int base = LibretroEnvironment.normalize(cmd);
+        switch (base) {
+            case LibretroEnvironment.GET_CAN_DUPE -> {
                 if (data != null) data.setByte(0, (byte) 1);
                 return true;
             }
-            case 9 -> { // RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY
-                if (systemDir != null) {
-                    data.setPointer(0, new Memory(systemDir.length() + 1));
-                    data.getPointer(0).setString(0, systemDir);
+            case LibretroEnvironment.GET_SYSTEM_DIRECTORY -> {
+                if (data != null && persistentSystemDir != null) {
+                    data.setPointer(0, persistentSystemDir);
                     LOGGER.info("Core requested GET_SYSTEM_DIRECTORY -> {}", systemDir);
                     return true;
                 }
                 LOGGER.warn("Core requested GET_SYSTEM_DIRECTORY but systemDir is null");
                 return false;
             }
-            case 10 -> { // RETRO_ENVIRONMENT_SET_PIXEL_FORMAT
+            case LibretroEnvironment.GET_SAVE_DIRECTORY -> {
+                if (data != null && persistentSaveDir != null) {
+                    data.setPointer(0, persistentSaveDir);
+                    return true;
+                }
+                return false;
+            }
+            case LibretroEnvironment.SET_PIXEL_FORMAT -> {
+                if (data == null) return false;
                 int fmt = data.getInt(0);
                 pixelFormat = fmt;
                 LOGGER.info("Core set pixel format: {}", switch (fmt) {
@@ -438,21 +517,7 @@ public class LibretroCore implements AutoCloseable {
                 });
                 return true;
             }
-            case 11 -> { // RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY
-                if (saveDir != null) {
-                    data.setPointer(0, new Memory(saveDir.length() + 1));
-                    data.getPointer(0).setString(0, saveDir);
-                    return true;
-                }
-                return false;
-            }
-            case 12 -> { // RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS
-                return true; // acknowledge, we don't support but don't crash
-            }
-            case 13 -> { // RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS
-                return true;
-            }
-            case 14 -> { // RETRO_ENVIRONMENT_SET_HW_RENDER
+            case LibretroEnvironment.SET_HW_RENDER -> {
                 if (data == null) return false;
                 try {
                     int ctxType = data.getInt(0);
@@ -468,18 +533,12 @@ public class LibretroCore implements AutoCloseable {
                     };
                     LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
 
-                    // Only Flycast has our hand-crafted HW render path (with binary
-                    // patches in disableFlycastLogCall() etc). Other cores (PPSSPP,
-                    // PCSX2) go through standard libretro HW render flow which
-                    // crashes because our headless Mesa EGL doesn't expose every
-                    // GL function they expect. Reject HW render for them so they
-                    // fall back to software rendering.
-                    boolean isFlycast = corePath != null
-                        && corePath.getFileName().toString().toLowerCase().contains("flycast");
-                    if (!isFlycast) {
-                        LOGGER.info("Rejecting {} for non-Flycast core — will use software rendering", ctxName);
+                    // Flycast and PPSSPP use headless EGL HW rendering (Mesa llvmpipe).
+                    if (!supportsHwRender()) {
+                        LOGGER.info("Rejecting {} — core has no HW render bridge", ctxName);
                         return false;
                     }
+                    LOGGER.info("Accepting hw render for Flycast core");
 
                     // Only accept OpenGL/OpenGL Core contexts (1, 3, 4).
                     // Reject Vulkan (6) — we only have Mesa software OpenGL.
@@ -498,6 +557,8 @@ public class LibretroCore implements AutoCloseable {
                     LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
                     data.setPointer(16, fbPtr);   // get_current_framebuffer
                     data.setPointer(24, procPtr);  // get_proc_address
+                    data.setInt(36, 3);            // version_major (PPSSPP GL Core 3.1)
+                    data.setInt(40, 1);            // version_minor
                     data.setByte(44, (byte) 1);    // cache_context = true
 
                     // Verify writes persisted
@@ -506,18 +567,22 @@ public class LibretroCore implements AutoCloseable {
 
                     // CRITICAL: Flycast's GL function table (__rglgen_*) is populated by
                     // context_reset callback, NOT by get_proc_address directly.
-                    // The frontend MUST call context_reset() after providing the hw_render
-                    // struct so Flycast can load GL functions via get_proc_address.
-                    Pointer contextResetPtr = data.getPointer(8);
-                    if (contextResetPtr != null && Pointer.nativeValue(contextResetPtr) != 0) {
-                        LOGGER.info("  Calling context_reset @ {} to init GL function table", contextResetPtr);
-                        // context_reset is: void (*context_reset)(void)
-                        // Call it as a C function pointer via JNA
-                        var contextReset = com.sun.jna.Function.getFunction(contextResetPtr);
-                        contextReset.invokeVoid(new Object[0]);
-                        LOGGER.info("  context_reset completed");
-                    } else {
-                        LOGGER.warn("  context_reset is NULL!");
+                    // For Flycast we manually call context_reset because Flycast
+                    // doesn't do it from libretro callbacks (it expects the
+                    // frontend to call it). For other cores (PPSSPP) the core
+                    // will call context_reset itself from retro_load_game /
+                    // retro_run — calling it here would dereference a NULL
+                    // Libretro::ctx and crash.
+                    if (isFlycastCore()) {
+                        Pointer contextResetPtr = data.getPointer(8);
+                        if (contextResetPtr != null && Pointer.nativeValue(contextResetPtr) != 0) {
+                            LOGGER.info("  Calling context_reset @ {} to init GL function table", contextResetPtr);
+                            var contextReset = com.sun.jna.Function.getFunction(contextResetPtr);
+                            contextReset.invokeVoid(new Object[0]);
+                            LOGGER.info("  context_reset completed");
+                        } else {
+                            LOGGER.warn("  context_reset is NULL!");
+                        }
                     }
 
                     hwRenderActive = true;
@@ -527,48 +592,44 @@ public class LibretroCore implements AutoCloseable {
                     LOGGER.error("Failed to handle SET_HW_RENDER", t);
                     return false;
                 }
-                        }
-            case 15 -> { // RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS
-                // Nestopia dereferences data[0] as a device-name string
-                // ("nes", "famicom", ...) and calls strcmp() on it. If we
-                // return true without filling data, that pointer is NULL
-                // and strcmp segfaults. Returning false makes the core
-                // skip the descriptor check entirely. Other cores are fine
-                // with this.
-                return false;
             }
-            case 16 -> { // RETRO_ENVIRONMENT_SET_VARIABLES
+            case LibretroEnvironment.SET_INPUT_DESCRIPTORS -> {
+                return true;
+            }
+            case LibretroEnvironment.SET_VARIABLES -> {
                 LOGGER.info("Core requesting SET_VARIABLES");
                 if (data != null) handleSetVariables(data);
                 return true;
             }
-            case 17 -> { // RETRO_ENVIRONMENT_GET_VARIABLE
-                if (!initComplete && data != null && handleGetVariable(data)) return true;
+            case LibretroEnvironment.SET_CORE_OPTIONS -> {
+                LOGGER.info("Core requesting SET_CORE_OPTIONS");
+                if (data != null) handleSetCoreOptions(data);
+                return true;
+            }
+            case LibretroEnvironment.SET_CORE_OPTIONS_V2 -> {
+                LOGGER.info("Core requesting SET_CORE_OPTIONS_V2");
+                if (data != null) handleSetCoreOptionsV2(data);
+                return true;
+            }
+            case LibretroEnvironment.GET_VARIABLE -> {
+                if (data != null && handleGetVariable(data)) return true;
                 return false;
             }
-            case 23 -> { // Unknown — Flycast-specific (NOT in standard libretro.h)
-                // Flycast's retro_load_game calls env_cb(23, &buf) and, if we
-                // return true, then dereferences another BSS pointer (0x26d82e0)
-                // as a function. JNA delivers that callback pointer as garbage
-                // (value 0x4), causing SIGSEGV. Returning false makes Flycast
-                // skip the call entirely.
-                LOGGER.debug("Ignoring Flycast env cmd=23");
+            case LibretroEnvironment.GET_VARIABLE_UPDATE -> {
+                if (data != null) data.setByte(0, (byte) 0);
+                return true;
+            }
+            case LibretroEnvironment.SET_AUDIO_CALLBACK -> {
+                LOGGER.info("Core requesting SET_AUDIO_CALLBACK — accepting");
+                return true;
+            }
+            case LibretroEnvironment.GET_RUMBLE_INTERFACE -> {
                 return false;
             }
-            case 27 -> { // RETRO_ENVIRONMENT_GET_LOG_INTERFACE
-                if (corePath != null && corePath.getFileName().toString().toLowerCase().contains("flycast")) {
-                    // Flycast asks for a log callback but ignores the pointer we
-                    // return — it uses its own internal log_cb (which JNA cannot
-                    // deliver correctly). The real fix is disableFlycastLogCall()
-                    // which NOPs the call sites in flycast_libretro.so code so
-                    // log_cb is never invoked. Return false to make Flycast skip
-                    // its log setup entirely.
+            case LibretroEnvironment.GET_LOG_INTERFACE -> {
+                if (isFlycastCore()) {
                     return false;
                 }
-                // PPSSPP (and likely PCSX2) calls log_cb() during retro_init,
-                // e.g. PPSSPP's ensure_output_audio_buffer_capacity. A NULL
-                // log_cb dereference there causes SIGSEGV. Provide a no-op
-                // callback that just routes the message to our logger.
                 if (data == null) return false;
                 if (logCallback == null) {
                     logCallback = (level, fmt) -> {
@@ -587,23 +648,15 @@ public class LibretroCore implements AutoCloseable {
                 }
                 data.write(0, logCallbackStruct.getPointer().getByteArray(0, Native.POINTER_SIZE), 0, Native.POINTER_SIZE);
                 return true;
-                        }
-            case 28 -> { // RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO
+            }
+            case LibretroEnvironment.SET_SYSTEM_AV_INFO -> {
                 LOGGER.info("Core requesting SET_SYSTEM_AV_INFO");
-                // Re-read the AV info structure if needed
                 return true;
             }
-            case 31 -> { // RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK
-                LOGGER.info("Core requesting SET_AUDIO_CALLBACK — accepting");
-                // Flycast wants to use pull-based audio. We accept but don't actually produce audio.
-                // The data points to struct retro_audio_callback { retro_audio_sample_batch_t sample_batch; retro_audio_state_t state; ... }
-                // We just return true to acknowledge. Flycast won't crash on null audio callback.
+            case LibretroEnvironment.SET_CONTROLLER_INFO -> {
                 return true;
             }
-            case 35 -> { // RETRO_ENVIRONMENT_SET_CONTROLLER_INFO
-                return true; // accept controller info
-            }
-            case 37 -> { // RETRO_ENVIRONMENT_SET_GEOMETRY
+            case LibretroEnvironment.SET_GEOMETRY -> {
                 if (data != null) {
                     int baseW = data.getInt(0);
                     int baseH = data.getInt(4);
@@ -611,29 +664,84 @@ public class LibretroCore implements AutoCloseable {
                 }
                 return true;
             }
-            case 52 -> { // RETRO_ENVIRONMENT_GET_INPUT_BITMASKS
-                LOGGER.info("Core requesting GET_INPUT_BITMASKS");
-                return true; // we support input bitmasks
-            }
-            case 55 -> { // RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO
-                return true; // accept but ignore
-            }
-            case 57 -> { // RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY
-                return true;
-            }
-            case 69 -> { // RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE
-                return true;
-            }
-            case 65581 -> { // Extended environment (high bit = 0x10000 + cmd)
-                LOGGER.debug("Extended env cmd=65581");
+            case LibretroEnvironment.GET_USERNAME -> {
                 return false;
             }
+            case LibretroEnvironment.GET_LANGUAGE -> {
+                if (data != null) data.setInt(0, 0); // RETRO_LANGUAGE_ENGLISH
+                return true;
+            }
+            case LibretroEnvironment.GET_MESSAGE_INTERFACE_VERSION -> {
+                if (data != null) data.setInt(0, 1);
+                return true;
+            }
+            case LibretroEnvironment.GET_CORE_OPTIONS_VERSION -> {
+                if (data != null) data.setInt(0, 2);
+                return true;
+            }
+            case LibretroEnvironment.GET_PREFERRED_HW_RENDER -> {
+                if (data != null && supportsHwRender()) {
+                    data.setInt(0, LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE);
+                    LOGGER.info("Core requested GET_PREFERRED_HW_RENDER -> OPENGL_CORE");
+                    return true;
+                }
+                return false;
+            }
+            case 51 -> { // GET_INPUT_BITMASKS — we implement JOYPAD_MASK in input_state
+                return true;
+            }
+            case 87 -> { // SET_HW_SHARED_CONTEXT (experimental flag stripped)
+                if (supportsHwRender()) {
+                    LOGGER.info("Core requested SET_HW_SHARED_CONTEXT — accepting");
+                    return true;
+                }
+                return false;
+            }
+            case LibretroEnvironment.SET_MESSAGE_EXT -> {
+                return true;
+            }
+            case LibretroEnvironment.SET_CORE_OPTIONS_V2_INTL -> {
+                return true;
+            }
+            case 45 -> { // GET_VFS_INTERFACE
+                return false;
+            }
+            case LibretroEnvironment.SET_MESSAGE -> {
+                return false;
+            }
+            case LibretroEnvironment.SET_DISK_CONTROL_INTERFACE -> {
+                return false;
+            }
+            case LibretroEnvironment.SET_KEYBOARD_CALLBACK -> {
+                return false;
+            }
+            case LibretroEnvironment.SET_SERIALIZATION_QUIRKS -> {
+                return true;
+            }
+            case LibretroEnvironment.SET_SUBSYSTEM_INFO -> {
+                return true;
+            }
+            case LibretroEnvironment.SET_CORE_OPTIONS_DISPLAY -> {
+                return true;
+            }
+            case LibretroEnvironment.SET_MINIMUM_AUDIO_LATENCY -> {
+                return true;
+            }
+            case LibretroEnvironment.SET_FASTFORWARDING_OVERRIDE -> {
+                return true;
+            }
+            case LibretroEnvironment.SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK -> {
+                return true;
+            }
+            case 42 -> { // SET_SUPPORT_ACHIEVEMENTS (experimental)
+                return true;
+            }
             default -> {
-                            // DIAG: log unhandled cmd + non-null data pointer
-                            long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
-                            LOGGER.warn("Unhandled env callback cmd={} data={} (0x{})", cmd, data, Long.toHexString(dataAddr));
-                            return false;
-                        }
+                long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
+                LOGGER.warn("Unhandled env {} (raw={}) data=0x{}",
+                        LibretroEnvironment.name(cmd), cmd, Long.toHexString(dataAddr));
+                return false;
+            }
         }
     }
 
@@ -641,6 +749,62 @@ public class LibretroCore implements AutoCloseable {
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
     /** Keep allocated Memory alive so GC doesn't free strings before core reads them. */
     private final java.util.List<Memory> allocatedVarMemory = new java.util.ArrayList<>();
+
+    private static final int CORE_OPT_VALUE_SIZE = Native.POINTER_SIZE * 2;
+    private static final int CORE_OPT_DEF_V1_SIZE =
+            Native.POINTER_SIZE * 3 + 128 * CORE_OPT_VALUE_SIZE + Native.POINTER_SIZE;
+    private static final int CORE_OPT_DEF_V2_SIZE =
+            Native.POINTER_SIZE * 6 + 128 * CORE_OPT_VALUE_SIZE + Native.POINTER_SIZE;
+
+    private void registerCoreOption(String key, String defaultValue) {
+        if (key == null || key.isEmpty()) return;
+        if (key.startsWith("ppsspp_")) {
+            defaultValue = applyPpssppDefault(key, defaultValue);
+        }
+        defaultValue = applyFlycastDefault(key, defaultValue);
+        coreOptions.put(key, defaultValue);
+        LOGGER.info("  core opt: {} = {}", key, defaultValue);
+    }
+
+    private static String applyFlycastDefault(String key, String defaultValue) {
+        return switch (key) {
+            case "reicast_sh4clock" -> "200";
+            case "reicast_auto_skip_frame", "reicast_frame_skipping",
+                 "reicast_gdrom_fast_loading", "reicast_dc_32mb_mod",
+                 "reicast_widescreen_cheats", "reicast_widescreen_hack" -> "disabled";
+            case "reicast_internal_resolution" -> "640x480";
+            case "reicast_texupscale" -> "1";
+            case "reicast_oit_abuffer_size" -> "512MB";
+            case "reicast_oit_layers" -> "32";
+            default -> defaultValue;
+        };
+    }
+
+    private void walkCoreOptionDefinitions(Pointer arrayBase, int structSize) {
+        long offset = 0;
+        while (true) {
+            Pointer keyPtr = arrayBase.getPointer(offset);
+            if (keyPtr == null) break;
+            String key = keyPtr.getString(0);
+            if (key == null || key.isEmpty()) break;
+            Pointer defPtr = arrayBase.share(offset);
+            Pointer defaultPtr = defPtr.getPointer(structSize - Native.POINTER_SIZE);
+            String defaultValue = defaultPtr != null ? defaultPtr.getString(0) : "";
+            registerCoreOption(key, defaultValue != null ? defaultValue : "");
+            offset += structSize;
+        }
+    }
+
+    private void handleSetCoreOptions(Pointer data) {
+        walkCoreOptionDefinitions(data, CORE_OPT_DEF_V1_SIZE);
+    }
+
+    private void handleSetCoreOptionsV2(Pointer data) {
+        Pointer definitions = data.getPointer(Native.POINTER_SIZE);
+        if (definitions != null) {
+            walkCoreOptionDefinitions(definitions, CORE_OPT_DEF_V2_SIZE);
+        }
+    }
 
     private void handleSetVariables(Pointer data) {
         // Each retro_variable is { const char *key; const char *value; }
@@ -666,62 +830,27 @@ public class LibretroCore implements AutoCloseable {
                 }
             }
 
-            // Override rendering backend to software if this is the renderer option
-            if (key.contains("rend") && defaultValue.toLowerCase().contains("opengl")) {
-                // Try to force software rendering
-                for (String part : value.split("\\|")) {
-                    String p = part.trim().toLowerCase();
-                    if (p.contains("soft") || p.contains("cpu")) {
-                        defaultValue = part.trim();
-                        LOGGER.info("Overriding {} to software renderer: {}", key, defaultValue);
-                        break;
-                    }
-                }
-            }
-
-            // Flycast speed/accuracy fixes
-            if (key.equals("reicast_sh4clock")) {
-                defaultValue = "200"; // real Dreamcast speed, not 500 MHz OC
-            }
-            if (key.equals("reicast_auto_skip_frame")) {
-                defaultValue = "disabled";
-            }
-            if (key.equals("reicast_frame_skipping")) {
-                defaultValue = "disabled";
-            }
-            if (key.equals("reicast_gdrom_fast_loading")) {
-                defaultValue = "disabled"; // accurate loading times
-            }
-            // Internal resolution — 12800x9600 default kills software renderer
-            if (key.equals("reicast_internal_resolution")) {
-                defaultValue = "640x480"; // native DC resolution
-            }
-            // 32MB RAM mod changes game behavior
-            if (key.equals("reicast_dc_32mb_mod")) {
-                defaultValue = "disabled"; // stock 16MB
-            }
-            // Texture upscaling is expensive on software renderer
-            if (key.equals("reicast_texupscale")) {
-                defaultValue = "1"; // no upscaling
-            }
-            // Widescreen cheats/hacks modify game code, can break timing
-            if (key.equals("reicast_widescreen_cheats")) {
-                defaultValue = "disabled";
-            }
-            if (key.equals("reicast_widescreen_hack")) {
-                defaultValue = "disabled";
-            }
-            // OIT (order-independent transparency) is expensive
-            if (key.equals("reicast_oit_abuffer_size")) {
-                defaultValue = "512MB";
-            }
-            if (key.equals("reicast_oit_layers")) {
-                defaultValue = "32";
-            }
-
-            coreOptions.put(key, defaultValue);
-            LOGGER.info("  core var: {} = {} (default: {})", key, value, defaultValue);
+            registerCoreOption(key, defaultValue);
         }
+    }
+
+    private static String applyPpssppDefault(String key, String defaultValue) {
+        return switch (key) {
+            case "ppsspp_software_rendering" -> "enabled";
+            case "ppsspp_backend" -> "opengl";
+            case "ppsspp_internal_resolution" -> "480x272";
+            case "ppsspp_cpu_core" -> "JIT";
+            case "ppsspp_fast_memory" -> "enabled";
+            case "ppsspp_frameskip" -> "1";
+            case "ppsspp_auto_frameskip" -> "enabled";
+            case "ppsspp_mulitsample_level" -> "Disabled";
+            case "ppsspp_texture_scaling_level", "ppsspp_texture_shader" -> "disabled";
+            case "ppsspp_skip_buffer_effects", "ppsspp_skip_gpu_readbacks",
+                 "ppsspp_lazy_texture_caching" -> "enabled";
+            case "ppsspp_lower_resolution_for_effects" -> "Balanced";
+            case "ppsspp_gpu_hardware_transform" -> "enabled";
+            default -> defaultValue;
+        };
     }
 
     private boolean handleGetVariable(Pointer data) {
@@ -752,14 +881,6 @@ public class LibretroCore implements AutoCloseable {
         } catch (Throwable t) {
             return false; // ANY crash → use default
         }
-    }
-
-    /**
-     * Set directories that cores may query via environment callback.
-     */
-    public void setDirectories(String systemDir, String saveDir) {
-        this.systemDir = systemDir;
-        this.saveDir = saveDir;
     }
 
     /**
@@ -816,10 +937,8 @@ public class LibretroCore implements AutoCloseable {
                     avInfo.geometry.base_width, avInfo.geometry.base_height,
                     avInfo.timing_fps, avInfo.timing_sample_rate);
 
-            // Release EGL context from init thread so the emulator thread
-            // can make it current via hlg_make_current().
-            // MUST happen after context_reset + retro_load_game + av_info.
-            if (hwRenderActive) {
+            // Release EGL context from init thread so the emulator thread can take it (Flycast).
+            if (hwRenderActive && isFlycastCore()) {
                 try {
                     HeadlessGL.INSTANCE.hlg_release();
                     LOGGER.info("EGL context released from init thread");
@@ -831,7 +950,6 @@ public class LibretroCore implements AutoCloseable {
             LOGGER.error("Core rejected game: {}", romPath.getFileName());
         }
 
-        initComplete = true; // block GET_VARIABLE from retro_run
         return ok;
     }
 

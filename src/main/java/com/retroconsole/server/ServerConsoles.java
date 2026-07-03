@@ -34,8 +34,8 @@ public class ServerConsoles {
         String coresDir = ModConfig.CORES_DIR.get();
         String romsDir = ModConfig.ROMS_DIR.get();
         Path cores = Paths.get(coresDir);
-        Path system = Paths.get(coresDir, "system");
-        Path save = Paths.get(romsDir, "saves");
+        Path system = Paths.get(ModConfig.SYSTEM_DIR.get());
+        Path save = Paths.get(ModConfig.SAVE_DIR.get());
         coreManager = new CoreManager(cores, system, save);
         coreManager.discoverCores();
         LOGGER.info("CoreManager initialized. Cores dir: {}, discovered {} cores",

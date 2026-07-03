@@ -22,7 +22,11 @@ static EGLDisplay  s_display   = EGL_NO_DISPLAY;
 static EGLConfig   s_config;
 static EGLContext   s_context   = EGL_NO_CONTEXT;  /* init-thread context */
 static int         s_initialized = 0;
+static int         s_gl_major    = 3;
+static int         s_gl_minor    = 1;
 static int         s_w = 640, s_h = 480;
+static pthread_mutex_t s_egl_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int         s_make_current_logs = 0;
 
 /* Per-thread surface + context (thread-local storage) */
 static __thread EGLSurface tl_surface = EGL_NO_SURFACE;
@@ -34,6 +38,112 @@ static int    s_call_count   = 0;
 static int    s_read_count   = 0;
 static void (*real_glBindFramebuffer)(unsigned int, unsigned int) = NULL;
 static void  *libGL_handle   = NULL;
+
+/* Generic stub used when a GL function can't be resolved (last resort). */
+static void gl_void(void) { /* nothing */ }
+
+static void build_ctx_attribs(EGLint *out, int major, int minor);
+
+static const char *egl_err_str(EGLint err) {
+    switch (err) {
+        case EGL_SUCCESS: return "SUCCESS";
+        case EGL_BAD_MATCH: return "BAD_MATCH";
+        case EGL_BAD_ALLOC: return "BAD_ALLOC";
+        case EGL_BAD_CONTEXT: return "BAD_CONTEXT";
+        case EGL_BAD_CONFIG: return "BAD_CONFIG";
+        case EGL_BAD_ATTRIBUTE: return "BAD_ATTRIBUTE";
+        default: return "OTHER";
+    }
+}
+
+static EGLContext create_gl_context(EGLContext share, int major, int minor) {
+    EGLContext ctx = EGL_NO_CONTEXT;
+
+    /* Shared contexts must inherit attribs from parent — explicit attribs often fail. */
+    if (share != EGL_NO_CONTEXT) {
+        EGLint inherit[] = { EGL_NONE };
+        ctx = eglCreateContext(s_display, s_config, share, inherit);
+        if (ctx) return ctx;
+        EGLint err = eglGetError();
+        fprintf(stderr, "[hlg] eglCreateContext(share=%p, inherit) failed: 0x%x %s\n",
+                (void *)share, err, egl_err_str(err));
+    }
+
+    EGLint attribs[8];
+    build_ctx_attribs(attribs, major, minor);
+    ctx = eglCreateContext(s_display, s_config, share, attribs);
+    if (!ctx) {
+        EGLint err = eglGetError();
+        fprintf(stderr, "[hlg] eglCreateContext(share=%p, %d.%d) failed: 0x%x %s\n",
+                (void *)share, major, minor, err, egl_err_str(err));
+    }
+    return ctx;
+}
+
+static int s_ctx_create_fail_logs = 0;
+
+static int ensure_thread_gl(void) {
+    if (!s_initialized) return 0;
+
+    pthread_mutex_lock(&s_egl_mutex);
+
+    if (!tl_surface) {
+        EGLint pbuf_attribs[] = {
+            EGL_WIDTH,  s_w,
+            EGL_HEIGHT, s_h,
+            EGL_NONE
+        };
+        tl_surface = eglCreatePbufferSurface(s_display, s_config, pbuf_attribs);
+        if (!tl_surface) {
+            fprintf(stderr, "[hlg] ensure_thread_gl: PBuffer creation failed\n");
+            pthread_mutex_unlock(&s_egl_mutex);
+            return 0;
+        }
+    }
+
+    if (!tl_ctx) {
+        /* Drop this thread's binding before creating or rebinding a context. */
+        eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+
+        tl_ctx = create_gl_context(s_context, s_gl_major, s_gl_minor);
+        if (!tl_ctx) {
+            tl_ctx = create_gl_context(EGL_NO_CONTEXT, s_gl_major, s_gl_minor);
+        }
+        if (!tl_ctx && s_context != EGL_NO_CONTEXT) {
+            if (s_ctx_create_fail_logs < 4) {
+                fprintf(stderr, "[hlg] ensure_thread_gl: reusing master context on this thread\n");
+                s_ctx_create_fail_logs++;
+            }
+            tl_ctx = s_context;
+        }
+        if (!tl_ctx) {
+            fprintf(stderr, "[hlg] ensure_thread_gl: failed to create any context\n");
+            pthread_mutex_unlock(&s_egl_mutex);
+            return 0;
+        }
+    }
+
+    if (!eglMakeCurrent(s_display, tl_surface, tl_surface, tl_ctx)) {
+        EGLint err = eglGetError();
+        fprintf(stderr, "[hlg] ensure_thread_gl: eglMakeCurrent failed: 0x%x %s\n",
+                err, egl_err_str(err));
+        pthread_mutex_unlock(&s_egl_mutex);
+        return 0;
+    }
+
+    typedef void (*glViewport_t)(int, int, int, int);
+    glViewport_t gv = (glViewport_t)eglGetProcAddress("glViewport");
+    if (gv) gv(0, 0, s_w, s_h);
+
+    if (s_make_current_logs < 8) {
+        fprintf(stderr, "[hlg] ensure_thread_gl: ctx+surface %dx%d (shared=%d)\n",
+                s_w, s_h, tl_ctx != s_context);
+        s_make_current_logs++;
+    }
+
+    pthread_mutex_unlock(&s_egl_mutex);
+    return 1;
+}
 
 /* Cached GL function pointers (loaded via eglGetProcAddress / dlsym) */
 static void *pBlit = NULL;  /* glBlitFramebuffer */
@@ -66,21 +176,19 @@ static void *load_gl(const char *name) {
 }
 
 /* ---- helper: build context attrib list ---- */
-static void build_ctx_attribs(EGLint *out, int major) {
+static void build_ctx_attribs(EGLint *out, int major, int minor) {
     out[0] = EGL_CONTEXT_MAJOR_VERSION_KHR;
     out[1] = major;
-    out[2] = 0x30FB;  /* EGL_CONTEXT_RELEASE_BEHAVIOR_KHR */
-    out[3] = 1;       /* EGL_CONTEXT_RELEASE_BEHAVIOR_FLUSH_KHR */
+    out[2] = EGL_CONTEXT_MINOR_VERSION_KHR;
+    out[3] = minor;
     out[4] = 0x30FD;  /* EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR */
     out[5] = 1;       /* EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR */
     out[6] = EGL_NONE;
 }
 
 /* ---- helper: try to create a GL context for a given major version ---- */
-static EGLContext try_create_context(int major) {
-    EGLint attribs[7];
-    build_ctx_attribs(attribs, major);
-    return eglCreateContext(s_display, s_config, s_context, attribs);
+static EGLContext try_create_context(EGLContext share, int major, int minor) {
+    return create_gl_context(share, major, minor);
 }
 
 /* ==================================================================
@@ -116,18 +224,21 @@ int hlg_init(int major, int minor) {
     if (!eglBindAPI(EGL_OPENGL_API)) return 0;
 
     /* Try the requested version first, then fallbacks */
-    s_context = try_create_context(major);
+    s_gl_major = major;
+    s_gl_minor = minor;
+    s_context = try_create_context(EGL_NO_CONTEXT, major, minor);
     if (s_context) {
-        fprintf(stderr, "[hlg] GL %d.%d Core OK (shared ctx)\n", major, minor);
+        fprintf(stderr, "[hlg] GL %d.%d Core OK (master ctx)\n", major, minor);
     } else {
         for (unsigned i = 0; i < NUM_FALLBACK_VERSIONS; i++) {
             int fm = version_table[i].major;
             int fn = version_table[i].minor;
-            /* Skip if this is the same version we already tried */
             if (i > 0 && fm == major && fn == minor) continue;
-            s_context = try_create_context(fm);
+            s_gl_major = fm;
+            s_gl_minor = fn;
+            s_context = try_create_context(EGL_NO_CONTEXT, fm, fn);
             if (s_context) {
-                fprintf(stderr, "[hlg] GL %d.%d Core OK (shared ctx)\n", fm, fn);
+                fprintf(stderr, "[hlg] GL %d.%d Core OK (master ctx)\n", fm, fn);
                 break;
             }
         }
@@ -166,7 +277,9 @@ int hlg_init(int major, int minor) {
  * ================================================================== */
 void hlg_release(void) {
     if (s_display != EGL_NO_DISPLAY) {
+        pthread_mutex_lock(&s_egl_mutex);
         eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        pthread_mutex_unlock(&s_egl_mutex);
         fprintf(stderr, "[hlg] release: context released from init thread\n");
     }
 }
@@ -179,34 +292,7 @@ void hlg_release(void) {
  *  Returns 1 on success, 0 on failure.
  * ================================================================== */
 int hlg_make_current(void) {
-    if (!s_initialized) return 0;
-
-    /* Create a per-thread PBuffer surface if this thread doesn't have one */
-    if (!tl_surface) {
-        EGLint pbuf_attribs[] = {
-            EGL_WIDTH,  s_w,
-            EGL_HEIGHT, s_h,
-            EGL_NONE
-        };
-        tl_surface = eglCreatePbufferSurface(s_display, s_config, pbuf_attribs);
-        if (!tl_surface) {
-            fprintf(stderr, "[hlg] make_current: PBuffer creation failed\n");
-            return 0;
-        }
-    }
-
-    /* Make the shared context current on this thread */
-    if (!eglMakeCurrent(s_display, tl_surface, tl_surface, s_context)) {
-        fprintf(stderr, "[hlg] make_current: eglMakeCurrent failed\n");
-        return 0;
-    }
-
-    typedef void (*glViewport_t)(int, int, int, int);
-    glViewport_t gv = (glViewport_t)eglGetProcAddress("glViewport");
-    if (gv) gv(0, 0, s_w, s_h);
-
-    fprintf(stderr, "[hlg] make_current: context+surface %dx%d on thread\n", s_w, s_h);
-    return 1;
+    return ensure_thread_gl();
 }
 
 /* ==================================================================
@@ -226,7 +312,9 @@ int hlg_resize(int w, int h) {
 
     if (!tl_surface) return 1;
 
-    /* Release current, destroy old surface, create new one */
+    ensure_thread_gl();
+
+    pthread_mutex_lock(&s_egl_mutex);
     eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     eglDestroySurface(s_display, tl_surface);
 
@@ -236,11 +324,17 @@ int hlg_resize(int w, int h) {
         EGL_NONE
     };
     tl_surface = eglCreatePbufferSurface(s_display, s_config, pbuf_attribs);
-    if (!tl_surface) return 1;
+    if (!tl_surface) {
+        pthread_mutex_unlock(&s_egl_mutex);
+        return 1;
+    }
 
-    if (!tl_ctx && !s_context) return 1;
-
-    eglMakeCurrent(s_display, tl_surface, tl_surface, s_context);
+    EGLContext ctx = tl_ctx ? tl_ctx : s_context;
+    if (!eglMakeCurrent(s_display, tl_surface, tl_surface, ctx)) {
+        pthread_mutex_unlock(&s_egl_mutex);
+        return 1;
+    }
+    pthread_mutex_unlock(&s_egl_mutex);
 
     typedef void (*glViewport_t)(int, int, int, int);
     glViewport_t gv = (glViewport_t)eglGetProcAddress("glViewport");
@@ -270,6 +364,8 @@ static void tracked_glBindFramebuffer(unsigned int target, unsigned int fbo) {
 }
 
 void *hlg_get_proc_address(const char *sym) {
+    ensure_thread_gl();
+
     int count = ++s_call_count;
 
     if (count <= 20) {
@@ -290,7 +386,14 @@ void *hlg_get_proc_address(const char *sym) {
     void *p = eglGetProcAddress(sym);
     if (p) return p;
 
-    return load_gl(sym);
+    p = load_gl(sym);
+    if (p) return p;
+
+    // DEBUG: log unresolved symbols — return NULL (no silent stubs; stubs corrupt PPSSPP init)
+    if (s_call_count < 200) {
+        fprintf(stderr, "[hlg] get_proc_address(\"%s\") UNRESOLVED\n", sym);
+    }
+    return NULL;
 }
 
 /* ==================================================================
@@ -299,6 +402,7 @@ void *hlg_get_proc_address(const char *sym) {
  *  FBO (0) since we use a PBuffer, not an FBO-backed surface.
  * ================================================================== */
 unsigned long hlg_get_framebuffer(void) {
+    ensure_thread_gl();
     return 0;
 }
 
@@ -401,10 +505,15 @@ void hlg_dump_hw_render(const void *data, int size) {
  *  Clean up all EGL resources. Safe to call multiple times.
  * ================================================================== */
 void hlg_destroy(void) {
+    pthread_mutex_lock(&s_egl_mutex);
     if (tl_surface) {
         eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         eglDestroySurface(s_display, tl_surface);
         tl_surface = EGL_NO_SURFACE;
+    }
+    if (tl_ctx && tl_ctx != s_context) {
+        eglDestroyContext(s_display, tl_ctx);
+        tl_ctx = EGL_NO_CONTEXT;
     }
     if (s_context) {
         eglDestroyContext(s_display, s_context);
@@ -415,4 +524,5 @@ void hlg_destroy(void) {
         s_display = EGL_NO_DISPLAY;
     }
     s_initialized = 0;
+    pthread_mutex_unlock(&s_egl_mutex);
 }

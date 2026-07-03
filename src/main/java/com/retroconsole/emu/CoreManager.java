@@ -146,8 +146,8 @@ public class CoreManager {
      */
     public LibretroRuntime loadCoreAndGame(Path corePath, Path romPath) {
         try {
-            LibretroCore core = LibretroCore.load(corePath);
-            core.setDirectories(systemDir.toString(), saveDir.toString());
+            LibretroCore core = LibretroCore.load(
+                    corePath, systemDir.toString(), saveDir.toString());
 
             if (!core.loadGame(romPath)) {
                 core.close();

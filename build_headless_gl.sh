@@ -7,9 +7,11 @@ set -e
 cd "$(dirname "$0")"
 
 OUT="runs/client/config/retroconsole/cores/.libheadless_gl.so"
+RES="src/main/resources/natives/libheadless_gl.so"
 SRC="headless_gl.c"
 
 echo "Compiling $SRC -> $OUT"
-gcc -shared -fPIC -O2 -Wall -o "$OUT" "$SRC" -lEGL -lGL -ldl
+gcc -shared -fPIC -O2 -Wall -o "$OUT" "$SRC" -lEGL -lGL -ldl -lpthread
 strip "$OUT"
-echo "Done: $(ls -lh "$OUT" | awk '{print $5}')"
+cp "$OUT" "$RES"
+echo "Done: $(ls -lh "$OUT" | awk '{print $5}') (also copied to $RES)"
