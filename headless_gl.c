@@ -18,6 +18,7 @@
 #include <stdarg.h>
 #include <dlfcn.h>
 #include <pthread.h>
+#include <unistd.h>
 
 /* ---- globals ---- */
 static EGLDisplay  s_display   = EGL_NO_DISPLAY;
@@ -49,7 +50,12 @@ static __thread EGLContext  tl_ctx    = EGL_NO_CONTEXT;
 static int    s_last_fbo     = 0;
 static int    s_call_count   = 0;
 static int    s_read_count   = 0;
+static int    s_video_cb_count = 0;
 static int    s_gf_call_count = 0;
+static int    s_gpu_logged_init = 0;
+static int    s_gpu_logged_runtime = 0;
+static pthread_t s_init_gl_thread = 0;
+static char   s_gpu_info_cache[1024] = "";
 static void (*real_glBindFramebuffer)(unsigned int, unsigned int) = NULL;
 static void  *libGL_handle   = NULL;
 
@@ -85,6 +91,93 @@ static EGLContext create_gl_context(EGLContext share, int major, int minor);
 void hlg_destroy(void);
 static int recreate_shared_surface(void);
 static int ensure_gl_current(void);
+static int ensure_thread_gl(void);
+
+#define GL_VENDOR_STR   0x1F00
+#define GL_RENDERER_STR 0x1F01
+#define GL_VERSION_STR  0x1F02
+
+static int is_software_gl_renderer(const char *renderer) {
+    if (!renderer || !renderer[0]) return 1;
+    return strstr(renderer, "llvmpipe") != NULL
+        || strstr(renderer, "softpipe") != NULL
+        || strstr(renderer, "lavapipe") != NULL
+        || strstr(renderer, "SwiftShader") != NULL
+        || strstr(renderer, "Software") != NULL
+        || strstr(renderer, "software") != NULL;
+}
+
+static void log_gpu_identity(const char *where) {
+    int *logged = NULL;
+    if (where && strcmp(where, "init") == 0) {
+        if (s_gpu_logged_init) return;
+        logged = &s_gpu_logged_init;
+    } else if (where && strcmp(where, "runtime") == 0) {
+        if (s_gpu_logged_runtime) return;
+        logged = &s_gpu_logged_runtime;
+    } else {
+        return;
+    }
+
+    typedef const unsigned char *(*glGetString_t)(unsigned int);
+    glGetString_t gs = (glGetString_t)eglGetProcAddress("glGetString");
+    if (!gs) gs = (glGetString_t)dlsym(RTLD_DEFAULT, "glGetString");
+    if (!gs) {
+        fprintf(stderr, "[hlg] GPU identity (%s): glGetString unavailable\n", where);
+        return;
+    }
+
+    const char *vendor = (const char *)gs(GL_VENDOR_STR);
+    const char *renderer = (const char *)gs(GL_RENDERER_STR);
+    const char *version = (const char *)gs(GL_VERSION_STR);
+    if (!vendor) vendor = "(null)";
+    if (!renderer) renderer = "(null)";
+    if (!version) version = "(null)";
+
+    const char *drv = getenv("HLG_GL_DRIVER");
+    if (!drv || !drv[0]) drv = "d3d12";
+    const char *gallium = getenv("GALLIUM_DRIVER");
+    const char *sw_env = getenv("LIBGL_ALWAYS_SOFTWARE");
+    int dxg = access("/dev/dxg", F_OK) == 0;
+    int software = is_software_gl_renderer(renderer)
+        || (sw_env && sw_env[0] == '1')
+        || strcmp(drv, "llvmpipe") == 0;
+
+    fprintf(stderr, "[hlg] ========== GPU IDENTITY (%s) ==========\n", where);
+    fprintf(stderr, "[hlg] HLG_GL_DRIVER=%s  GALLIUM_DRIVER=%s  LIBGL_ALWAYS_SOFTWARE=%s\n",
+            drv, gallium ? gallium : "(unset)", sw_env ? sw_env : "(unset)");
+    fprintf(stderr, "[hlg] /dev/dxg (WSL GPU): %s\n", dxg ? "present" : "missing");
+    fprintf(stderr, "[hlg] GL_VENDOR:   %s\n", vendor);
+    fprintf(stderr, "[hlg] GL_RENDERER: %s\n", renderer);
+    fprintf(stderr, "[hlg] GL_VERSION:  %s\n", version);
+    if (software) {
+        fprintf(stderr, "[hlg] >>> SOFTWARE RENDERER — NOT using discrete GPU <<<\n");
+        snprintf(s_gpu_info_cache, sizeof(s_gpu_info_cache),
+                 "SOFTWARE (%s) — NOT discrete GPU", renderer);
+    } else {
+        fprintf(stderr, "[hlg] >>> HARDWARE GPU — rendering on: %s <<<\n", renderer);
+        snprintf(s_gpu_info_cache, sizeof(s_gpu_info_cache),
+                 "HARDWARE GPU: %s (%s)", renderer, vendor);
+    }
+    fprintf(stderr, "[hlg] ==========================================\n");
+    *logged = 1;
+}
+
+static void maybe_log_runtime_gpu(void) {
+    if (s_init_gl_thread != 0 && !pthread_equal(pthread_self(), s_init_gl_thread))
+        log_gpu_identity("runtime");
+}
+
+const char *hlg_get_gpu_info(void) {
+    return s_gpu_info_cache[0] ? s_gpu_info_cache : "GPU info not yet available";
+}
+
+void hlg_log_gpu_identity(void) {
+    if (!s_initialized) return;
+    if (!ensure_thread_gl()) return;
+    maybe_log_runtime_gpu();
+    if (!s_gpu_logged_init) log_gpu_identity("init");
+}
 
 static void destroy_ctx_pool(void) {
     for (int i = 0; i < s_ctx_pool_size; i++) {
@@ -107,6 +200,14 @@ static void init_ctx_pool(void) {
     if (s_api_mode == 1) {
         s_gles_serial = 1;
         fprintf(stderr, "[hlg] GLES: single shared context + mutex (no pool)\n");
+        return;
+    }
+    if (!s_compat_profile) {
+        /* OpenGL Core (PCSX2/Flycast): one master EGL context on all threads.
+         * Pooled child contexts use a different profile (Compat) on Mesa/d3d12
+         * and readback sees empty FBOs even when lastFbo=1. */
+        s_gles_serial = 1;
+        fprintf(stderr, "[hlg] GL Core: single master context + mutex (no pool)\n");
         return;
     }
     s_gles_serial = 0;
@@ -221,6 +322,7 @@ static int ensure_thread_gl(void) {
             fprintf(stderr, "[hlg] ensure_thread_gl: serial ctx %dx%d\n", s_w, s_h);
             s_make_current_logs++;
         }
+        if (ok) maybe_log_runtime_gpu();
         pthread_mutex_unlock(&s_egl_mutex);
         pthread_mutex_unlock(&s_gl_mutex);
         return ok;
@@ -276,6 +378,8 @@ static int ensure_thread_gl(void) {
                 s_w, s_h, tl_ctx != s_context);
         s_make_current_logs++;
     }
+
+    maybe_log_runtime_gpu();
 
     pthread_mutex_unlock(&s_egl_mutex);
     return 1;
@@ -485,6 +589,9 @@ int hlg_init_ex(int api, int major, int minor, int flags) {
 
     fprintf(stderr, "[hlg] init: context made current on init thread %dx%d\n", s_w, s_h);
 
+    s_init_gl_thread = pthread_self();
+    log_gpu_identity("init");
+
     init_ctx_pool();
 
     /* Shared render FBO lives in the shared object namespace. */
@@ -583,13 +690,25 @@ int hlg_resize(int w, int h) {
 /* ---- GLES mutex wrappers (PPSSPP multi-thread GL) ---- */
 
 static int gl_use_wrappers(void) {
-    /* Only GLES serial mode needs mutex wrappers. Desktop GL compat cores
-     * resolve GL via GLEW/dlsym (bypassing get_proc_address), so wrappers
-     * can't intercept their calls — give them real functions + shared FBO. */
-    return s_gles_serial;
+    /* Mutex-wrap GL only for GLES serial (PPSSPP multi-thread risk).
+     * Desktop GL Core (PCSX2/Flycast) is single-threaded on master ctx;
+     * per-call mutex on thousands of draws costs ~1s/frame. */
+    return s_gles_serial && s_api_mode == 1;
+}
+
+static int is_desktop_core_gl(void) {
+    return s_gles_serial && s_api_mode == 0;
+}
+
+static int ensure_gl_context(void) {
+    if (is_desktop_core_gl())
+        return ensure_gl_current();
+    return ensure_thread_gl();
 }
 
 static int wgl_begin(void) {
+    if (is_desktop_core_gl())
+        return ensure_gl_current();
     pthread_mutex_lock(&s_gl_mutex);
     if (s_gles_serial) {
         pthread_mutex_lock(&s_egl_mutex);
@@ -606,6 +725,8 @@ static int wgl_begin(void) {
 }
 
 static void wgl_end(void) {
+    if (is_desktop_core_gl())
+        return;
     if (s_gles_serial) {
         /* Keep context current on this thread — avoids BAD_ACCESS from
          * release/makeCurrent storms across PPSSPP worker threads. */
@@ -982,7 +1103,7 @@ static void tracked_glBindFramebuffer(unsigned int target, unsigned int fbo) {
         wrap_glBindFramebuffer(target, fbo);
         return;
     }
-    if (!ensure_thread_gl()) return;
+    if (!ensure_gl_context()) return;
     if (!real_glBindFramebuffer)
         real_glBindFramebuffer = (void (*)(unsigned int, unsigned int))load_gl("glBindFramebuffer");
     if (real_glBindFramebuffer)
@@ -1005,7 +1126,7 @@ static void wrap_glBindFramebuffer(unsigned int target, unsigned int fbo) {
 
 void *hlg_get_proc_address(const char *sym) {
     if (!gl_use_wrappers())
-        ensure_thread_gl();
+        ensure_gl_context();
 
     int count = ++s_call_count;
 
@@ -1096,6 +1217,7 @@ static void reset_gl_proc_caches(void) {
     s_last_fbo = 0;
     s_call_count = 0;
     s_read_count = 0;
+    s_video_cb_count = 0;
     s_gl_ctx_thread = 0;
     s_ensure_gl_fail_logs = 0;
     s_gf_call_count = 0;
@@ -1146,8 +1268,8 @@ static int sample_fbo_nz(unsigned int fbo, int w, int h) {
     return nz;
 }
 
-/* PPSSPP renders to internal FBOs (2+) and may not blit to our shared FBO 1. */
-static unsigned int find_ppsspp_render_fbo(int w, int h, int *out_nz) {
+/* Cores may render to draw FBO, last bound FBO, shared FBO, or default FB. */
+static unsigned int find_render_fbo(int w, int h, int *out_nz) {
     unsigned int best = 0;
     int best_nz = 0;
     for (unsigned int fbo = 2; fbo <= 64; fbo++) {
@@ -1161,12 +1283,39 @@ static unsigned int find_ppsspp_render_fbo(int w, int h, int *out_nz) {
     return best;
 }
 
-static void read_bound_fbo(int w, int h, void *pixels_out) {
+static void setup_read_buffer(unsigned int fbo, unsigned int read_buf) {
     typedef void (*glReadBuffer_t)(unsigned int);
     glReadBuffer_t rb = (glReadBuffer_t)load_gl("glReadBuffer");
-    if (rb) rb(0x8CE0 /* GL_COLOR_ATTACHMENT0 */);
+    if (!rb) return;
+    if (fbo == 0)
+        rb(read_buf);
+    else
+        rb(0x8CE0 /* GL_COLOR_ATTACHMENT0 */);
+}
+
+static int count_nonzero_rgba(const void *pixels, int total) {
+    int nonzero = 0;
+    const unsigned int *px = (const unsigned int *)pixels;
+    for (int i = 0; i < total; i++) {
+        if (px[i] & 0x00FFFFFF) nonzero++;
+    }
+    return nonzero;
+}
+
+static int read_bound_fbo_nz(unsigned int fbo, int read_w, int read_h, void *pixels_out) {
+    if (!pBindFramebuffer || !pRP) return 0;
+    pBindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, fbo);
+    setup_read_buffer(fbo, 0x0405 /* GL_BACK */);
     ((void (*)(int, int, int, int, unsigned int, unsigned int, void *))pRP)(
-        0, 0, w, h, 0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, pixels_out);
+        0, 0, read_w, read_h, 0x1908, 0x1401, pixels_out);
+    int nz = count_nonzero_rgba(pixels_out, read_w * read_h);
+    if (fbo == 0 && nz == 0) {
+        setup_read_buffer(0, 0x0404 /* GL_FRONT */);
+        ((void (*)(int, int, int, int, unsigned int, unsigned int, void *))pRP)(
+            0, 0, read_w, read_h, 0x1908, 0x1401, pixels_out);
+        nz = count_nonzero_rgba(pixels_out, read_w * read_h);
+    }
+    return nz;
 }
 
 /* (Re)create the shared render FBO at size w×h. Must be called with a
@@ -1263,14 +1412,14 @@ void hlg_debug_fbo(void) {
     ((void (*)(unsigned int, int *))pGI)(0x8CA9, &drawFbo);  /* GL_DRAW_FRAMEBUFFER_BINDING */
     ((void (*)(unsigned int, int *))pGI)(0x0BA2, vp);         /* GL_VIEWPORT */
 
-    if (s_read_count <= 10) {
+    if (s_video_cb_count <= 10) {
         fprintf(stderr, "[hlg] video_cb #%d: readFbo=%d drawFbo=%d vp=%d,%d,%d,%d "
                 "lastFbo=%d pbuf=%dx%d\n",
-                s_read_count, readFbo, drawFbo,
+                s_video_cb_count, readFbo, drawFbo,
                 vp[0], vp[1], vp[2], vp[3],
                 s_last_fbo, s_w, s_h);
     }
-    s_read_count++;
+    s_video_cb_count++;
     wgl_end();
 }
 
@@ -1332,103 +1481,82 @@ void hlg_read_pixels(int *viewport_out, void *pixels_out, int max_pixels,
     viewport_out[2] = gl_w;
     viewport_out[3] = gl_h;
 
-    if (pF) ((void (*)(void))pF)();
-
-    /* Self-test on first readback: clear shared FBO to red, read it back.
-     * If we get red, our FBO readback pipeline works and the core just
-     * isn't rendering into FBO 1. If black, our readback is broken. */
-    static int selftest_done = 0;
-    if (s_shared_fbo && !selftest_done) {
-        selftest_done = 1;
-        pBindFramebuffer(0x8D40 /* GL_FRAMEBUFFER */, s_shared_fbo);
-        typedef void (*glClearColor_t)(float, float, float, float);
-        typedef void (*glClear_t)(unsigned int);
-        glClearColor_t ccc = (glClearColor_t)load_gl("glClearColor");
-        glClear_t cc = (glClear_t)load_gl("glClear");
-        if (ccc && cc) {
-            ccc(1.0f, 0.0f, 0.0f, 1.0f);
-            cc(0x4000 /* GL_COLOR_BUFFER_BIT */);
-            if (pF) ((void (*)(void))pF)();
-        }
-        unsigned int testpx = 0;
-        pBindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, s_shared_fbo);
-        typedef void (*glReadBuffer_t)(unsigned int);
-        glReadBuffer_t rb = (glReadBuffer_t)load_gl("glReadBuffer");
-        if (rb) rb(0x8CE0);
-        ((void (*)(int, int, int, int, unsigned int, unsigned int, void *))pRP)(
-            0, 0, 1, 1, 0x1908, 0x1401, &testpx);
-        fprintf(stderr, "[hlg] SELFTEST: cleared FBO1 to red, read pixel=0x%08x "
-                "(expect 0xff0000ff)\n", testpx);
+    /* glFinish() before every readback stalls the GPU for seconds during
+     * PCSX2 shader-compile bursts. glFlush is enough for presented frames. */
+    {
+        typedef void (*glFlush_t)(void);
+        glFlush_t flush = (glFlush_t)eglGetProcAddress("glFlush");
+        if (flush) flush();
+        else if (pF) ((void (*)(void))pF)();
     }
+    if (pF && (s_read_count % 120) == 0)
+        ((void (*)(void))pF)();
 
-    /* Bind the shared render FBO for reading — the core rendered into it. */
-    unsigned int readTarget = s_shared_fbo ? s_shared_fbo : 0;
-    pBindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, readTarget);
-    if (s_shared_fbo) {
-        typedef void (*glReadBuffer_t)(unsigned int);
-        glReadBuffer_t rb = (glReadBuffer_t)load_gl("glReadBuffer");
-        if (rb) rb(0x8CE0 /* GL_COLOR_ATTACHMENT0 */);
-    } else if (s_compat_profile) {
-        typedef void (*glReadBuffer_t)(unsigned int);
-        glReadBuffer_t rb = (glReadBuffer_t)load_gl("glReadBuffer");
-        if (rb) rb(0x0405 /* GL_BACK */);
+    int drawFbo = 0;
+    ((void (*)(unsigned int, int *))pGI)(0x8CA9, &drawFbo); /* GL_DRAW_FRAMEBUFFER_BINDING */
+
+    /* Try where the core actually drew: draw FBO, last bound FBO, shared FBO, default. */
+    unsigned int candidates[4];
+    int nc = 0;
+    candidates[nc++] = (unsigned int)drawFbo;
+    if (s_last_fbo > 0 && s_last_fbo != drawFbo)
+        candidates[nc++] = (unsigned int)s_last_fbo;
+    if (s_shared_fbo && s_shared_fbo != (unsigned int)drawFbo
+        && s_shared_fbo != (unsigned int)s_last_fbo)
+        candidates[nc++] = s_shared_fbo;
+    if (drawFbo != 0)
+        candidates[nc++] = 0;
+
+    unsigned int readTarget = (unsigned int)drawFbo;
+    int nonzero = 0;
+    for (int i = 0; i < nc; i++) {
+        readTarget = candidates[i];
+        nonzero = read_bound_fbo_nz(readTarget, read_w, read_h, pixels_out);
+        if (nonzero > 0) break;
     }
-
-    ((void (*)(int, int, int, int, unsigned int, unsigned int, void *))pRP)(
-        0, 0, read_w, read_h,
-        0x1908 /* GL_RGBA */, 0x1401 /* GL_UNSIGNED_BYTE */, pixels_out);
 
     int total = read_w * read_h;
-    int nonzero = 0;
-    unsigned int *px = (unsigned int *)pixels_out;
-    for (int i = 0; i < total; i++) {
-        if (px[i] & 0x00FFFFFF) nonzero++;
-    }
 
-    /* If shared FBO 1 is empty, PPSSPP may have rendered to an internal FBO. */
+    /* Scan internal FBOs when nothing found (PPSSPP and similar). */
     unsigned int alt_fbo = 0;
     int alt_nz = 0;
-    if (nonzero == 0 && s_shared_fbo) {
-        alt_fbo = find_ppsspp_render_fbo(read_w, read_h, &alt_nz);
+    if (nonzero == 0) {
+        alt_fbo = find_render_fbo(read_w, read_h, &alt_nz);
         if (alt_fbo > 0 && alt_nz > 0) {
-            pBindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, alt_fbo);
-            read_bound_fbo(read_w, read_h, pixels_out);
-            nonzero = 0;
-            for (int i = 0; i < total; i++) {
-                if (px[i] & 0x00FFFFFF) nonzero++;
-            }
-            if (s_read_count <= 100 || (s_read_count % 60) == 0) {
-                fprintf(stderr, "[hlg] read_pixels: FBO1 empty, read from internal FBO %u "
+            readTarget = alt_fbo;
+            nonzero = read_bound_fbo_nz(readTarget, read_w, read_h, pixels_out);
+            if (s_read_count <= 20 || (s_read_count % 300) == 0) {
+                fprintf(stderr, "[hlg] read_pixels: fallback internal FBO %u "
                         "(probe_nz=%d full_nz=%d)\n", alt_fbo, alt_nz, nonzero);
             }
         }
     }
 
-    /* Diagnostic: also sample the default framebuffer (FBO 0) to find
-     * out where the core actually rendered. */
+    /* Diagnostic: sample shared FBO and default FB for logging. */
+    int fbo1_nonzero = -1;
     int fbo0_nonzero = -1;
-    if (s_shared_fbo && (s_read_count <= 100 || (s_read_count % 60) == 0)) {
-        pBindFramebuffer(0x8CA8 /* GL_READ_FRAMEBUFFER */, 0);
-        if (s_compat_profile) {
-            typedef void (*glReadBuffer_t)(unsigned int);
-            glReadBuffer_t rb = (glReadBuffer_t)load_gl("glReadBuffer");
-            if (rb) rb(0x0405 /* GL_BACK */);
+    if (s_read_count <= 20 || (s_read_count % 300) == 0) {
+        if (s_shared_fbo) {
+            unsigned int *tmp = (unsigned int *)malloc((size_t)total * 4);
+            if (tmp) {
+                fbo1_nonzero = read_bound_fbo_nz(s_shared_fbo, read_w, read_h, tmp);
+                free(tmp);
+            }
         }
-        unsigned int *tmp = (unsigned int *)malloc((size_t)total * 4);
-        if (tmp) {
-            ((void (*)(int, int, int, int, unsigned int, unsigned int, void *))pRP)(
-                0, 0, read_w, read_h, 0x1908, 0x1401, tmp);
-            fbo0_nonzero = 0;
-            for (int i = 0; i < total; i++) if (tmp[i] & 0x00FFFFFF) fbo0_nonzero++;
-            free(tmp);
+        {
+            unsigned int *tmp = (unsigned int *)malloc((size_t)total * 4);
+            if (tmp) {
+                fbo0_nonzero = read_bound_fbo_nz(0, read_w, read_h, tmp);
+                free(tmp);
+            }
         }
     }
 
-    if (s_read_count <= 100 || (s_read_count % 60) == 0 || nonzero > 0) {
-        fprintf(stderr, "[hlg] read_pixels: fbo=%u game=%dx%d glvp=%dx%d read=%dx%d "
-                "fboSz=%dx%d fbo1nz=%d fbo0nz=%d altFbo=%u (#%d)\n",
-                s_shared_fbo, req_w, req_h, gl_w, gl_h, read_w, read_h,
-                s_fbo_w, s_fbo_h, nonzero, fbo0_nonzero, alt_fbo, s_read_count);
+    if (s_read_count <= 20 || (s_read_count % 300) == 0) {
+        fprintf(stderr, "[hlg] read_pixels: src=%u drawFbo=%d lastFbo=%d game=%dx%d "
+                "glvp=%dx%d read=%dx%d fboSz=%dx%d nz=%d fbo1nz=%d fbo0nz=%d altFbo=%u (#%d)\n",
+                readTarget, drawFbo, s_last_fbo, req_w, req_h, gl_w, gl_h, read_w, read_h,
+                s_fbo_w, s_fbo_h, nonzero, fbo1_nonzero, fbo0_nonzero, alt_fbo, s_read_count);
     }
     s_read_count++;
 
@@ -1482,5 +1610,9 @@ void hlg_destroy(void) {
     s_gles_serial = 0;
     s_compat_profile = 0;
     s_gl_ctx_thread = 0;
+    s_gpu_logged_init = 0;
+    s_gpu_logged_runtime = 0;
+    s_init_gl_thread = 0;
+    s_gpu_info_cache[0] = '\0';
     pthread_mutex_unlock(&s_egl_mutex);
 }
