@@ -189,11 +189,19 @@ public class LibretroCore implements AutoCloseable {
         // Video callback — receives frames from the core
         videoCallback = (data, width, height, pitch) -> {
             if (width <= 0 || height <= 0) {
-                newFrame = true; // HW render: frame is in GL framebuffer
+                if (hwRenderActive) newFrame = true;
                 return;
             }
 
             synchronized (frameLock) {
+                long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
+                boolean hwFb = hwRenderActive && (data == null || dataAddr == -1 || dataAddr == 0);
+                // GET_CAN_DUPE: NULL data means "repeat last frame", not a pixel buffer.
+                if (!hwFb && (data == null || dataAddr == 0)) {
+                    newFrame = true;
+                    return;
+                }
+
                 if (frameBuffer == null || frameWidth != width || frameHeight != height) {
                     frameBuffer = new int[width * height];
                     frameWidth = width;
@@ -202,8 +210,7 @@ public class LibretroCore implements AutoCloseable {
 
                 int[] fb = frameBuffer;
                 // HW rendering: data is RETRO_HW_FRAME_BUFFER_VALID or null.
-                // Read pixels from GL framebuffer via headless_gl readback.
-                if (hwRenderActive && (data == null || Pointer.nativeValue(data) == -1 || Pointer.nativeValue(data) == 0)) {
+                if (hwFb) {
                     try {
                         // Resize PBuffer to match game resolution
                         HeadlessGL.INSTANCE.hlg_resize(width, height);
@@ -231,6 +238,8 @@ public class LibretroCore implements AutoCloseable {
                     newFrame = true;
                     return;
                 }
+
+                if (data == null) return;
 
                 switch (pixelFormat) {
                     case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888 -> {
@@ -661,6 +670,16 @@ public class LibretroCore implements AutoCloseable {
                     int baseW = data.getInt(0);
                     int baseH = data.getInt(4);
                     LOGGER.info("Core set geometry: {}x{}", baseW, baseH);
+                    if (baseW > 0 && baseH > 0) {
+                        synchronized (frameLock) {
+                            frameWidth = baseW;
+                            frameHeight = baseH;
+                            int needed = baseW * baseH;
+                            if (frameBuffer == null || frameBuffer.length != needed) {
+                                frameBuffer = new int[needed];
+                            }
+                        }
+                    }
                 }
                 return true;
             }
@@ -695,6 +714,22 @@ public class LibretroCore implements AutoCloseable {
                     LOGGER.info("Core requested SET_HW_SHARED_CONTEXT — accepting");
                     return true;
                 }
+                return false;
+            }
+            case LibretroEnvironment.SET_PERFORMANCE_LEVEL -> {
+                return true;
+            }
+            case LibretroEnvironment.GET_DISK_CONTROL_INTERFACE_VERSION -> {
+                if (data != null) data.setInt(0, 0);
+                return true;
+            }
+            case LibretroEnvironment.SET_AUDIO_BUFFER_STATUS_CALLBACK -> {
+                return true;
+            }
+            case 36 -> { // SET_MEMORY_MAPS
+                return true;
+            }
+            case 40 -> { // GET_CURRENT_SOFTWARE_FRAMEBUFFER
                 return false;
             }
             case LibretroEnvironment.SET_MESSAGE_EXT -> {

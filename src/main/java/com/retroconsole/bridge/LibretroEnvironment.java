@@ -56,6 +56,9 @@ public final class LibretroEnvironment {
     public static final int SET_CORE_OPTIONS_V2_INTL          = 68;
     public static final int SET_MESSAGE_EXT                   = 60;
     public static final int GET_VFS_INTERFACE                 = 45 | EXPERIMENTAL;
+    public static final int SET_MEMORY_MAPS                     = 36 | EXPERIMENTAL;
+    public static final int GET_CURRENT_SOFTWARE_FRAMEBUFFER    = 40 | EXPERIMENTAL;
+    public static final int SET_AUDIO_BUFFER_STATUS_CALLBACK      = 62;
 
     public static final int RETRO_HW_CONTEXT_OPENGL_CORE = 3;
 
@@ -97,11 +100,14 @@ public final class LibretroEnvironment {
             case SET_CORE_OPTIONS -> "SET_CORE_OPTIONS";
             case SET_CORE_OPTIONS_V2 -> "SET_CORE_OPTIONS_V2";
             case GET_PREFERRED_HW_RENDER -> "GET_PREFERRED_HW_RENDER";
+            case GET_DISK_CONTROL_INTERFACE_VERSION -> "GET_DISK_CONTROL_INTERFACE_VERSION";
             case GET_MESSAGE_INTERFACE_VERSION -> "GET_MESSAGE_INTERFACE_VERSION";
             case SET_MESSAGE_EXT -> "SET_MESSAGE_EXT";
             case SET_MINIMUM_AUDIO_LATENCY -> "SET_MINIMUM_AUDIO_LATENCY";
             case SET_CORE_OPTIONS_V2_INTL -> "SET_CORE_OPTIONS_V2_INTL";
             case 45 -> "GET_VFS_INTERFACE";
+            case 36 -> "SET_MEMORY_MAPS";
+            case 40 -> "GET_CURRENT_SOFTWARE_FRAMEBUFFER";
             case 51 -> "GET_INPUT_BITMASKS";
             case 87 -> "SET_HW_SHARED_CONTEXT";
             default -> "UNKNOWN(" + cmd + ")";
