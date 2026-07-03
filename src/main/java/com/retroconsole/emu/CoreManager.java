@@ -25,9 +25,9 @@ public class CoreManager {
     public record CoreInfo(String name, Path path, String platform) {}
 
     public CoreManager(Path coresDir, Path systemDir, Path saveDir) {
-        this.coresDir = coresDir;
-        this.systemDir = systemDir;
-        this.saveDir = saveDir;
+        this.coresDir = coresDir.toAbsolutePath().normalize();
+        this.systemDir = systemDir.toAbsolutePath().normalize();
+        this.saveDir = saveDir.toAbsolutePath().normalize();
 
         try {
             Files.createDirectories(coresDir);

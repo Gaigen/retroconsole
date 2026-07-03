@@ -7,11 +7,11 @@ import com.retroconsole.emu.ThreadedEmulatorRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.fml.loading.FMLPaths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 
 public class ServerConsoles {
@@ -31,15 +31,14 @@ public class ServerConsoles {
     ) {}
 
     public static void init() {
-        String coresDir = ModConfig.CORES_DIR.get();
-        String romsDir = ModConfig.ROMS_DIR.get();
-        Path cores = Paths.get(coresDir);
-        Path system = Paths.get(ModConfig.SYSTEM_DIR.get());
-        Path save = Paths.get(ModConfig.SAVE_DIR.get());
+        Path gameDir = FMLPaths.GAMEDIR.get();
+        Path cores = gameDir.resolve(ModConfig.CORES_DIR.get()).normalize();
+        Path system = gameDir.resolve(ModConfig.SYSTEM_DIR.get()).normalize();
+        Path save = gameDir.resolve(ModConfig.SAVE_DIR.get()).normalize();
         coreManager = new CoreManager(cores, system, save);
         coreManager.discoverCores();
-        LOGGER.info("CoreManager initialized. Cores dir: {}, discovered {} cores",
-                coresDir, coreManager.getCores().size());
+        LOGGER.info("CoreManager initialized. gameDir={}, system={}, discovered {} cores",
+                gameDir, system, coreManager.getCores().size());
     }
 
     public static void startEmulator(BlockPos pos, String coreName, String romId) {
@@ -52,7 +51,7 @@ public class ServerConsoles {
         if (coreManager == null) init();
         var coreInfo = coreManager.findCore(coreName);
         if (coreInfo == null) { LOGGER.error("Core not found: {}", coreName); return; }
-        Path romPath = Paths.get(ModConfig.ROMS_DIR.get(), romId);
+        Path romPath = FMLPaths.GAMEDIR.get().resolve(ModConfig.ROMS_DIR.get()).resolve(romId).normalize();
         if (!romPath.toFile().exists()) { LOGGER.error("ROM not found: {}", romPath); return; }
         LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath);
         if (runtime == null) { LOGGER.error("Failed to load core {} with ROM {}", coreName, romId); return; }

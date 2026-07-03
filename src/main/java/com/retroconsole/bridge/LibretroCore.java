@@ -17,12 +17,14 @@ interface HeadlessGL extends Library {
             Paths.get("config/retroconsole/cores/.libheadless_gl.so").toAbsolutePath().toString(),
             HeadlessGL.class);
     int hlg_init(int major, int minor);
+    int hlg_init_ex(int api, int major, int minor, int flags);
     void hlg_destroy();
     Pointer hlg_get_proc_address(String sym);
-    void hlg_read_pixels(int[] viewport, Pointer pixels);
+    void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels);
     void hlg_dump_hw_render(Pointer data, int size);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
+    Pointer hlg_get_log_cb_ptr();
     int hlg_make_current();
     void hlg_release();
     void hlg_debug_fbo();
@@ -91,6 +93,12 @@ public class LibretroCore implements AutoCloseable {
 
     // HW render state for Flycast
     private boolean hwRenderActive = false;
+    private boolean headlessGlReady = false;
+    private int headlessGlApi = -1;
+    private int hwPbufW = 0;
+    private int hwPbufH = 0;
+    private Pointer hwContextReset = null;
+    private boolean hwContextResetDone = false;
     // Keep callbacks alive so JNA trampolines aren't GC'd
     private GetFramebufferCb hwGetFramebuffer;
     private GetProcAddressCb hwGetProcAddress;
@@ -116,6 +124,8 @@ public class LibretroCore implements AutoCloseable {
     private String saveDir;
     private Memory persistentSystemDir;
     private Memory persistentSaveDir;
+    private Memory persistentLibretroPath;
+    private boolean gameLoaded = false;
 
     // Loaded game path (for save file naming)
     private String loadedGamePath;
@@ -136,6 +146,12 @@ public class LibretroCore implements AutoCloseable {
         // JNA needs to find the library. We use its absolute path.
         String absPath = corePath.toAbsolutePath().toString();
         lc.corePath = corePath;
+        if (systemDir != null) {
+            systemDir = Path.of(systemDir).toAbsolutePath().normalize().toString();
+        }
+        if (saveDir != null) {
+            saveDir = Path.of(saveDir).toAbsolutePath().normalize().toString();
+        }
         lc.systemDir = systemDir;
         lc.saveDir = saveDir;
         lc.updatePersistentDirMemory();
@@ -154,20 +170,16 @@ public class LibretroCore implements AutoCloseable {
         // (the old approach) was wrong — the real pointer lives at this+0x250
         // and is dereferenced as `call rcx`. NOPping the call site removes the
         // dereference entirely.
-        lc.disableFlycastLogCall();
-
-        // Initialize headless GL (Flycast HW only — PPSSPP uses software on headless server).
         if (lc.isFlycastCore()) {
-            try {
-                int glOk = HeadlessGL.INSTANCE.hlg_init(3, 1);
-                LOGGER.info("Headless GL context: {}", glOk != 0 ? "OK" : "FAILED");
-            } catch (Throwable t) {
-                LOGGER.warn("Headless GL init failed (Flycast DC games won't work): {}", t.getMessage());
-            }
+            lc.disableFlycastLogCall();
         }
 
         if (lc.isPpssppCore()) {
             lc.seedPpssppDefaults();
+        }
+
+        if (lc.isPcsx2Core()) {
+            lc.seedPcsx2Defaults();
         }
 
         lc.core.retro_init();
@@ -211,14 +223,25 @@ public class LibretroCore implements AutoCloseable {
                 int[] fb = frameBuffer;
                 // HW rendering: data is RETRO_HW_FRAME_BUFFER_VALID or null.
                 if (hwFb) {
+                    // PPSSPP: skip readback until context_reset on emulator thread
+                    if (isPpssppCore() && !hwContextResetDone) {
+                        newFrame = true;
+                        return;
+                    }
                     try {
-                        // Resize PBuffer to match game resolution
-                        HeadlessGL.INSTANCE.hlg_resize(width, height);
+                        // PCSX2/Flycast GS may use a GL viewport taller than retro height.
+                        int allocW = width;
+                        int allocH = Math.max(height, ((height + 63) / 64) * 64);
+                        if (allocW != hwPbufW || allocH != hwPbufH) {
+                            HeadlessGL.INSTANCE.hlg_resize(allocW, allocH);
+                            hwPbufW = allocW;
+                            hwPbufH = allocH;
+                        }
                         HeadlessGL.INSTANCE.hlg_debug_fbo();
                         int[] vp = new int[4];
-                        int numPixels = width * height;
-                        Memory nativePixels = new Memory((long) numPixels * 4);
-                        HeadlessGL.INSTANCE.hlg_read_pixels(vp, nativePixels);
+                        int maxPixels = allocW * allocH;
+                        Memory nativePixels = new Memory((long) maxPixels * 4L);
+                        HeadlessGL.INSTANCE.hlg_read_pixels(vp, nativePixels, maxPixels);
                         int readW = vp[2] > 0 ? vp[2] : width;
                         int readH = vp[3] > 0 ? vp[3] : height;
                         for (int y = 0; y < readH && y < height; y++) {
@@ -449,13 +472,50 @@ public class LibretroCore implements AutoCloseable {
                 && corePath.getFileName().toString().toLowerCase().contains("ppsspp");
     }
 
+    /** Headless EGL (Mesa llvmpipe) for HW-render cores. */
     private boolean supportsHwRender() {
-        return isFlycastCore();
+        return true;
     }
 
-    /** Headless server: force PPSSPP software renderer (HW EGL is unstable on WSL). */
+    /** PPSSPP on Linux uses GLEW — needs desktop GL compat, not EGL GLES. */
+    private static final int HLG_FLAG_COMPAT_PROFILE = 1;
+
+    private boolean ensureHeadlessGl(int ctxType) {
+        int api, major, minor, flags;
+        if (isPpssppCore()) {
+            api = 0;
+            major = 3;
+            minor = 3;
+            flags = HLG_FLAG_COMPAT_PROFILE;
+        } else {
+            api = (ctxType == 1 || ctxType == 2 || ctxType == 4) ? 1 : 0;
+            major = 3;
+            minor = (api == 1) ? 0 : (ctxType == 3 ? 3 : 1);
+            flags = 0;
+        }
+        int profileKey = (api & 0xFF) | ((flags & 0xFF) << 8) | ((minor & 0xFF) << 16);
+        if (headlessGlReady && headlessGlApi == profileKey) return true;
+        if (headlessGlReady) {
+            try { HeadlessGL.INSTANCE.hlg_destroy(); } catch (Throwable ignored) {}
+            headlessGlReady = false;
+            headlessGlApi = -1;
+        }
+        try {
+            int glOk = HeadlessGL.INSTANCE.hlg_init_ex(api, major, minor, flags);
+            headlessGlReady = glOk != 0;
+            if (headlessGlReady) headlessGlApi = profileKey;
+            String apiName = isPpssppCore() ? "GL 3.3 Compat"
+                    : (api == 1 ? "GLES" + major : "GL " + major + "." + minor);
+            LOGGER.info("Headless GL context ({}): {}", apiName, headlessGlReady ? "OK" : "FAILED");
+            return headlessGlReady;
+        } catch (Throwable t) {
+            LOGGER.warn("Headless GL init failed: {}", t.getMessage());
+            return false;
+        }
+    }
+
+    /** PPSSPP perf defaults; desktop GL compat for GLEW on Linux. */
     private void seedPpssppDefaults() {
-        registerCoreOption("ppsspp_software_rendering", "enabled");
         registerCoreOption("ppsspp_backend", "opengl");
         registerCoreOption("ppsspp_internal_resolution", "480x272");
         registerCoreOption("ppsspp_cpu_core", "JIT");
@@ -465,12 +525,18 @@ public class LibretroCore implements AutoCloseable {
         registerCoreOption("ppsspp_mulitsample_level", "Disabled");
         registerCoreOption("ppsspp_texture_scaling_level", "disabled");
         registerCoreOption("ppsspp_texture_shader", "disabled");
-        registerCoreOption("ppsspp_skip_buffer_effects", "enabled");
-        registerCoreOption("ppsspp_skip_gpu_readbacks", "enabled");
+        registerCoreOption("ppsspp_skip_buffer_effects", "disabled");
+        registerCoreOption("ppsspp_skip_gpu_readbacks", "disabled");
         registerCoreOption("ppsspp_lazy_texture_caching", "enabled");
         registerCoreOption("ppsspp_lower_resolution_for_effects", "Balanced");
         registerCoreOption("ppsspp_gpu_hardware_transform", "enabled");
-        LOGGER.info("PPSSPP defaults: software rendering enabled (headless server)");
+        registerCoreOption("ppsspp_inflight_frames", "Up to 1");
+        LOGGER.info("PPSSPP defaults: performance tuning (desktop GL)");
+    }
+
+    /** PCSX2 tuning for headless — renderer left at core default (Auto → HW if available). */
+    private void seedPcsx2Defaults() {
+        registerCoreOption("pcsx2_fastboot", "enabled");
     }
 
     /** Set directories that cores may query via environment callback. */
@@ -489,6 +555,11 @@ public class LibretroCore implements AutoCloseable {
             persistentSaveDir = new Memory(saveDir.length() + 1);
             persistentSaveDir.setString(0, saveDir);
         }
+        if (corePath != null) {
+            String libretroPath = corePath.toAbsolutePath().normalize().toString();
+            persistentLibretroPath = new Memory(libretroPath.length() + 1);
+            persistentLibretroPath.setString(0, libretroPath);
+        }
     }
 
     private boolean handleEnvironment(int cmd, Pointer data) {
@@ -502,10 +573,22 @@ public class LibretroCore implements AutoCloseable {
                 if (data != null && persistentSystemDir != null) {
                     data.setPointer(0, persistentSystemDir);
                     LOGGER.info("Core requested GET_SYSTEM_DIRECTORY -> {}", systemDir);
+                    logPcsx2BiosDirIfNeeded();
                     return true;
                 }
                 LOGGER.warn("Core requested GET_SYSTEM_DIRECTORY but systemDir is null");
                 return false;
+            }
+            case LibretroEnvironment.GET_LIBRETRO_PATH -> {
+                if (data != null && persistentLibretroPath != null) {
+                    data.setPointer(0, persistentLibretroPath);
+                    return true;
+                }
+                return false;
+            }
+            case LibretroEnvironment.SET_SUPPORT_NO_GAME -> {
+                if (data != null) data.setByte(0, (byte) 0);
+                return true;
             }
             case LibretroEnvironment.GET_SAVE_DIRECTORY -> {
                 if (data != null && persistentSaveDir != null) {
@@ -542,46 +625,55 @@ public class LibretroCore implements AutoCloseable {
                     };
                     LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
 
-                    // Flycast and PPSSPP use headless EGL HW rendering (Mesa llvmpipe).
+                    if (ctxType == 0) {
+                        LOGGER.info("HW render NONE accepted (software renderer)");
+                        hwRenderActive = false;
+                        return true;
+                    }
+
                     if (!supportsHwRender()) {
-                        LOGGER.info("Rejecting {} — core has no HW render bridge", ctxName);
+                        LOGGER.info("Rejecting {} — no HW render bridge", ctxName);
                         return false;
                     }
-                    LOGGER.info("Accepting hw render for Flycast core");
+                    if (!ensureHeadlessGl(ctxType)) {
+                        LOGGER.info("Rejecting {} — headless EGL init failed", ctxName);
+                        return false;
+                    }
 
-                    // Only accept OpenGL/OpenGL Core contexts (1, 3, 4).
-                    // Reject Vulkan (6) — we only have Mesa software OpenGL.
+                    String coreName = corePath != null ? corePath.getFileName().toString() : "core";
+                    LOGGER.info("Accepting hw render for {} ({})", coreName, ctxName);
+
+                    // Mesa llvmpipe: OpenGL / OpenGL Core / GLES3 only (no Vulkan).
                     if (ctxType != 1 && ctxType != 3 && ctxType != 4) {
-                        LOGGER.info("Rejecting {} — only OpenGL supported", ctxName);
+                        LOGGER.info("Rejecting {} — only OpenGL contexts supported", ctxName);
                         return false;
                     }
 
-                    // Dump the raw struct to find actual field offsets
+                    int glMajor = 3;
+                    int glMinor = switch (ctxType) {
+                        case 3 -> 3; // OPENGL_CORE — PCSX2 expects 3.3+
+                        default -> isPpssppCore() ? 3 : 0;
+                    };
+
                     HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
 
-                    // Get raw C function pointers from .libheadless_gl.so
-                    // These are actual machine code addresses Flycast can call directly.
                     Pointer fbPtr = HeadlessGL.INSTANCE.hlg_get_framebuffer_ptr();
                     Pointer procPtr = HeadlessGL.INSTANCE.hlg_get_proc_address_ptr();
                     LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
-                    data.setPointer(16, fbPtr);   // get_current_framebuffer
-                    data.setPointer(24, procPtr);  // get_proc_address
-                    data.setInt(36, 3);            // version_major (PPSSPP GL Core 3.1)
-                    data.setInt(40, 1);            // version_minor
-                    data.setByte(44, (byte) 1);    // cache_context = true
+                    data.setPointer(16, fbPtr);
+                    data.setPointer(24, procPtr);
+                    data.setInt(36, glMajor);
+                    data.setInt(40, glMinor);
+                    data.setByte(44, (byte) 1);    // cache_context
 
                     // Verify writes persisted
                     LOGGER.info("  VERIFIED: fb@16={}, proc@24={}, cache@44={}",
                             data.getPointer(16), data.getPointer(24), data.getByte(44));
 
-                    // CRITICAL: Flycast's GL function table (__rglgen_*) is populated by
-                    // context_reset callback, NOT by get_proc_address directly.
-                    // For Flycast we manually call context_reset because Flycast
-                    // doesn't do it from libretro callbacks (it expects the
-                    // frontend to call it). For other cores (PPSSPP) the core
-                    // will call context_reset itself from retro_load_game /
-                    // retro_run — calling it here would dereference a NULL
-                    // Libretro::ctx and crash.
+                    hwContextReset = data.getPointer(8);
+                    hwContextResetDone = false;
+
+                    // Flycast: context_reset on init thread. PPSSPP: emulator thread (needs current GL).
                     if (isFlycastCore()) {
                         Pointer contextResetPtr = data.getPointer(8);
                         if (contextResetPtr != null && Pointer.nativeValue(contextResetPtr) != 0) {
@@ -640,6 +732,23 @@ public class LibretroCore implements AutoCloseable {
                     return false;
                 }
                 if (data == null) return false;
+                /* Use the native variadic log callback from headless_gl.so —
+                 * JNA can't bind retro_log_printf_t (variadic), so we write
+                 * the C function pointer directly. This shows real core logs
+                 * (shader compile errors, GL failures, etc) instead of raw
+                 * "%s %s" format strings. */
+                try {
+                    Pointer nativeLogCb = HeadlessGL.INSTANCE.hlg_get_log_cb_ptr();
+                    if (nativeLogCb != null && Pointer.nativeValue(nativeLogCb) != 0) {
+                        data.setPointer(0, nativeLogCb);
+                        if (logCallback == null) {
+                            logCallback = (level, fmt) -> {}; // placeholder, unused now
+                        }
+                        return true;
+                    }
+                } catch (Throwable t) {
+                    LOGGER.warn("Native log cb unavailable, falling back to JNA: {}", t.getMessage());
+                }
                 if (logCallback == null) {
                     logCallback = (level, fmt) -> {
                         String msg = fmt != null ? fmt.trim() : "";
@@ -700,8 +809,11 @@ public class LibretroCore implements AutoCloseable {
             }
             case LibretroEnvironment.GET_PREFERRED_HW_RENDER -> {
                 if (data != null && supportsHwRender()) {
-                    data.setInt(0, LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE);
-                    LOGGER.info("Core requested GET_PREFERRED_HW_RENDER -> OPENGL_CORE");
+                    int preferred = isPpssppCore() ? 1 : LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE;
+                    data.setInt(0, preferred);
+                    LOGGER.info("Core requested GET_PREFERRED_HW_RENDER -> {}",
+                            isPpssppCore() ? "OPENGL (desktop compat)"
+                                    : (preferred == 1 ? "OPENGL/GLES" : "OPENGL_CORE"));
                     return true;
                 }
                 return false;
@@ -723,6 +835,9 @@ public class LibretroCore implements AutoCloseable {
                 if (data != null) data.setInt(0, 0);
                 return true;
             }
+            case LibretroEnvironment.SET_DISK_CONTROL_EXT_INTERFACE -> {
+                return true;
+            }
             case LibretroEnvironment.SET_AUDIO_BUFFER_STATUS_CALLBACK -> {
                 return true;
             }
@@ -736,6 +851,8 @@ public class LibretroCore implements AutoCloseable {
                 return true;
             }
             case LibretroEnvironment.SET_CORE_OPTIONS_V2_INTL -> {
+                LOGGER.info("Core requesting SET_CORE_OPTIONS_V2_INTL");
+                if (data != null) handleSetCoreOptionsV2Intl(data);
                 return true;
             }
             case 45 -> { // GET_VFS_INTERFACE
@@ -768,6 +885,21 @@ public class LibretroCore implements AutoCloseable {
             case LibretroEnvironment.SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK -> {
                 return true;
             }
+            case LibretroEnvironment.SET_VARIABLE -> {
+                if (data == null) return false;
+                Pointer keyPtr = data.getPointer(0);
+                if (keyPtr == null) return false;
+                String key = keyPtr.getString(0);
+                if (key == null || key.isEmpty()) return false;
+                Pointer valPtr = data.getPointer(Native.POINTER_SIZE);
+                String val = valPtr != null ? valPtr.getString(0) : "";
+                if (key.startsWith("ppsspp_")) {
+                    val = applyPpssppDefault(key, val != null ? val : "");
+                }
+                coreOptions.put(key, val != null ? val : "");
+                LOGGER.debug("Core SET_VARIABLE: {} = {}", key, val);
+                return true;
+            }
             case 42 -> { // SET_SUPPORT_ACHIEVEMENTS (experimental)
                 return true;
             }
@@ -796,9 +928,19 @@ public class LibretroCore implements AutoCloseable {
         if (key.startsWith("ppsspp_")) {
             defaultValue = applyPpssppDefault(key, defaultValue);
         }
+        if (key.startsWith("pcsx2_")) {
+            defaultValue = applyPcsx2Default(key, defaultValue);
+        }
         defaultValue = applyFlycastDefault(key, defaultValue);
         coreOptions.put(key, defaultValue);
         LOGGER.info("  core opt: {} = {}", key, defaultValue);
+    }
+
+    private static String applyPcsx2Default(String key, String defaultValue) {
+        return switch (key) {
+            case "pcsx2_fastboot" -> "enabled";
+            default -> defaultValue;
+        };
     }
 
     private static String applyFlycastDefault(String key, String defaultValue) {
@@ -841,6 +983,16 @@ public class LibretroCore implements AutoCloseable {
         }
     }
 
+    /** {@code retro_core_options_v2_intl} → parse {@code us->definitions}. */
+    private void handleSetCoreOptionsV2Intl(Pointer data) {
+        Pointer usPtr = data.getPointer(0);
+        if (usPtr == null) return;
+        Pointer definitions = usPtr.getPointer(Native.POINTER_SIZE);
+        if (definitions != null) {
+            walkCoreOptionDefinitions(definitions, CORE_OPT_DEF_V2_SIZE);
+        }
+    }
+
     private void handleSetVariables(Pointer data) {
         // Each retro_variable is { const char *key; const char *value; }
         // value contains "desc; option1|option2|..."  — key\0value\0 ... null terminator
@@ -871,7 +1023,6 @@ public class LibretroCore implements AutoCloseable {
 
     private static String applyPpssppDefault(String key, String defaultValue) {
         return switch (key) {
-            case "ppsspp_software_rendering" -> "enabled";
             case "ppsspp_backend" -> "opengl";
             case "ppsspp_internal_resolution" -> "480x272";
             case "ppsspp_cpu_core" -> "JIT";
@@ -880,10 +1031,11 @@ public class LibretroCore implements AutoCloseable {
             case "ppsspp_auto_frameskip" -> "enabled";
             case "ppsspp_mulitsample_level" -> "Disabled";
             case "ppsspp_texture_scaling_level", "ppsspp_texture_shader" -> "disabled";
-            case "ppsspp_skip_buffer_effects", "ppsspp_skip_gpu_readbacks",
-                 "ppsspp_lazy_texture_caching" -> "enabled";
+            case "ppsspp_skip_buffer_effects", "ppsspp_skip_gpu_readbacks" -> "disabled";
+            case "ppsspp_lazy_texture_caching" -> "enabled";
             case "ppsspp_lower_resolution_for_effects" -> "Balanced";
             case "ppsspp_gpu_hardware_transform" -> "enabled";
+            case "ppsspp_inflight_frames" -> "Up to 1";
             default -> defaultValue;
         };
     }
@@ -905,7 +1057,16 @@ public class LibretroCore implements AutoCloseable {
             if (key == null || key.isEmpty()) return false;
 
             String val = coreOptions.get(key);
-            if (val != null) {
+            if ((val == null || val.isEmpty()) && key.startsWith("ppsspp_")) {
+                val = applyPpssppDefault(key, "");
+            }
+            if ((val == null || val.isEmpty()) && "pcsx2_bios".equals(key)) {
+                val = findFirstPcsx2BiosFilename();
+                if (val != null) {
+                    LOGGER.info("PCSX2 bios auto-selected: {}", val);
+                }
+            }
+            if (val != null && !val.isEmpty()) {
                 Memory valMem = new Memory(val.length() + 1);
                 valMem.setString(0, val);
                 allocatedVarMemory.add(valMem);
@@ -958,6 +1119,7 @@ public class LibretroCore implements AutoCloseable {
         info.meta = "";
 
         boolean ok = core.retro_load_game(info);
+        gameLoaded = ok;
         if (ok) {
             LOGGER.info("Game loaded: {}", romPath.getFileName());
 
@@ -972,8 +1134,8 @@ public class LibretroCore implements AutoCloseable {
                     avInfo.geometry.base_width, avInfo.geometry.base_height,
                     avInfo.timing_fps, avInfo.timing_sample_rate);
 
-            // Release EGL context from init thread so the emulator thread can take it (Flycast).
-            if (hwRenderActive && isFlycastCore()) {
+            // Release EGL from load thread so the core's render thread can take it.
+            if (hwRenderActive) {
                 try {
                     HeadlessGL.INSTANCE.hlg_release();
                     LOGGER.info("EGL context released from init thread");
@@ -996,8 +1158,23 @@ public class LibretroCore implements AutoCloseable {
             // Ensure EGL context is current on this thread (emulator thread != server thread)
             if (hwRenderActive) {
                 try { HeadlessGL.INSTANCE.hlg_make_current(); } catch (Throwable ignored) {}
+                if (isPpssppCore() && !hwContextResetDone && hwContextReset != null
+                        && Pointer.nativeValue(hwContextReset) != 0) {
+                    try {
+                        LOGGER.info("PPSSPP context_reset on emulator thread @ {}", hwContextReset);
+                        com.sun.jna.Function.getFunction(hwContextReset).invokeVoid(new Object[0]);
+                        hwContextResetDone = true;
+                    } catch (Throwable t) {
+                        LOGGER.warn("PPSSPP context_reset failed: {}", t.getMessage());
+                    }
+                }
             }
+            long t0 = System.nanoTime();
             core.retro_run();
+            long dtMs = (System.nanoTime() - t0) / 1_000_000;
+            if (dtMs > 100 && hwRenderActive && isPpssppCore()) {
+                LOGGER.warn("retro_run took {}ms (possible ThreadFrame stall)", dtMs);
+            }
         }
     }
 
@@ -1113,18 +1290,77 @@ public class LibretroCore implements AutoCloseable {
         }
     }
 
+    private String findFirstPcsx2BiosFilename() {
+        if (systemDir == null) return null;
+        Path biosDir = Path.of(systemDir, "pcsx2", "bios");
+        Path preferred = biosDir.resolve("scph70000.bin");
+        if (Files.isRegularFile(preferred)) {
+            return preferred.getFileName().toString();
+        }
+        if (!Files.isDirectory(biosDir)) return null;
+        try (var stream = Files.list(biosDir)) {
+            return stream
+                    .filter(p -> Files.isRegularFile(p) || Files.isSymbolicLink(p))
+                    .filter(p -> {
+                        try {
+                            long size = Files.size(p);
+                            return size >= 4L * 1024 * 1024 && size <= 8L * 1024 * 1024;
+                        } catch (IOException e) {
+                            return false;
+                        }
+                    })
+                    .map(p -> p.getFileName().toString())
+                    .sorted()
+                    .findFirst()
+                    .orElse(null);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to scan PCSX2 bios dir {}", biosDir, e);
+            return null;
+        }
+    }
+
+    private boolean isPcsx2Core() {
+        return corePath != null
+                && corePath.getFileName().toString().toLowerCase().contains("pcsx2");
+    }
+
+    private void logPcsx2BiosDirIfNeeded() {
+        if (!isPcsx2Core() || systemDir == null) return;
+        Path biosDir = Path.of(systemDir, "pcsx2", "bios");
+        if (!Files.isDirectory(biosDir)) {
+            LOGGER.warn("PCSX2 bios dir missing: {}", biosDir);
+            return;
+        }
+        try (var stream = Files.list(biosDir)) {
+            var names = stream.filter(Files::isRegularFile).map(p -> p.getFileName().toString()).toList();
+            LOGGER.info("PCSX2 bios dir {}: {}", biosDir, names);
+        } catch (IOException e) {
+            LOGGER.warn("Failed to list PCSX2 bios dir {}", biosDir, e);
+        }
+    }
+
     @Override
     public void close() {
         if (core != null) {
-            try {
-                core.retro_unload_game();
-                core.retro_deinit();
-            } catch (Exception e) {
-                LOGGER.warn("Error closing libretro core", e);
+            if (gameLoaded) {
+                try {
+                    core.retro_unload_game();
+                } catch (Throwable t) {
+                    LOGGER.warn("retro_unload_game failed", t);
+                }
+                try {
+                    core.retro_deinit();
+                } catch (Throwable t) {
+                    LOGGER.warn("retro_deinit failed", t);
+                }
+            } else {
+                LOGGER.warn("Skipping retro_deinit — game never loaded (avoids PCSX2 teardown crash)");
             }
             core = null;
         }
         hwRenderActive = false;
+        hwPbufW = 0;
+        hwPbufH = 0;
         hwGetFramebuffer = null;
         hwGetProcAddress = null;
     }
