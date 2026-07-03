@@ -20,7 +20,7 @@ interface HeadlessGL extends Library {
     int hlg_init_ex(int api, int major, int minor, int flags);
     void hlg_destroy();
     Pointer hlg_get_proc_address(String sym);
-    void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels);
+    void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH);
     void hlg_dump_hw_render(Pointer data, int size);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
@@ -93,6 +93,7 @@ public class LibretroCore implements AutoCloseable {
 
     // HW render state for Flycast
     private boolean hwRenderActive = false;
+    private boolean hwBottomLeftOrigin = true;
     private boolean headlessGlReady = false;
     private int headlessGlApi = -1;
     private int hwPbufW = 0;
@@ -229,24 +230,32 @@ public class LibretroCore implements AutoCloseable {
                         return;
                     }
                     try {
-                        // PCSX2/Flycast GS may use a GL viewport taller than retro height.
-                        int allocW = width;
-                        int allocH = Math.max(height, ((height + 63) / 64) * 64);
-                        if (allocW != hwPbufW || allocH != hwPbufH) {
-                            HeadlessGL.INSTANCE.hlg_resize(allocW, allocH);
-                            hwPbufW = allocW;
-                            hwPbufH = allocH;
+                        // GL surface must fit the core's viewport; readback uses video_cb size.
+                        int surfW = Math.max(width, hwPbufW);
+                        int surfH = Math.max(height, hwPbufH);
+                        if (surfW != hwPbufW || surfH != hwPbufH) {
+                            HeadlessGL.INSTANCE.hlg_resize(surfW, surfH);
+                            hwPbufW = surfW;
+                            hwPbufH = surfH;
                         }
                         HeadlessGL.INSTANCE.hlg_debug_fbo();
                         int[] vp = new int[4];
-                        int maxPixels = allocW * allocH;
+                        int maxPixels = width * height;
                         Memory nativePixels = new Memory((long) maxPixels * 4L);
-                        HeadlessGL.INSTANCE.hlg_read_pixels(vp, nativePixels, maxPixels);
-                        int readW = vp[2] > 0 ? vp[2] : width;
-                        int readH = vp[3] > 0 ? vp[3] : height;
-                        for (int y = 0; y < readH && y < height; y++) {
-                            int srcY = readH - 1 - y;
-                            for (int x = 0; x < readW && x < width; x++) {
+                        HeadlessGL.INSTANCE.hlg_read_pixels(vp, nativePixels, maxPixels, width, height);
+                        // Grow GL backing store if core uses a larger viewport (e.g. PCSX2/Flycast).
+                        int vpW = vp[2] > 0 ? vp[2] : width;
+                        int vpH = vp[3] > 0 ? vp[3] : height;
+                        if (vpW > hwPbufW || vpH > hwPbufH) {
+                            hwPbufW = Math.max(hwPbufW, vpW);
+                            hwPbufH = Math.max(hwPbufH, vpH);
+                            HeadlessGL.INSTANCE.hlg_resize(hwPbufW, hwPbufH);
+                        }
+                        int readW = width;
+                        int readH = height;
+                        for (int y = 0; y < readH; y++) {
+                            int srcY = hwBottomLeftOrigin ? (readH - 1 - y) : y;
+                            for (int x = 0; x < readW; x++) {
                                 long off = ((long) srcY * readW + x) * 4;
                                 int r = nativePixels.getByte(off)     & 0xFF;
                                 int g = nativePixels.getByte(off + 1) & 0xFF;
@@ -672,6 +681,7 @@ public class LibretroCore implements AutoCloseable {
 
                     hwContextReset = data.getPointer(8);
                     hwContextResetDone = false;
+                    hwBottomLeftOrigin = data.getByte(34) != 0;
 
                     // Flycast: context_reset on init thread. PPSSPP: emulator thread (needs current GL).
                     if (isFlycastCore()) {
@@ -1359,6 +1369,7 @@ public class LibretroCore implements AutoCloseable {
             core = null;
         }
         hwRenderActive = false;
+        hwBottomLeftOrigin = true;
         hwPbufW = 0;
         hwPbufH = 0;
         hwGetFramebuffer = null;
