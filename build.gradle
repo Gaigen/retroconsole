@@ -83,6 +83,7 @@ tasks.register('buildHeadlessGL', Exec) {
     group = 'native'
     commandLine 'bash', file('build_headless_gl.sh').absolutePath
     inputs.file 'headless_gl.c'
+    inputs.file 'gles_wrappers.inc'
     inputs.file 'build_headless_gl.sh'
     outputs.file 'runs/client/config/retroconsole/cores/.libheadless_gl.so'
 }

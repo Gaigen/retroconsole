@@ -26,6 +26,7 @@ public final class LibretroEnvironment {
     public static final int GET_VARIABLE_UPDATE       = 17;
     public static final int SET_SUPPORT_NO_GAME       = 18;
     public static final int GET_LIBRETRO_PATH         = 19;
+    public static final int SET_DISK_CONTROL_EXT_INTERFACE = 58;
     public static final int SET_FRAME_TIME_CALLBACK   = 21;
     public static final int SET_AUDIO_CALLBACK        = 22;
     public static final int GET_RUMBLE_INTERFACE      = 23;
@@ -49,6 +50,7 @@ public final class LibretroEnvironment {
     public static final int SET_MINIMUM_AUDIO_LATENCY = 63;
     public static final int SET_FASTFORWARDING_OVERRIDE = 64;
     public static final int SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK = 69;
+    public static final int SET_VARIABLE                       = 70;
     public static final int SET_CORE_OPTIONS_V2                    = 67;
 
     public static final int GET_INPUT_BITMASKS        = 51 | EXPERIMENTAL;
@@ -85,6 +87,8 @@ public final class LibretroEnvironment {
             case GET_VARIABLE -> "GET_VARIABLE";
             case SET_VARIABLES -> "SET_VARIABLES";
             case GET_VARIABLE_UPDATE -> "GET_VARIABLE_UPDATE";
+            case SET_SUPPORT_NO_GAME -> "SET_SUPPORT_NO_GAME";
+            case GET_LIBRETRO_PATH -> "GET_LIBRETRO_PATH";
             case SET_AUDIO_CALLBACK -> "SET_AUDIO_CALLBACK";
             case GET_RUMBLE_INTERFACE -> "GET_RUMBLE_INTERFACE";
             case GET_LOG_INTERFACE -> "GET_LOG_INTERFACE";
@@ -101,10 +105,12 @@ public final class LibretroEnvironment {
             case SET_CORE_OPTIONS_V2 -> "SET_CORE_OPTIONS_V2";
             case GET_PREFERRED_HW_RENDER -> "GET_PREFERRED_HW_RENDER";
             case GET_DISK_CONTROL_INTERFACE_VERSION -> "GET_DISK_CONTROL_INTERFACE_VERSION";
+            case SET_DISK_CONTROL_EXT_INTERFACE -> "SET_DISK_CONTROL_EXT_INTERFACE";
             case GET_MESSAGE_INTERFACE_VERSION -> "GET_MESSAGE_INTERFACE_VERSION";
             case SET_MESSAGE_EXT -> "SET_MESSAGE_EXT";
             case SET_MINIMUM_AUDIO_LATENCY -> "SET_MINIMUM_AUDIO_LATENCY";
             case SET_CORE_OPTIONS_V2_INTL -> "SET_CORE_OPTIONS_V2_INTL";
+            case SET_VARIABLE -> "SET_VARIABLE";
             case 45 -> "GET_VFS_INTERFACE";
             case 36 -> "SET_MEMORY_MAPS";
             case 40 -> "GET_CURRENT_SOFTWARE_FRAMEBUFFER";
