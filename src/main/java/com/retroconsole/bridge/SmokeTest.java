@@ -23,8 +23,8 @@ public class SmokeTest {
         System.out.println("System: " + systemDir);
 
         try {
-            LibretroCore core = LibretroCore.load(corePath);
-            core.setDirectories(systemDir.toString(), saveDir.toString());
+            LibretroCore core = LibretroCore.load(
+                    corePath, systemDir.toString(), saveDir.toString());
             System.out.println("Core loaded.");
 
             boolean loaded = core.loadGame(romPath);

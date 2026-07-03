@@ -44,6 +44,8 @@ public interface LibretroBridge extends Library {
     int RETRO_DEVICE_ID_JOYPAD_R2     = 13;
     int RETRO_DEVICE_ID_JOYPAD_L3     = 14;
     int RETRO_DEVICE_ID_JOYPAD_R3     = 15;
+    /** All digital buttons as a bitmask when frontend supports GET_INPUT_BITMASKS. */
+    int RETRO_DEVICE_ID_JOYPAD_MASK   = 256;
 
     // --- Analog sticks ---
     int RETRO_DEVICE_INDEX_ANALOG_LEFT   = 0;
@@ -52,22 +54,25 @@ public interface LibretroBridge extends Library {
     int RETRO_DEVICE_ID_ANALOG_X         = 0;
     int RETRO_DEVICE_ID_ANALOG_Y         = 1;
 
-    // --- Environment commands ---
-    int RETRO_ENVIRONMENT_GET_CAN_DUPE         = 1;
-    int RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY  = 9;
-    int RETRO_ENVIRONMENT_SET_PIXEL_FORMAT      = 10;
-    int RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY    = 11;
-    int RETRO_ENVIRONMENT_SET_SUPPORT_ACHIEVEMENTS = 12;
-    int RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS = 13;
-    int RETRO_ENVIRONMENT_SET_GEOMETRY          = 37;
-    int RETRO_ENVIRONMENT_SET_VARIABLES         = 16;
-    int RETRO_ENVIRONMENT_GET_VARIABLE          = 17;
-    int RETRO_ENVIRONMENT_SET_CONTROLLER_INFO   = 35;
-    int RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS = 15;
-    int RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK    = 27; // actually 31 per log, let me check
-    int RETRO_ENVIRONMENT_GET_INPUT_BITMASKS    = 52;
-    int RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO    = 32; // cmd 28 in Flycast?
-    // cmd=55 — might be RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO or similar
+    // --- Environment commands (see LibretroEnvironment for full list) ---
+    int RETRO_ENVIRONMENT_GET_CAN_DUPE              = LibretroEnvironment.GET_CAN_DUPE;
+    int RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY      = LibretroEnvironment.GET_SYSTEM_DIRECTORY;
+    int RETRO_ENVIRONMENT_SET_PIXEL_FORMAT          = LibretroEnvironment.SET_PIXEL_FORMAT;
+    int RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY        = LibretroEnvironment.GET_SAVE_DIRECTORY;
+    int RETRO_ENVIRONMENT_SET_HW_RENDER             = LibretroEnvironment.SET_HW_RENDER;
+    int RETRO_ENVIRONMENT_GET_VARIABLE              = LibretroEnvironment.GET_VARIABLE;
+    int RETRO_ENVIRONMENT_SET_VARIABLES             = LibretroEnvironment.SET_VARIABLES;
+    int RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE       = LibretroEnvironment.GET_VARIABLE_UPDATE;
+    int RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS     = LibretroEnvironment.SET_INPUT_DESCRIPTORS;
+    int RETRO_ENVIRONMENT_GET_LOG_INTERFACE         = LibretroEnvironment.GET_LOG_INTERFACE;
+    int RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO        = LibretroEnvironment.SET_SYSTEM_AV_INFO;
+    int RETRO_ENVIRONMENT_SET_AUDIO_CALLBACK        = LibretroEnvironment.SET_AUDIO_CALLBACK;
+    int RETRO_ENVIRONMENT_SET_CONTROLLER_INFO       = LibretroEnvironment.SET_CONTROLLER_INFO;
+    int RETRO_ENVIRONMENT_SET_GEOMETRY              = LibretroEnvironment.SET_GEOMETRY;
+    int RETRO_ENVIRONMENT_GET_INPUT_BITMASKS        = LibretroEnvironment.GET_INPUT_BITMASKS;
+    int RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER   = LibretroEnvironment.GET_PREFERRED_HW_RENDER;
+    int RETRO_ENVIRONMENT_SET_HW_SHARED_CONTEXT     = LibretroEnvironment.SET_HW_SHARED_CONTEXT;
+    int RETRO_HW_CONTEXT_OPENGL_CORE                = LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE;
 
     // --- Memory types ---
     int RETRO_MEMORY_SAVE_RAM    = 0;
