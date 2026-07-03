@@ -1275,12 +1275,13 @@ void hlg_debug_fbo(void) {
 }
 
 /* ==================================================================
- *  hlg_read_pixels(viewport_out, pixels_out, max_pixels)
+ *  hlg_read_pixels(viewport_out, pixels_out, max_pixels, req_w, req_h)
  *  Read the current GL framebuffer into a CPU buffer.
- *  viewport_out: int[4] receives the GL viewport.
- *  pixels_out:   pre-allocated buffer of at least width*height*4 bytes.
+ *  viewport_out: int[4] receives the GL viewport (for surface sizing).
+ *  req_w/req_h:  game frame size from video_cb; 0 = use GL viewport.
  * ================================================================== */
-void hlg_read_pixels(int *viewport_out, void *pixels_out, int max_pixels) {
+void hlg_read_pixels(int *viewport_out, void *pixels_out, int max_pixels,
+                     int req_w, int req_h) {
     if (!viewport_out || !pixels_out) return;
     if (!wgl_begin()) return;
 
@@ -1297,17 +1298,20 @@ void hlg_read_pixels(int *viewport_out, void *pixels_out, int max_pixels) {
     int vp[4] = {0};
     ((void (*)(unsigned int, int *))pGI)(0x0BA2, vp);  /* GL_VIEWPORT */
 
-    int read_w = vp[2] > 0 ? vp[2] : s_w;
-    int read_h = vp[3] > 0 ? vp[3] : s_h;
-    if (read_w <= 0 || read_h <= 0) { read_w = s_w; read_h = s_h; }
+    int gl_w = vp[2] > 0 ? vp[2] : s_w;
+    int gl_h = vp[3] > 0 ? vp[3] : s_h;
+    if (gl_w <= 0 || gl_h <= 0) { gl_w = s_w; gl_h = s_h; }
 
-    /* Grow the shared FBO to fit the GL viewport (never shrink — avoids
-     * resize thrash between Java's retro-geometry size and the GL viewport). */
-    if (s_shared_fbo && (read_w > s_fbo_w || read_h > s_fbo_h)) {
-        int fw = read_w > s_fbo_w ? read_w : s_fbo_w;
-        int fh = read_h > s_fbo_h ? read_h : s_fbo_h;
+    /* Grow the shared FBO to fit the GL viewport (never shrink). */
+    if (s_shared_fbo && (gl_w > s_fbo_w || gl_h > s_fbo_h)) {
+        int fw = gl_w > s_fbo_w ? gl_w : s_fbo_w;
+        int fh = gl_h > s_fbo_h ? gl_h : s_fbo_h;
         recreate_shared_fbo(fw, fh);
     }
+
+    /* Read exactly the game frame size when requested (video_cb width/height). */
+    int read_w = (req_w > 0) ? req_w : gl_w;
+    int read_h = (req_h > 0) ? req_h : gl_h;
 
     /* Clamp read region to the FBO size. */
     if (s_shared_fbo) {
@@ -1325,8 +1329,8 @@ void hlg_read_pixels(int *viewport_out, void *pixels_out, int max_pixels) {
 
     viewport_out[0] = vp[0];
     viewport_out[1] = vp[1];
-    viewport_out[2] = read_w;
-    viewport_out[3] = read_h;
+    viewport_out[2] = gl_w;
+    viewport_out[3] = gl_h;
 
     if (pF) ((void (*)(void))pF)();
 
@@ -1421,10 +1425,10 @@ void hlg_read_pixels(int *viewport_out, void *pixels_out, int max_pixels) {
     }
 
     if (s_read_count <= 100 || (s_read_count % 60) == 0 || nonzero > 0) {
-        fprintf(stderr, "[hlg] read_pixels: fbo=%u vp=%dx%d read=%dx%d fboSz=%dx%d "
-                "fbo1nz=%d fbo0nz=%d altFbo=%u (#%d)\n",
-                s_shared_fbo, vp[2], vp[3], read_w, read_h, s_fbo_w, s_fbo_h,
-                nonzero, fbo0_nonzero, alt_fbo, s_read_count);
+        fprintf(stderr, "[hlg] read_pixels: fbo=%u game=%dx%d glvp=%dx%d read=%dx%d "
+                "fboSz=%dx%d fbo1nz=%d fbo0nz=%d altFbo=%u (#%d)\n",
+                s_shared_fbo, req_w, req_h, gl_w, gl_h, read_w, read_h,
+                s_fbo_w, s_fbo_h, nonzero, fbo0_nonzero, alt_fbo, s_read_count);
     }
     s_read_count++;
 
