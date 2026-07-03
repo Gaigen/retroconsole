@@ -249,4 +249,16 @@ public interface LibretroBridge extends Library {
             return java.util.Arrays.asList("key", "value");
         }
     }
+
+    /** struct retro_log_callback — for RETRO_ENVIRONMENT_GET_LOG_INTERFACE
+     *  Cores log via this. We must return a valid pointer, otherwise
+     *  cores like PPSSPP will SIGSEGV when they try to log (log_cb == NULL). */
+    class RetroLogCallbackStruct extends Structure {
+        public RetroLogCallback log;
+
+        @Override
+        protected java.util.List<String> getFieldOrder() {
+            return java.util.Arrays.asList("log");
+        }
+    }
 }

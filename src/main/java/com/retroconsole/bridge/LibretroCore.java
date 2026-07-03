@@ -72,6 +72,7 @@ public class LibretroCore implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger("LibretroCore");
 
     private LibretroBridge core;
+    private java.nio.file.Path corePath;
     private LibretroBridge.RetroEnvironment envCallback;
     private LibretroBridge.RetroVideoRefresh videoCallback;
     private LibretroBridge.RetroAudioSample audioCallback;
@@ -95,6 +96,8 @@ public class LibretroCore implements AutoCloseable {
     // Keep callbacks alive so JNA trampolines aren't GC'd
     private GetFramebufferCb hwGetFramebuffer;
     private GetProcAddressCb hwGetProcAddress;
+    private LibretroBridge.RetroLogCallback logCallback; // for RETRO_ENVIRONMENT_GET_LOG_INTERFACE (PPSSPP needs this)
+    private LibretroBridge.RetroLogCallbackStruct logCallbackStruct;
     private static final Pointer RETRO_HW_FRAME_BUFFER_VALID = Pointer.createConstant(-1);
 
     // Audio-based frame pacing — Flycast uses audio consumption rate for timing
@@ -128,6 +131,7 @@ public class LibretroCore implements AutoCloseable {
 
         // JNA needs to find the library. We use its absolute path.
         String absPath = corePath.toAbsolutePath().toString();
+        lc.corePath = corePath;
 
         lc.core = Native.load(absPath, LibretroBridge.class);
         LOGGER.info("Core loaded. API version: {}", lc.core.retro_api_version());
@@ -462,7 +466,20 @@ public class LibretroCore implements AutoCloseable {
                         case 6 -> "VULKAN";
                         default -> "UNKNOWN(" + ctxType + ")";
                     };
-                    LOGGER.info("Flycast requests HW render: context_type={} ({})", ctxType, ctxName);
+                    LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
+
+                    // Only Flycast has our hand-crafted HW render path (with binary
+                    // patches in disableFlycastLogCall() etc). Other cores (PPSSPP,
+                    // PCSX2) go through standard libretro HW render flow which
+                    // crashes because our headless Mesa EGL doesn't expose every
+                    // GL function they expect. Reject HW render for them so they
+                    // fall back to software rendering.
+                    boolean isFlycast = corePath != null
+                        && corePath.getFileName().toString().toLowerCase().contains("flycast");
+                    if (!isFlycast) {
+                        LOGGER.info("Rejecting {} for non-Flycast core — will use software rendering", ctxName);
+                        return false;
+                    }
 
                     // Only accept OpenGL/OpenGL Core contexts (1, 3, 4).
                     // Reject Vulkan (6) — we only have Mesa software OpenGL.
@@ -510,7 +527,7 @@ public class LibretroCore implements AutoCloseable {
                     LOGGER.error("Failed to handle SET_HW_RENDER", t);
                     return false;
                 }
-            }
+                        }
             case 15 -> { // RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS
                 // Nestopia dereferences data[0] as a device-name string
                 // ("nes", "famicom", ...) and calls strcmp() on it. If we
@@ -538,16 +555,39 @@ public class LibretroCore implements AutoCloseable {
                 LOGGER.debug("Ignoring Flycast env cmd=23");
                 return false;
             }
-            case 27 -> { // RETRO_ENVIRONMENT_SET_MESSAGE
-                // Just acknowledge and ignore. Returning true here with a
-                // log callback pointer worked for Flycast via the BSS slot
-                // at 0x26d82e0, but caused crashes in Nestopia / other cores
-                // that interpret data->msg as a displayable string. Flycast
-                // specifically is patched in disableFlycastLogCall() to NOP
-                // the call sites that dereference its BSS slot, so we don't
-                // need to provide a real callback for it either.
-                return false;
-            }
+            case 27 -> { // RETRO_ENVIRONMENT_GET_LOG_INTERFACE
+                if (corePath != null && corePath.getFileName().toString().toLowerCase().contains("flycast")) {
+                    // Flycast asks for a log callback but ignores the pointer we
+                    // return — it uses its own internal log_cb (which JNA cannot
+                    // deliver correctly). The real fix is disableFlycastLogCall()
+                    // which NOPs the call sites in flycast_libretro.so code so
+                    // log_cb is never invoked. Return false to make Flycast skip
+                    // its log setup entirely.
+                    return false;
+                }
+                // PPSSPP (and likely PCSX2) calls log_cb() during retro_init,
+                // e.g. PPSSPP's ensure_output_audio_buffer_capacity. A NULL
+                // log_cb dereference there causes SIGSEGV. Provide a no-op
+                // callback that just routes the message to our logger.
+                if (data == null) return false;
+                if (logCallback == null) {
+                    logCallback = (level, fmt) -> {
+                        String msg = fmt != null ? fmt.trim() : "";
+                        switch (level) {
+                            case 0 -> LOGGER.error("[core] {}", msg);
+                            case 1 -> LOGGER.warn("[core] {}", msg);
+                            case 2 -> LOGGER.info("[core] {}", msg);
+                            case 3 -> LOGGER.debug("[core] {}", msg);
+                            default -> LOGGER.debug("[core] {}", msg);
+                        }
+                    };
+                    logCallbackStruct = new LibretroBridge.RetroLogCallbackStruct();
+                    logCallbackStruct.log = logCallback;
+                    logCallbackStruct.write();
+                }
+                data.write(0, logCallbackStruct.getPointer().getByteArray(0, Native.POINTER_SIZE), 0, Native.POINTER_SIZE);
+                return true;
+                        }
             case 28 -> { // RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO
                 LOGGER.info("Core requesting SET_SYSTEM_AV_INFO");
                 // Re-read the AV info structure if needed
@@ -584,23 +624,16 @@ public class LibretroCore implements AutoCloseable {
             case 69 -> { // RETRO_ENVIRONMENT_SET_FASTFORWARDING_OVERRIDE
                 return true;
             }
-            case 18 -> { // RETRO_ENVIRONMENT_GET_LOG_INTERFACE
-                // Flycast asks for a log callback here but ignores the pointer
-                // we return — it uses its own internal log_cb (which JNA cannot
-                // deliver correctly, hence the 0x4 garbage). The actual fix is
-                // disablingFlycastLogCall() which NOPs the call site in code.
-                // Return false so Flycast falls back to its (broken) default;
-                // the patched code path ensures we never actually invoke it.
-                return false;
-            }
             case 65581 -> { // Extended environment (high bit = 0x10000 + cmd)
                 LOGGER.debug("Extended env cmd=65581");
                 return false;
             }
             default -> {
-                LOGGER.debug("Unhandled env callback cmd={}", cmd);
-                return false;
-            }
+                            // DIAG: log unhandled cmd + non-null data pointer
+                            long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
+                            LOGGER.warn("Unhandled env callback cmd={} data={} (0x{})", cmd, data, Long.toHexString(dataAddr));
+                            return false;
+                        }
         }
     }
 
