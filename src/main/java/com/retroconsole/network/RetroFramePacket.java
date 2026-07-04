@@ -80,14 +80,23 @@ public record RetroFramePacket(
     /**
      * Decompress and convert back to an ARGB int[] frame buffer.
      * Returns null on error.
+     *
+     * <p>Note: the length of the decoded RGB byte stream is determined by
+     * how many bytes the server compressed. If the core has changed its
+     * resolution mid-flight, the wire length can be {@code != width*height*3}.
+     * We clamp to whatever the decompressed buffer gives us and pad with
+     * opaque black so a mismatch produces a black frame on the client
+     * rather than a corrupted one or an exception.
      */
     public int[] decompressFrame() {
         byte[] rgb = decompress(compressedFrame);
         if (rgb == null) return null;
 
         int pixelCount = width * height;
-        int[] argb = new int[pixelCount];
-        for (int i = 0; i < pixelCount; i++) {
+        int[] argb = new int[pixelCount]; // zero-filled — bare pixels stay black (alpha=0)
+        int have = rgb.length / 3;        // number of fully readable pixels
+        int n = Math.min(pixelCount, have);
+        for (int i = 0; i < n; i++) {
             int base = i * 3;
             int r = rgb[base] & 0xFF;
             int g = rgb[base + 1] & 0xFF;
