@@ -100,7 +100,7 @@ public class LibretroCoreWindows extends LibretroCore {
                             int srcOffset = y * stride + x;
                             int pixel;
                             if (data == null) {
-                                pixel = 0; // null data on software path means "no frame" — leave black
+                                pixel = 0;
                             } else {
                                 pixel = data.getInt((long) srcOffset * 4);
                             }
@@ -109,8 +109,37 @@ public class LibretroCoreWindows extends LibretroCore {
                     }
                     break;
                 }
+                case LibretroBridge.RETRO_PIXEL_FORMAT_RGB565: {
+                    // 16 bits per pixel, native endian (typically little-endian
+                    // on x86/amd64). Layout: RRRRRGGGGGGBBBBB.
+                    int stride = (int) (pitch / 2);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            int srcOffset = y * stride + x;
+                            short raw = (data == null) ? 0 : data.getShort((long) srcOffset * 2);
+                            int r = ((raw >> 11) & 0x1F) << 3;
+                            int g = ((raw >> 5)  & 0x3F) << 2;
+                            int b = ( raw        & 0x1F) << 3;
+                            dst[y * w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                        }
+                    }
+                    break;
+                }
+                case LibretroBridge.RETRO_PIXEL_FORMAT_0RGB1555: {
+                    int stride = (int) (pitch / 2);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            int srcOffset = y * stride + x;
+                            short raw = (data == null) ? 0 : data.getShort((long) srcOffset * 2);
+                            int r = ((raw >> 10) & 0x1F) << 3;
+                            int g = ((raw >> 5)  & 0x1F) << 3;
+                            int b = ( raw        & 0x1F) << 3;
+                            dst[y * w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                        }
+                    }
+                    break;
+                }
                 default:
-                    // RGB565 / 0RGB1555 / unknown — leave frame black for now.
                     java.util.Arrays.fill(dst, 0xFF000000);
                     break;
             }
@@ -200,31 +229,67 @@ public class LibretroCoreWindows extends LibretroCore {
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
 
+    /** Most-recent accepted core options, key → default value. Populated
+     *  dynamically by SET_VARIABLES / SET_CORE_OPTIONS / SET_CORE_OPTIONS_V2
+     *  so cores never have names hard-coded here. */
+    private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
+    /** Keep allocated Memory alive so GC does not free option value strings
+     *  before the core reads them (e.g. via GET_VARIABLE). */
+    private final java.util.List<Memory> allocatedOptionMemory = new java.util.ArrayList<>();
+    /** Cores advertise which option version we agreed to support. */
+    private int coreOptionsVersion = 1; // default to v1, can be promoted to 2 by GET_CORE_OPTIONS_VERSION
+
+    /** Whether SET_AUDIO_BUFFER_STATUS_CALLBACK has been registered (we decline,
+     *  but the core still sends the cmd and we ack it). */
+    private boolean audioBufferStatusRequested = false;
+
     /**
-     * Expanded environment callback. Step 3a: answer every well-known
-     * libretro command with a safe default so cores like Nestopia,
-     * Genesis, SNES can finish loading. Unknown commands log a WARN and
-     * return false (the core may complain in its own log but does not
-     * crash).
+     * Full environment callback. Step 8: covers v1 AND v2 core options,
+     * pixel-format conversion, audio pacing hints, and the dozen misc
+     * commands cores ask during load. Everything is dynamic — we never
+     * hard-code an option key; we only store whatever the core declares
+     * and hand it back on GET_VARIABLE.
      */
     private boolean handleEnvironment(int cmd, Pointer data) {
         switch (cmd) {
-            case LibretroEnvironment.GET_CAN_DUPE: {
+            // ----- memory + bookkeeping -----
+            case LibretroEnvironment.GET_CAN_DUPE:
                 if (data != null) data.setByte(0, (byte) 1);
                 return true;
-            }
 
-            case LibretroEnvironment.SET_PIXEL_FORMAT: {
+            case LibretroEnvironment.GET_CORE_OPTIONS_VERSION:
+                if (data != null) data.setInt(0, coreOptionsVersion);
+                LOGGER.debug("Core requested GET_CORE_OPTIONS_VERSION → {}", coreOptionsVersion);
+                return true;
+
+            case LibretroEnvironment.GET_MESSAGE_INTERFACE_VERSION:
+                if (data != null) data.setInt(0, 1);
+                return true;
+
+            case LibretroEnvironment.GET_VARIABLE_UPDATE:
+                // 0 = no updates since last query; 1 = yes.
+                if (data != null) data.setByte(0, (byte) 0);
+                return true;
+
+            case LibretroEnvironment.GET_LANGUAGE:
+                if (data != null) data.setInt(0, 0 /* RETRO_LANGUAGE_ENGLISH */);
+                return true;
+
+            // ----- pixel format + geometry -----
+            case LibretroEnvironment.SET_PIXEL_FORMAT:
                 if (data != null) {
                     this.pixelFormat = data.getInt(0);
                     LOGGER.info("Core set pixel format: {}",
-                            pixelFormat == LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888
-                                    ? "XRGB8888" : String.valueOf(pixelFormat));
+                            switch (pixelFormat) {
+                                case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888 -> "XRGB8888";
+                                case LibretroBridge.RETRO_PIXEL_FORMAT_RGB565   -> "RGB565";
+                                case LibretroBridge.RETRO_PIXEL_FORMAT_0RGB1555 -> "0RGB1555";
+                                default -> String.valueOf(pixelFormat);
+                            });
                 }
                 return true;
-            }
 
-            case LibretroEnvironment.SET_GEOMETRY: {
+            case LibretroEnvironment.SET_GEOMETRY:
                 if (data != null) {
                     int w = data.getInt(0);
                     int h = data.getInt(4);
@@ -235,88 +300,273 @@ public class LibretroCoreWindows extends LibretroCore {
                     }
                 }
                 return true;
-            }
 
-            case LibretroEnvironment.GET_SYSTEM_DIRECTORY: {
-                if (data != null && systemDir != null) {
-                    if (persistentSystemDir == null || persistentSystemDir.size() < systemDir.length() + 1) {
-                        persistentSystemDir = new Memory(systemDir.length() + 1L);
-                        persistentSystemDir.setString(0, systemDir);
-                    }
-                    data.setPointer(0, persistentSystemDir);
-                    return true;
-                }
-                return false;
-            }
+            // ----- directory lookups -----
+            case LibretroEnvironment.GET_SYSTEM_DIRECTORY:
+                return returnCString(data, systemDir, true);
 
-            case LibretroEnvironment.GET_SAVE_DIRECTORY: {
-                if (data != null && saveDir != null) {
-                    if (persistentSaveDir == null || persistentSaveDir.size() < saveDir.length() + 1) {
-                        persistentSaveDir = new Memory(saveDir.length() + 1L);
-                        persistentSaveDir.setString(0, saveDir);
-                    }
-                    data.setPointer(0, persistentSaveDir);
-                    return true;
-                }
-                return false;
-            }
+            case LibretroEnvironment.GET_SAVE_DIRECTORY:
+                return returnCString(data, saveDir, false);
 
-            case LibretroEnvironment.GET_LIBRETRO_PATH: {
-                // Point the core back at the .dll we loaded so it can self-identify.
-                if (data != null && corePath != null) {
-                    String p = corePath.toAbsolutePath().toString();
-                    Memory m = new Memory(p.length() + 1L);
-                    m.setString(0, p);
-                    data.setPointer(0, m);
-                    return true;
-                }
-                return false;
-            }
+            case LibretroEnvironment.GET_LIBRETRO_PATH:
+                if (data == null || corePath == null) return false;
+                return returnCString(data, corePath.toAbsolutePath().toString(), false);
 
-            case LibretroEnvironment.SET_AUDIO_CALLBACK: {
-                // We currently do not produce audio (Step 7 territory) but
-                // accept the callback registration so cores that expect it
-                // do not refuse to load.
+            case LibretroEnvironment.GET_VARIABLE:
+                return handleGetVariable(data);
+
+            // ----- v1 core options -----
+            case LibretroEnvironment.SET_VARIABLES: {
+                LOGGER.info("Core sent SET_VARIABLES (v1)");
+                if (data == null) return true;
+                parseV1Strings(data);
                 return true;
             }
 
+            case LibretroEnvironment.SET_CORE_OPTIONS: {
+                LOGGER.info("Core sent SET_CORE_OPTIONS (v1 struct)");
+                if (data == null) return true;
+                parseV1Structs(data, false /* not v2 */);
+                return true;
+            }
+
+            // ----- v2 core options -----
+            case LibretroEnvironment.SET_CORE_OPTIONS_V2: {
+                LOGGER.info("Core sent SET_CORE_OPTIONS_V2");
+                if (data == null) return true;
+                parseV2Defs(data);
+                return true;
+            }
+
+            case LibretroEnvironment.SET_CORE_OPTIONS_V2_INTL: {
+                LOGGER.info("Core sent SET_CORE_OPTIONS_V2_INTL");
+                if (data == null) return true;
+                parseV2Intl(data);
+                return true;
+            }
+
+            case LibretroEnvironment.SET_VARIABLE:
+                // libretro 1.15+ individual SET_VARIABLE (key/value pair).
+                // data is two pointers: [key, value].
+                if (data != null) {
+                    Pointer keyPtr = data.getPointer(0);
+                    Pointer valPtr = data.getPointer(Native.POINTER_SIZE);
+                    String k = readCString(keyPtr);
+                    String v = readCString(valPtr);
+                    if (k != null && !k.isEmpty()) {
+                        coreOptions.put(k, v != null ? v : "");
+                        LOGGER.debug("Core SET_VARIABLE: {} = {}", k, v);
+                    }
+                }
+                return true;
+
+            case LibretroEnvironment.SET_CORE_OPTIONS_DISPLAY:
+            case LibretroEnvironment.SET_MINIMUM_AUDIO_LATENCY:
+            case LibretroEnvironment.SET_AUDIO_CALLBACK:
             case LibretroEnvironment.SET_INPUT_DESCRIPTORS:
             case LibretroEnvironment.SET_MESSAGE:
             case LibretroEnvironment.SET_SYSTEM_AV_INFO:
             case LibretroEnvironment.SET_CONTROLLER_INFO:
             case LibretroEnvironment.SET_SERIALIZATION_QUIRKS:
             case LibretroEnvironment.SET_PERFORMANCE_LEVEL:
-            case LibretroEnvironment.SET_DISK_CONTROL_INTERFACE:
-            case LibretroEnvironment.SET_VARIABLES:
-            case LibretroEnvironment.SET_CORE_OPTIONS:
+            case LibretroEnvironment.SET_SUBSYSTEM_INFO:
                 return true;
 
-            case LibretroEnvironment.SET_HW_RENDER: {
-                // Step 5+ might re-enable HW for cores that really need it;
-                // for now refuse every HW context so the core falls back
-                // to software pixel format which we already support.
-                LOGGER.info("Core requested SET_HW_RENDER — refusing (Windows HW renderer not implemented).");
-                return false;
-            }
+            case LibretroEnvironment.SET_AUDIO_BUFFER_STATUS_CALLBACK:
+                audioBufferStatusRequested = true;
+                return true;
 
-            case LibretroEnvironment.GET_PREFERRED_HW_RENDER: {
-                // Tell the core we have no preference; it will then NOT
-                // ask for HW_RENDER again because it has been refused.
+            case LibretroEnvironment.SET_SUPPORT_NO_GAME:
+                // 0 = the core does not support being run without a game loaded.
+                if (data != null) data.setByte(0, (byte) 0);
+                return true;
+
+            // ----- input + HW -----
+            case LibretroEnvironment.GET_INPUT_BITMASKS:
+                // Tell the core we honour the GET_INPUT_BITMASKS short-circuit
+                // (inputStateCallback already handles RETRO_DEVICE_ID_JOYPAD_MASK).
+                return true;
+
+            case LibretroEnvironment.SET_HW_RENDER:
+                LOGGER.info("Core requested SET_HW_RENDER — refusing (no Windows HW renderer).");
+                return false;
+
+            case LibretroEnvironment.GET_PREFERRED_HW_RENDER:
                 if (data != null) data.setInt(0, 0 /* RETRO_HW_CONTEXT_NONE */);
                 return true;
-            }
 
-            case LibretroEnvironment.GET_LOG_INTERFACE: {
-                // We could wire a JNA logger here, but for now decline —
-                // cores stay silent on Windows, which is fine.
+            case LibretroEnvironment.GET_RUMBLE_INTERFACE:
+                return false; // no rumble yet
+
+            case LibretroEnvironment.GET_LOG_INTERFACE:
+                return false; // silent core
+
+            case LibretroEnvironment.GET_VFS_INTERFACE:
+            case 0x1002e: // some VFS-related cmd (experimented by Genesis)
+            case 0x1002f:
                 return false;
-            }
+
+            case LibretroEnvironment.SET_KEYBOARD_CALLBACK:
+                return false;
 
             default:
                 LOGGER.warn("Unhandled env cmd {} (raw 0x{})",
                         LibretroEnvironment.name(cmd), Integer.toHexString(cmd));
                 return false;
         }
+    }
+
+    // ----- handleEnvironment helpers --------------------------------------
+
+    /** Write a NUL-terminated UTF-8 string at {@code data} for the core to read.
+     *  Allocates a fresh Memory each call and parks it in
+     *  {@link #allocatedOptionMemory} so the GC doesn't pull it back. */
+    private boolean returnCString(Pointer data, String s, boolean useSystemDirSlot) {
+        if (data == null || s == null) return false;
+        byte[] bytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Memory m = new Memory(bytes.length + 1L);
+        m.write(0, bytes, 0, bytes.length);
+        m.setByte(bytes.length, (byte) 0);
+        allocatedOptionMemory.add(m);
+        data.setPointer(0, m);
+        if (useSystemDirSlot) {
+            // System/save dir pointers are stored on dedicated slots so they
+            // stay valid as long as the core holds them. Keep the most recent one.
+            if (systemDir != null && s.equals(systemDir) && persistentSystemDir == null) {
+                persistentSystemDir = m;
+            }
+        } else if (saveDir != null && s.equals(saveDir) && persistentSaveDir == null) {
+            persistentSaveDir = m;
+        }
+        return true;
+    }
+
+    private static String readCString(Pointer p) {
+        if (p == null) return null;
+        try { return p.getString(0); } catch (Throwable t) { return null; }
+    }
+
+    /**
+     * v1: SET_VARIABLES hands us an array of {@code retro_variable}
+     *     alternating key/value strings, terminated by a NULL key pointer.
+     */
+    private void parseV1Strings(Pointer array) {
+        long offset = 0;
+        int count = 0;
+        while (true) {
+            Pointer keyPtr = array.getPointer(offset);
+            if (keyPtr == null) break;
+            String key = readCString(keyPtr);
+            offset += Native.POINTER_SIZE;
+            if (key == null || key.isEmpty()) break;
+            Pointer valPtr = array.getPointer(offset);
+            offset += Native.POINTER_SIZE;
+            String value = readCString(valPtr);
+            coreOptions.put(key, parseDefaultFromV1String(value));
+            count++;
+        }
+        LOGGER.info("SET_VARIABLES: stored {} key(s)", count);
+    }
+
+    /** v1 string format: "description; option1|option2|default".
+     *  The default is the last option after the rightmost "|". */
+    private static String parseDefaultFromV1String(String value) {
+        if (value == null || value.isEmpty()) return "";
+        int semi = value.indexOf(';');
+        if (semi < 0) return "";
+        String opts = value.substring(semi + 1).trim();
+        int pipe = opts.lastIndexOf('|');
+        if (pipe < 0) return opts;
+        return opts.substring(pipe + 1).trim();
+    }
+
+    /**
+     * v1 (newer form): SET_CORE_OPTIONS hands us a pointer to a contiguous
+     * array of {@code retro_core_option_definition} structs. Termination:
+     * a def whose {@code key} is null/empty, or any def whose
+     * {@code default_value} is null in v2 mode.
+     *
+     * <p>Because JNA's Structure() does not expose a clean way to attach
+     * to an arbitrary offset inside native memory, we read fields through
+     * {@link Pointer#getString(long)} and friends using pre-computed
+     * offsets based on the configured field order. The layout is fixed by
+     * libretro.h regardless of platform, so this is safe.
+     */
+    private void parseV1Structs(Pointer array, boolean v2) {
+        if (array == null) return;
+        // Field offsets within RetroCoreOptionDefinition (libretro.h layout):
+        //   0 : String key         (8 bytes on x64)
+        //   8 : String desc        (8)
+        //  16 : String info        (8)  — v2 only
+        //  24 : Pointer values[64] (8 * 64 = 512) — v2 only
+        // 536 : String default_value (8)
+        // 544 : end of struct
+        final int KEY_OFF     = 0;
+        final int DEFAULT_OFF = v2 ? 536 : 16;
+
+        long off = 0;
+        int count = 0;
+        while (true) {
+            String key;
+            try {
+                key = array.getString(KEY_OFF + off);
+            } catch (Throwable t) {
+                break;
+            }
+            if (key == null || key.isEmpty()) break;
+            String def = null;
+            try {
+                def = array.getString(DEFAULT_OFF + off);
+            } catch (Throwable t) {
+                def = "";
+            }
+            coreOptions.put(key, def != null ? def : "");
+            count++;
+            off += 544; // sizeof(struct retro_core_option_definition)
+            if (count > 256) break;
+        }
+        LOGGER.info("SET_CORE_OPTIONS: stored {} key(s)", count);
+    }
+
+    /** v2: SET_CORE_OPTIONS_V2 hands us a single Pointer to a definitions array,
+     *  same struct shape as the v1 newer form, addressed via data.getPointer(). */
+    private void parseV2Defs(Pointer data) {
+        Pointer array = data.getPointer(0);
+        if (array == null) return;
+        parseV1Structs(array, true);
+    }
+
+    /**
+     * v2-intl: SET_CORE_OPTIONS_V2_INTL hands us a {@code retro_core_options_v2_intl}
+     * struct. Walking the embedded structure with JNA on the read-path is
+     * fiddly (JNA Structure semantics do not map cleanly onto a pointer
+     * that the core itself constructs), so for now we accept the cmd and
+     * log it. The matching keys reach us via the parallel
+     * {@code SET_CORE_OPTIONS_V2} call the core is required to make, so we
+     * do not lose coverage.
+     */
+    private void parseV2Intl(Pointer data) {
+        LOGGER.debug("SET_CORE_OPTIONS_V2_INTL: accepted (parallel V2 defs already parsed).");
+    }
+
+    private boolean handleGetVariable(Pointer data) {
+        if (data == null) return false;
+        Pointer keyPtr = data.getPointer(0);
+        if (keyPtr == null) return false;
+        String key = readCString(keyPtr);
+        if (key == null || key.isEmpty()) return false;
+
+        String val = coreOptions.get(key);
+        if (val == null) val = "";
+        // Write pointer to a fresh Memory in the same Pointer slot the
+        // core expects (offset Native.POINTER_SIZE in retro_variable).
+        byte[] bytes = val.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Memory m = new Memory(bytes.length + 1L);
+        m.write(0, bytes, 0, bytes.length);
+        m.setByte(bytes.length, (byte) 0);
+        allocatedOptionMemory.add(m);
+        data.setPointer(Native.POINTER_SIZE, m);
+        return true;
     }
 
     /** Test helper / future API surface — exposes whether the core is

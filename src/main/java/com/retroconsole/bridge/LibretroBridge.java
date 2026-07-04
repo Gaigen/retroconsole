@@ -244,7 +244,7 @@ public interface LibretroBridge extends Library {
         }
     }
 
-    /** struct retro_variable — for RETRO_ENVIRONMENT_SET_VARIABLES */
+    /** struct retro_variable — for RETRO_ENVIRONMENT_SET_VARIABLES (v1) */
     class RetroVariable extends Structure {
         public String key;
         public String value;
@@ -252,6 +252,51 @@ public interface LibretroBridge extends Library {
         @Override
         protected java.util.List<String> getFieldOrder() {
             return java.util.Arrays.asList("key", "value");
+        }
+    }
+
+    /**
+     * struct retro_core_option_value — for v2 (RetroCoreOptionDefinition.values[]).
+     * Each option has up to 64 of these.
+     */
+    class RetroCoreOptionValue extends Structure {
+        public String value;
+        public String label;
+        @Override
+        protected java.util.List<String> getFieldOrder() {
+            return java.util.Arrays.asList("value", "label");
+        }
+    }
+
+    /**
+     * struct retro_core_option_definition — for SET_CORE_OPTIONS / SET_CORE_OPTIONS_V2.
+     * The values[] array is fixed-size (64 entries) and terminated by a
+     * zero-value entry. We read it field-by-field; we do NOT write it back.
+     */
+    class RetroCoreOptionDefinition extends Structure {
+        public String key;
+        public String desc;
+        public String info;
+        /** values[64]. Terminated when {@link #value} is null. */
+        public RetroCoreOptionValue[] values = new RetroCoreOptionValue[64];
+        public String default_value;
+
+        @Override
+        protected java.util.List<String> getFieldOrder() {
+            return java.util.Arrays.asList("key", "desc", "info", "values", "default_value");
+        }
+    }
+
+    /**
+     * struct retro_core_options_v2_intl — the intl variant has a per-language
+     * table; only {@code us} is read here.
+     */
+    class RetroCoreOptionsV2Intl extends Structure {
+        public String key;
+        public RetroCoreOptionDefinition us;
+        @Override
+        protected java.util.List<String> getFieldOrder() {
+            return java.util.Arrays.asList("key", "us");
         }
     }
 
