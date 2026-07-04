@@ -1,13 +1,11 @@
 package com.retroconsole.server;
 
-import com.retroconsole.config.ModConfig;
 import com.retroconsole.emu.CoreManager;
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.fml.loading.FMLPaths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,14 +29,21 @@ public class ServerConsoles {
     ) {}
 
     public static void init() {
-        Path gameDir = FMLPaths.GAMEDIR.get();
-        Path cores = gameDir.resolve(ModConfig.CORES_DIR.get()).normalize();
-        Path system = gameDir.resolve(ModConfig.SYSTEM_DIR.get()).normalize();
-        Path save = gameDir.resolve(ModConfig.SAVE_DIR.get()).normalize();
+        // Directories are created lazily by RetroConsolePaths on first read;
+        // we just resolve them through the same source of truth here.
+        Path cores = com.retroconsole.platform.RetroConsolePaths.coresDir();
+        Path system = com.retroconsole.platform.RetroConsolePaths.systemDir();
+        Path save = com.retroconsole.platform.RetroConsolePaths.saveDir();
         coreManager = new CoreManager(cores, system, save);
         coreManager.discoverCores();
-        LOGGER.info("CoreManager initialized. gameDir={}, system={}, discovered {} cores",
-                gameDir, system, coreManager.getCores().size());
+        com.retroconsole.platform.RetroConsolePaths.logPathsSummary();
+        LOGGER.info("CoreManager initialized. discovered {} cores", coreManager.getCores().size());
+
+        // Help the player out: if there are no cores, tell them where to put them.
+        if (coreManager.getCores().isEmpty()) {
+            LOGGER.warn("No libretro cores found. Place .dll / .so / .dylib cores in: {}",
+                    cores.toAbsolutePath().normalize());
+        }
     }
 
     public static void startEmulator(BlockPos pos, String coreName, String romId) {
@@ -51,7 +56,7 @@ public class ServerConsoles {
         if (coreManager == null) init();
         var coreInfo = coreManager.findCore(coreName);
         if (coreInfo == null) { LOGGER.error("Core not found: {}", coreName); return; }
-        Path romPath = FMLPaths.GAMEDIR.get().resolve(ModConfig.ROMS_DIR.get()).resolve(romId).normalize();
+        Path romPath = com.retroconsole.platform.RetroConsolePaths.romsDir().resolve(romId).normalize();
         if (!romPath.toFile().exists()) { LOGGER.error("ROM not found: {}", romPath); return; }
         LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath);
         if (runtime == null) { LOGGER.error("Failed to load core {} with ROM {}", coreName, romId); return; }

@@ -77,10 +77,17 @@ idea {
     }
 }
 
-// Build headless EGL library for libretro HW rendering (Flycast/DC)
+// Build headless EGL library for libretro HW rendering (Flycast/DC).
+// Linux-only: the .so is built with gcc via build_headless_gl.sh. On Windows
+// the mod currently has a stub LibretroCore implementation that does not
+// load any native GL; skip both this task and the resource-copy step so the
+// build does not fail on Windows.
+def isLinux = System.getProperty('os.name').toLowerCase().contains('linux')
+
 tasks.register('buildHeadlessGL', Exec) {
     description = 'Compile .libheadless_gl.so and copy to resources for bundling'
     group = 'native'
+    enabled = isLinux
     commandLine 'bash', file('build_headless_gl.sh').absolutePath
     inputs.file 'headless_gl.c'
     inputs.file 'gles_wrappers.inc'
@@ -92,13 +99,14 @@ tasks.register('buildHeadlessGL', Exec) {
 tasks.register('copyHeadlessGLToResources', Copy) {
     description = 'Copy .libheadless_gl.so to resources for jar bundling'
     group = 'native'
+    enabled = isLinux
     dependsOn 'buildHeadlessGL'
     from('runs/client/config/retroconsole/cores/.libheadless_gl.so')
     into('src/main/resources/natives')
     rename { 'libheadless_gl.so' }
 }
 
-// Auto-build native lib before Java compilation
+// Auto-build native lib before Java compilation (Linux only — Windows skips)
 tasks.named('processResources').configure {
     dependsOn 'copyHeadlessGLToResources'
 }
