@@ -76,14 +76,94 @@ public class LibretroCoreWindows extends LibretroCore {
         }
     }
 
-    /** Register the environment callback with the core. Step 2 implements
-     *  just enough of {@code retro_environment} for {@code retro_init()} to
-     *  succeed. */
+    /** Register every callback the libretro frontend surface needs.
+     *  Environment (Step 2) plus video / audio / input (Steps 4+5). */
     private void setupCallbacks() {
         LibretroBridge.RetroEnvironment env = (cmd, data) -> handleEnvironment(cmd, data);
-        // Hold a strong reference so JNA doesn't let the trampoline be GC'd.
         this.envCallback = env;
         core.retro_set_environment(env);
+
+        // ----- Video (Step 4) -----
+        LibretroBridge.RetroVideoRefresh videoCb = (data, w, h, pitch) -> {
+            if (w <= 0 || h <= 0) return; // core signals geometry change
+            int len = w * h;
+            int[] dst;
+            synchronized (frameLock) {
+                if (frameBuffer.length != len) frameBuffer = new int[len];
+                dst = frameBuffer;
+            }
+            switch (pixelFormat) {
+                case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888: {
+                    int stride = (int) (pitch / 4);
+                    for (int y = 0; y < h; y++) {
+                        for (int x = 0; x < w; x++) {
+                            int srcOffset = y * stride + x;
+                            int pixel;
+                            if (data == null) {
+                                pixel = 0; // null data on software path means "no frame" — leave black
+                            } else {
+                                pixel = data.getInt((long) srcOffset * 4);
+                            }
+                            dst[y * w + x] = 0xFF000000 | (pixel & 0x00FFFFFF);
+                        }
+                    }
+                    break;
+                }
+                default:
+                    // RGB565 / 0RGB1555 / unknown — leave frame black for now.
+                    java.util.Arrays.fill(dst, 0xFF000000);
+                    break;
+            }
+            newFrame = true;
+        };
+        this.videoCallback = videoCb;
+        core.retro_set_video_refresh(videoCb);
+
+        // ----- Audio (placeholder — Step 7 will produce sound) -----
+        this.audioSampleCallback = (left, right) -> { /* discard */ };
+        core.retro_set_audio_sample(audioSampleCallback);
+        this.audioBatchCallback = (data, frames) -> frames;
+        core.retro_set_audio_sample_batch(audioBatchCallback);
+
+        // ----- Input (Step 6: callbacks wired but step is to actually fill them) -----
+        this.inputPollCallback = () -> { /* nothing to poll, state is already set */ };
+        core.retro_set_input_poll(inputPollCallback);
+
+        LibretroBridge.RetroInputState inputStateCb = (port, device, index, id) -> {
+            if (port != 0) return 0;
+            if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
+                if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
+                    int mask = 0;
+                    for (int i = 0; i < 16; i++) {
+                        if (joypadState.get(i) != 0) mask |= (1 << i);
+                    }
+                    return (short) mask;
+                }
+                if (index == 0 && id >= 0 && id < 16) {
+                    return (short) joypadState.get(id);
+                }
+                return 0;
+            }
+            if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
+                if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(0);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(1);
+                }
+                if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(2);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(3);
+                }
+                if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_BUTTON) {
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L ||
+                            id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) return (short) triggerState.get(0);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R ||
+                            id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) return (short) triggerState.get(1);
+                }
+            }
+            return 0;
+        };
+        this.inputStateCallback = inputStateCb;
+        core.retro_set_input_state(inputStateCb);
     }
 
     /** Strong reference kept so JNA doesn't GC the callback trampoline. */
@@ -95,6 +175,30 @@ public class LibretroCoreWindows extends LibretroCore {
     private Memory persistentSaveDir;
     /** Pixel format the core will hand us (set via SET_PIXEL_FORMAT). */
     private int pixelFormat = LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888;
+
+    // ----- Step 4+5: frame buffer + input state shared with callbacks -----
+
+    /** Strong refs to every callback so JNA doesn't GC the trampolines. */
+    private LibretroBridge.RetroVideoRefresh videoCallback;
+    private LibretroBridge.RetroAudioSample audioSampleCallback;
+    private LibretroBridge.RetroAudioSampleBatch audioBatchCallback;
+    private LibretroBridge.RetroInputPoll inputPollCallback;
+    private LibretroBridge.RetroInputState inputStateCallback;
+
+    /** Most recent frame the core handed us (XRGB8888, ARGB packed). */
+    private volatile int[] frameBuffer = new int[0];
+    private final Object frameLock = new Object();
+    private volatile boolean newFrame = false;
+
+    /** Button state — written from server thread, read by input state callback. */
+    private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(16);
+    /** Analog sticks: LX, LY, RX, RY. */
+    private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(4);
+    /** L2 / R2 analog triggers. */
+    private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(2);
 
     /**
      * Expanded environment callback. Step 3a: answer every well-known
@@ -335,13 +439,54 @@ public class LibretroCoreWindows extends LibretroCore {
     /** Same threshold Linux-impl uses (cartridge-scale; >= this → path only). */
     private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
 
-    @Override public void runFrame() { /* no emulator running — Step 5 */ }
+    @Override
+    public void runFrame() {
+        // Step 5: actually drive the core forward. No HW context switch —
+        // Windows impl refuses SET_HW_RENDER so the core stays on the
+        // software pixel format path.
+        if (core != null && gameLoaded) {
+            try {
+                core.retro_run();
+            } catch (Throwable t) {
+                LOGGER.warn("retro_run threw: {}", t.getMessage());
+            }
+        }
+    }
 
-    @Override public boolean pollFrame(int[] dst) { return false; /* no frames yet — Step 4 */ }
+    @Override
+    public boolean pollFrame(int[] dst) {
+        if (dst == null || dst.length == 0) return false;
+        if (!newFrame) return false;
+        synchronized (frameLock) {
+            if (frameBuffer.length == 0) return false;
+            int copyLen = Math.min(frameBuffer.length, dst.length);
+            System.arraycopy(frameBuffer, 0, dst, 0, copyLen);
+            newFrame = false;
+            return true;
+        }
+    }
 
-    @Override public void setButton(int buttonId, boolean pressed) { /* no-op — Step 6 */ }
+    @Override
+    public void setButton(int buttonId, boolean pressed) {
+        if (buttonId >= 0 && buttonId < 16) {
+            joypadState.set(buttonId, pressed ? 1 : 0);
+        }
+        // Dreamcast L/R → also drive L2/R2 + analog triggers (used by some cores).
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L) {
+            joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2, pressed ? 1 : 0);
+            triggerState.set(0, pressed ? 32767 : 0);
+        }
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R) {
+            joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2, pressed ? 1 : 0);
+            triggerState.set(1, pressed ? 32767 : 0);
+        }
+    }
 
-    @Override public void setAnalog(int stick, int axis, short value) { /* no-op — Step 6 */ }
+    @Override
+    public void setAnalog(int stick, int axis, short value) {
+        int idx = stick * 2 + axis;
+        if (idx >= 0 && idx < 4) analogState.set(idx, value);
+    }
 
     @Override public void reset() { /* no-op */ }
 
