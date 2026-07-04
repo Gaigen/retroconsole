@@ -111,26 +111,127 @@ public class LibretroCoreWindows extends LibretroCore {
         return core != null;
     }
 
-    // ----- Stub implementations (Steps 2..N will replace these) -----------
+    // ----- Step 3: actually give the core a ROM ----------------------------
 
+    /** Width × height of the most recent game (set by {@link #loadGame}). */
+    private volatile int width;
+    private volatile int height;
+    /** True after a successful retro_load_game. */
+    private boolean gameLoaded;
+
+    /**
+     * Load a ROM. Builds a {@code retro_game_info}, hands it to the core via
+     * {@code retro_load_game}, registers a joystick on port 0, queries
+     * {@code retro_system_av_info} for the initial resolution. No HW-render
+     * release — Windows does not run HW contexts.
+     */
     @Override
     public boolean loadGame(Path romPath) {
-        LOGGER.warn("loadGame({}) called but Windows emulator support is not yet implemented.",
-                romPath);
-        return false;
+        if (core == null) {
+            LOGGER.warn("loadGame({}) called before loadNative() — ignoring.", romPath);
+            return false;
+        }
+        LOGGER.info("loadGame({})", romPath);
+
+        LibretroBridge.RetroGameInfo info;
+        try {
+            info = buildGameInfo(romPath);
+        } catch (Exception e) {
+            LOGGER.error("Failed to build game info for {}: {}", romPath, e.getMessage(), e);
+            return false;
+        }
+
+        boolean ok;
+        try {
+            ok = core.retro_load_game(info);
+        } catch (Throwable t) {
+            LOGGER.error("retro_load_game crashed for {}: {}", romPath, t.getMessage(), t);
+            freeGameInfo(info);
+            return false;
+        }
+
+        if (!ok) {
+            LOGGER.error("Core rejected ROM: {}", romPath.getFileName());
+            freeGameInfo(info);
+            return false;
+        }
+        this.loadedGameInfo = info; // keep memory alive for the lifetime of the game
+
+        // Many cores require this to be set BEFORE retro_load_game. We do it
+        // afterwards too — FCEUmm / nestopia don't care, others (like
+        // mednafen_psx) may want the controller type early. Either way it
+        // doesn't hurt.
+        core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+        LOGGER.info("Controller registered: port 0 = JOYPAD");
+
+        var avInfo = new LibretroBridge.RetroSystemAVInfo();
+        core.retro_get_system_av_info(avInfo);
+        this.width = avInfo.geometry.base_width;
+        this.height = avInfo.geometry.base_height;
+        this.gameLoaded = true;
+
+        LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
+                romPath.getFileName(), width, height,
+                avInfo.timing_fps, avInfo.timing_sample_rate);
+        return true;
     }
 
-    @Override public void runFrame() { /* no emulator running */ }
+    /** Kept referenced so JNA doesn't free the Memory holding small ROM bytes. */
+    private LibretroBridge.RetroGameInfo loadedGameInfo;
 
-    @Override public boolean pollFrame(int[] dst) { return false; }
+    @Override public int getWidth()  { return width; }
+    @Override public int getHeight() { return height; }
 
-    @Override public int getWidth() { return 0; }
+    /**
+     * Build a {@code RetroGameInfo} for {@code romPath}. If the file is
+     * larger than {@link #MAX_IN_MEMORY_ROM} or looks like a disc image, only
+     * the path is handed to the core — it opens the file itself.
+     */
+    private LibretroBridge.RetroGameInfo buildGameInfo(Path romPath) throws java.io.IOException {
+        var info = new LibretroBridge.RetroGameInfo();
+        info.path = romPath.toAbsolutePath().toString();
+        info.meta = "";
 
-    @Override public int getHeight() { return 0; }
+        String lower = romPath.toString().toLowerCase();
+        boolean discImage = lower.endsWith(".cue") || lower.endsWith(".gdi")
+                || lower.endsWith(".iso") || lower.endsWith(".chd")
+                || lower.endsWith(".cso") || lower.endsWith(".mdf")
+                || lower.endsWith(".nrg") || lower.endsWith(".img");
+        long size = java.nio.file.Files.size(romPath);
 
-    @Override public void setButton(int buttonId, boolean pressed) { /* no-op */ }
+        if (discImage || size > MAX_IN_MEMORY_ROM) {
+            LOGGER.info("Disc/large image — passing path only: {}", romPath.getFileName());
+            info.data = null;
+            info.size = 0;
+        } else {
+            byte[] bytes = java.nio.file.Files.readAllBytes(romPath);
+            var mem = new com.sun.jna.Memory(bytes.length);
+            mem.write(0, bytes, 0, bytes.length);
+            info.data = mem;
+            info.size = bytes.length;
+        }
+        info.write(); // marshal fields into native struct memory
+        return info;
+    }
 
-    @Override public void setAnalog(int stick, int axis, short value) { /* no-op */ }
+    /** Best-effort free of any Memory we allocated in {@link #buildGameInfo}. */
+    private void freeGameInfo(LibretroBridge.RetroGameInfo info) {
+        if (info != null && info.data != null) {
+            try { /* JNA Memory is GC'd */ } catch (Exception ignored) {}
+        }
+        this.loadedGameInfo = null;
+    }
+
+    /** Same threshold Linux-impl uses (cartridge-scale; >= this → path only). */
+    private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
+
+    @Override public void runFrame() { /* no emulator running — Step 5 */ }
+
+    @Override public boolean pollFrame(int[] dst) { return false; /* no frames yet — Step 4 */ }
+
+    @Override public void setButton(int buttonId, boolean pressed) { /* no-op — Step 6 */ }
+
+    @Override public void setAnalog(int stick, int axis, short value) { /* no-op — Step 6 */ }
 
     @Override public void reset() { /* no-op */ }
 
@@ -142,7 +243,11 @@ public class LibretroCoreWindows extends LibretroCore {
 
     @Override public void setSaveRam(byte[] sram) { /* no-op */ }
 
-    @Override public void close() { /* nothing to close */ }
+    @Override
+    public void close() throws Exception {
+        // Real unload happens in Step 7+. For now nothing is open that
+        // requires explicit teardown beyond the JNA handle we let GC clean up.
+    }
 
     public String getSystemDir() { return systemDir; }
     public String getSaveDir() { return saveDir; }
