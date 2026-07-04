@@ -5,7 +5,6 @@ import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,6 +17,7 @@ public class ServerConsoles {
 
     private static final Map<BlockPos, Entry> ENTRIES = new HashMap<>();
     private static final Map<BlockPos, Set<UUID>> VIEWERS = new HashMap<>();
+    private static final Map<BlockPos, FrameSenderThread> FRAME_SENDERS = new HashMap<>();
     private static CoreManager coreManager;
 
     private record Entry(
@@ -65,40 +65,31 @@ public class ServerConsoles {
         int[] buf = new int[w * h];
         ThreadedEmulatorRuntime threaded = new ThreadedEmulatorRuntime(runtime, w, h);
         threaded.start();
+
+        // FrameSenderThread runs at ~60 Hz independent of Minecraft's
+        // 20 Hz server tick — otherwise PS1 (and any interlaced core) shows
+        // severe flicker because the client only sees one frame per tick.
+        FrameSenderThread sender = new FrameSenderThread(pos, threaded);
+        sender.start();
+
         ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId));
+        FRAME_SENDERS.put(pos, sender);
         LOGGER.info("Started {} emulator at {} ({}x{})", coreName, pos, w, h);
     }
 
     public static void stopEmulator(BlockPos pos) {
         pos = pos.immutable();
         Entry e = ENTRIES.remove(pos);
+        FrameSenderThread sender = FRAME_SENDERS.remove(pos);
+        if (sender != null) sender.stopSender();
         if (e != null) { e.threaded().stop(); e.runtime().close(); LOGGER.info("Stopped emulator at {}", pos); }
         VIEWERS.remove(pos);
     }
 
     public static void tick(ServerLevel level) {
-        for (Map.Entry<BlockPos, Entry> mapEntry : ENTRIES.entrySet()) {
-            BlockPos pos = mapEntry.getKey();
-            Entry e = mapEntry.getValue();
-            boolean hasFrame = e.threaded().pollFrame(e.buf());
-            if (!hasFrame) continue;
-            int w = e.threaded().getCurrentWidth();
-            int h = e.threaded().getCurrentHeight();
-            if (w <= 0 || h <= 0) continue;
-            int needed = w * h;
-            if (e.buf().length != needed) {
-                e = new Entry(e.runtime(), e.threaded(), new int[needed], e.coreName(), e.romId());
-                ENTRIES.put(pos, e);
-                e.threaded().pollFrame(e.buf());
-            }
-            for (int i = 0; i < e.buf().length; i++)
-                e.buf()[i] = 0xFF000000 | (e.buf()[i] & 0x00FFFFFF);
-            for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
-                if (player.level() != level) continue;
-                if (player.blockPosition().distSqr(pos) < VIEW_DISTANCE * VIEW_DISTANCE)
-                    ServerTickHandler.sendFrameToPlayer(player, pos, e.buf(), w, h);
-            }
-        }
+        // Frame sending moved off the Minecraft server tick — see
+        // FrameSenderThread. Tick is kept as a registered no-op so the
+        // existing @SubscribeEvent wiring stays valid and easy to extend.
     }
 
     public static void handleInput(BlockPos pos, int buttonId, boolean pressed) {
@@ -127,7 +118,12 @@ public class ServerConsoles {
         return coreManager.getCores().stream().map(CoreManager.CoreInfo::name).toList();
     }
 
+    /** Public accessor so {@link FrameSenderThread} can apply the same distance check. */
+    public static int viewDistance() { return VIEW_DISTANCE; }
+
     public static void stopAll() {
+        for (FrameSenderThread sender : FRAME_SENDERS.values()) sender.stopSender();
+        FRAME_SENDERS.clear();
         for (Entry e : ENTRIES.values()) { e.threaded().stop(); e.runtime().close(); }
         ENTRIES.clear(); VIEWERS.clear();
         LOGGER.info("All emulators stopped.");
