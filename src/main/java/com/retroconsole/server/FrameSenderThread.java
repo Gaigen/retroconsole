@@ -38,12 +38,6 @@ public class FrameSenderThread extends Thread {
     private int[] buf = new int[0];
     private volatile boolean running = true;
 
-    // DEBUG: per-frame logging — see what gets sent where.
-    private long dbgStartNs = System.nanoTime();
-    private long dbgFrameCount = 0;
-    private long dbgBlackAllCount = 0;
-    private long dbgLastLogNs = 0;
-
     FrameSenderThread(BlockPos consolePos, ThreadedEmulatorRuntime threaded) {
         super("retro-frame-sender-" + consolePos.toShortString());
         setDaemon(true);
@@ -78,28 +72,6 @@ public class FrameSenderThread extends Thread {
                     buf = new int[needed];
                     // Try one more poll so the new buf has pixels for this frame.
                     threaded.pollFrame(buf);
-                }
-
-                // DEBUG: dump every frame about once a second, and always
-                // mention "all-black" frames since that is what we are chasing.
-                int[] debugBuf = buf;
-                dbgFrameCount++;
-                long now = System.nanoTime();
-                long ageMs = (now - dbgStartNs) / 1_000_000L;
-                int blackPixels = 0;
-                int nonBlackPixels = 0;
-                for (int p : debugBuf) {
-                    if ((p & 0x00FFFFFF) == 0) blackPixels++;
-                    else nonBlackPixels++;
-                }
-                boolean allBlack = (nonBlackPixels == 0);
-                if (allBlack) dbgBlackAllCount++;
-                if (now - dbgLastLogNs > 1_000_000_000L) {
-                    LOGGER.info("DEBUG-FSENDER at +{}ms: sent frames={}, all-black frames={}, lastSize={}x{}, last-black/nonblack={}/{}",
-                            ageMs, dbgFrameCount, dbgBlackAllCount, w, h, blackPixels, nonBlackPixels);
-                    dbgFrameCount = 0;
-                    dbgBlackAllCount = 0;
-                    dbgLastLogNs = now;
                 }
 
                 MinecraftServer server = ServerLifecycleHooks.getCurrentServer();

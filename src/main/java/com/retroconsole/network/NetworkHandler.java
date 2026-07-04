@@ -42,15 +42,6 @@ public class NetworkHandler {
         ctx.enqueueWork(() -> {
             int[] frame = pkt.decompressFrame();
             if (frame != null) {
-                // DEBUG: log black/non-black pixel count on the client.
-                int black = 0, nonBlack = 0;
-                for (int p : frame) {
-                    if ((p & 0x00FFFFFF) == 0) black++; else nonBlack++;
-                }
-                int total = frame.length;
-                System.out.println("DEBUG-FRAME-CLIENT size=" + pkt.width() + "x" + pkt.height()
-                        + " total=" + total + " black=" + black + " nonBlack=" + nonBlack
-                        + " blackPct=" + (total == 0 ? 0 : (100 * black) / total) + "%");
                 ClientConsoles.updateFrame(pkt.pos(), frame, pkt.width(), pkt.height());
             }
         });
