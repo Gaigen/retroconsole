@@ -120,6 +120,10 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
             LOGGER.warn("Failed to save SRAM", e);
         }
 
-        core.close();
+        try {
+            core.close();
+        } catch (Exception e) {
+            LOGGER.warn("Failed to close core", e);
+        }
     }
 }

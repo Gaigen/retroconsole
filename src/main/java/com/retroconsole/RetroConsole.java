@@ -37,6 +37,10 @@ public class RetroConsole {
     );
 
     public RetroConsole(IEventBus modEventBus, ModContainer modContainer) {
+        // Register the config so ModConfig.* Spec values become resolvable.
+        // Directory creation itself is lazy — RetroConsolePaths creates each
+        // folder on first read; the first caller is usually the first time
+        // the player inserts a console block, well after config loading.
         modContainer.registerConfig(Type.COMMON, ModConfig.SPEC);
 
         ModBlocks.register(modEventBus);

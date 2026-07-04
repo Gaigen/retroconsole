@@ -29,14 +29,8 @@ public class CoreManager {
         this.systemDir = systemDir.toAbsolutePath().normalize();
         this.saveDir = saveDir.toAbsolutePath().normalize();
 
-        try {
-            Files.createDirectories(coresDir);
-            Files.createDirectories(systemDir);
-            Files.createDirectories(saveDir);
-        } catch (IOException e) {
-            LOGGER.error("Failed to create directories", e);
-        }
-
+        // Directory creation is owned by RetroConsolePaths.ensureAllExist(...),
+        // which runs at mod construction time. We do not create directories here.
         // Extract bundled native libraries from mod jar
         extractBundledNatives(coresDir);
     }
@@ -46,6 +40,11 @@ public class CoreManager {
      * Only extracts if the file doesn't exist or is outdated.
      */
     private static void extractBundledNatives(Path coresDir) {
+        // Bundled headless GL is Linux-only. Windows uses a separate backend
+        // (not yet implemented); other platforms have nothing to extract.
+        if (!com.retroconsole.platform.OsUtil.isLinux()) {
+            return;
+        }
         String[] bundled = { "libheadless_gl.so" };
         for (String name : bundled) {
             String resourceName = "/natives/" + name;
