@@ -20,6 +20,16 @@ public class ServerConsoles {
     private static final Map<BlockPos, Set<UUID>> VIEWERS = new HashMap<>();
     private static CoreManager coreManager;
 
+    // DEBUG: per-emulator frame send/skip stats. Last emitted at DEBUG_LOG_PERIOD_S.
+    private static final double DEBUG_LOG_PERIOD_S = 2.0;
+    private static long dbgLastTickLogMs = 0;
+    private static long dbgSendAttempts = 0;
+    private static long dbgSkipNoFrame = 0;
+    private static long dbgSkipZeroSize = 0;
+    private static long dbgSkipBufResize = 0;
+    private static int dbgLastW = -1;
+    private static int dbgLastH = -1;
+
     private record Entry(
             LibretroRuntime runtime,
             ThreadedEmulatorRuntime threaded,
@@ -81,23 +91,34 @@ public class ServerConsoles {
             BlockPos pos = mapEntry.getKey();
             Entry e = mapEntry.getValue();
             boolean hasFrame = e.threaded().pollFrame(e.buf());
-            if (!hasFrame) continue;
+            if (!hasFrame) { dbgSkipNoFrame++; continue; }
             int w = e.threaded().getCurrentWidth();
             int h = e.threaded().getCurrentHeight();
-            if (w <= 0 || h <= 0) continue;
+            if (w <= 0 || h <= 0) { dbgSkipZeroSize++; continue; }
             int needed = w * h;
             if (e.buf().length != needed) {
+                dbgSkipBufResize++;
                 e = new Entry(e.runtime(), e.threaded(), new int[needed], e.coreName(), e.romId());
                 ENTRIES.put(pos, e);
                 e.threaded().pollFrame(e.buf());
             }
             for (int i = 0; i < e.buf().length; i++)
                 e.buf()[i] = 0xFF000000 | (e.buf()[i] & 0x00FFFFFF);
+            dbgSendAttempts++;
             for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
                 if (player.level() != level) continue;
                 if (player.blockPosition().distSqr(pos) < VIEW_DISTANCE * VIEW_DISTANCE)
                     ServerTickHandler.sendFrameToPlayer(player, pos, e.buf(), w, h);
             }
+            dbgLastW = w;
+            dbgLastH = h;
+        }
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - dbgLastTickLogMs >= (long)(DEBUG_LOG_PERIOD_S * 1000)) {
+            LOGGER.info("DEBUG tick: in last {}s — sendAttempts={}, skipNoFrame={}, skipZero={}, skipBufResize={}, lastSize={}x{}",
+                    DEBUG_LOG_PERIOD_S, dbgSendAttempts, dbgSkipNoFrame, dbgSkipZeroSize, dbgSkipBufResize, dbgLastW, dbgLastH);
+            dbgSendAttempts = dbgSkipNoFrame = dbgSkipZeroSize = dbgSkipBufResize = 0;
+            dbgLastTickLogMs = nowMs;
         }
     }
 
