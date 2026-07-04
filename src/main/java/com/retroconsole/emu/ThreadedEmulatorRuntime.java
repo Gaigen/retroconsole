@@ -69,10 +69,20 @@ public class ThreadedEmulatorRuntime {
 
         int[] src = source.getFrameBuffer();
         if (src == null) return false;
+        int w = source.getWidth();
+        int h = source.getHeight();
+        if (w <= 0 || h <= 0) return false;
+
+        // If the frameBuffer size matches current geometry, copy it.
+        // If it does not (resolution just changed and we have not yet
+        // received the matching video_refresh callback), skip this
+        // frame — otherwise the client would see junk from the old
+        // resolution's contents (visible as a black frame every other
+        // tick on PSX with frequent geometry changes).
+        if (src.length != w * h) return false;
 
         int copyLen = Math.min(src.length, dst.length);
         System.arraycopy(src, 0, dst, 0, copyLen);
-
         newFrame = false;
         return true;
     }
