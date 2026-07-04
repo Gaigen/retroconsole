@@ -1,5 +1,6 @@
 package com.retroconsole.bridge;
 
+import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 import org.slf4j.Logger;
@@ -88,21 +89,130 @@ public class LibretroCoreWindows extends LibretroCore {
     /** Strong reference kept so JNA doesn't GC the callback trampoline. */
     private LibretroBridge.RetroEnvironment envCallback;
 
+    /** Native memory holding the system dir string for the core. */
+    private Memory persistentSystemDir;
+    /** Native memory holding the save dir string for the core. */
+    private Memory persistentSaveDir;
+    /** Pixel format the core will hand us (set via SET_PIXEL_FORMAT). */
+    private int pixelFormat = LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888;
+
     /**
-     * Minimal environment callback. Step 2 only handles {@code GET_CAN_DUPE}
-     * (allow frame repeat, almost every core expects yes). Other commands
-     * are answered with {@code false} — the core may complain in its own log
-     * but should not crash. Later steps expand this to system/save
-     * directories, pixel format, log interface, etc.
+     * Expanded environment callback. Step 3a: answer every well-known
+     * libretro command with a safe default so cores like Nestopia,
+     * Genesis, SNES can finish loading. Unknown commands log a WARN and
+     * return false (the core may complain in its own log but does not
+     * crash).
      */
     private boolean handleEnvironment(int cmd, Pointer data) {
-        if (cmd == LibretroEnvironment.GET_CAN_DUPE) {
-            // data is a pointer to a single byte; write 1 (true).
-            if (data != null) data.setByte(0, (byte) 1);
-            return true;
+        switch (cmd) {
+            case LibretroEnvironment.GET_CAN_DUPE: {
+                if (data != null) data.setByte(0, (byte) 1);
+                return true;
+            }
+
+            case LibretroEnvironment.SET_PIXEL_FORMAT: {
+                if (data != null) {
+                    this.pixelFormat = data.getInt(0);
+                    LOGGER.info("Core set pixel format: {}",
+                            pixelFormat == LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888
+                                    ? "XRGB8888" : String.valueOf(pixelFormat));
+                }
+                return true;
+            }
+
+            case LibretroEnvironment.SET_GEOMETRY: {
+                if (data != null) {
+                    int w = data.getInt(0);
+                    int h = data.getInt(4);
+                    if (w > 0 && h > 0) {
+                        this.width = w;
+                        this.height = h;
+                        LOGGER.info("Core set geometry: {}x{}", w, h);
+                    }
+                }
+                return true;
+            }
+
+            case LibretroEnvironment.GET_SYSTEM_DIRECTORY: {
+                if (data != null && systemDir != null) {
+                    if (persistentSystemDir == null || persistentSystemDir.size() < systemDir.length() + 1) {
+                        persistentSystemDir = new Memory(systemDir.length() + 1L);
+                        persistentSystemDir.setString(0, systemDir);
+                    }
+                    data.setPointer(0, persistentSystemDir);
+                    return true;
+                }
+                return false;
+            }
+
+            case LibretroEnvironment.GET_SAVE_DIRECTORY: {
+                if (data != null && saveDir != null) {
+                    if (persistentSaveDir == null || persistentSaveDir.size() < saveDir.length() + 1) {
+                        persistentSaveDir = new Memory(saveDir.length() + 1L);
+                        persistentSaveDir.setString(0, saveDir);
+                    }
+                    data.setPointer(0, persistentSaveDir);
+                    return true;
+                }
+                return false;
+            }
+
+            case LibretroEnvironment.GET_LIBRETRO_PATH: {
+                // Point the core back at the .dll we loaded so it can self-identify.
+                if (data != null && corePath != null) {
+                    String p = corePath.toAbsolutePath().toString();
+                    Memory m = new Memory(p.length() + 1L);
+                    m.setString(0, p);
+                    data.setPointer(0, m);
+                    return true;
+                }
+                return false;
+            }
+
+            case LibretroEnvironment.SET_AUDIO_CALLBACK: {
+                // We currently do not produce audio (Step 7 territory) but
+                // accept the callback registration so cores that expect it
+                // do not refuse to load.
+                return true;
+            }
+
+            case LibretroEnvironment.SET_INPUT_DESCRIPTORS:
+            case LibretroEnvironment.SET_MESSAGE:
+            case LibretroEnvironment.SET_SYSTEM_AV_INFO:
+            case LibretroEnvironment.SET_CONTROLLER_INFO:
+            case LibretroEnvironment.SET_SERIALIZATION_QUIRKS:
+            case LibretroEnvironment.SET_PERFORMANCE_LEVEL:
+            case LibretroEnvironment.SET_DISK_CONTROL_INTERFACE:
+            case LibretroEnvironment.SET_VARIABLES:
+            case LibretroEnvironment.SET_CORE_OPTIONS:
+                return true;
+
+            case LibretroEnvironment.SET_HW_RENDER: {
+                // Step 5+ might re-enable HW for cores that really need it;
+                // for now refuse every HW context so the core falls back
+                // to software pixel format which we already support.
+                LOGGER.info("Core requested SET_HW_RENDER — refusing (Windows HW renderer not implemented).");
+                return false;
+            }
+
+            case LibretroEnvironment.GET_PREFERRED_HW_RENDER: {
+                // Tell the core we have no preference; it will then NOT
+                // ask for HW_RENDER again because it has been refused.
+                if (data != null) data.setInt(0, 0 /* RETRO_HW_CONTEXT_NONE */);
+                return true;
+            }
+
+            case LibretroEnvironment.GET_LOG_INTERFACE: {
+                // We could wire a JNA logger here, but for now decline —
+                // cores stay silent on Windows, which is fine.
+                return false;
+            }
+
+            default:
+                LOGGER.warn("Unhandled env cmd {} (raw 0x{})",
+                        LibretroEnvironment.name(cmd), Integer.toHexString(cmd));
+                return false;
         }
-        // Everything else: refuse. This is a step-2 stub.
-        return false;
     }
 
     /** Test helper / future API surface — exposes whether the core is
