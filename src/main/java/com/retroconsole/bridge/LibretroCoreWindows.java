@@ -85,6 +85,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
         // ----- Video (Step 4) -----
         LibretroBridge.RetroVideoRefresh videoCb = (data, w, h, pitch) -> {
+            dbgVideoCbCount++;
             if (w <= 0 || h <= 0) return; // core signals geometry change
             int len = w * h;
             int[] dst;
@@ -144,6 +145,19 @@ public class LibretroCoreWindows extends LibretroCore {
                     break;
             }
             newFrame = true;
+            // DEBUG: aggregate per-second.
+            long nowNs = System.nanoTime();
+            if (nowNs - dbgLastVideoCbLog >= 1_000_000_000L) {
+                LOGGER.info("DEBUG videoCb: in last ~1s — totalCb={}, lastSize={}x{}, runFrames={}, pollHits={}",
+                        dbgVideoCbCount, w, h, dbgRunFrameCount, dbgPollFrameHitCount);
+                dbgLastVideoCbLog = nowNs;
+            }
+            if (w != dbgLastVideoW || h != dbgLastVideoH) {
+                LOGGER.info("DEBUG videoCb: geometry changed {}x{} -> {}x{} (cbCount={})",
+                        dbgLastVideoW, dbgLastVideoH, w, h, dbgVideoCbCount);
+                dbgLastVideoW = w;
+                dbgLastVideoH = h;
+            }
         };
         this.videoCallback = videoCb;
         core.retro_set_video_refresh(videoCb);
@@ -218,6 +232,14 @@ public class LibretroCoreWindows extends LibretroCore {
     private volatile int[] frameBuffer = new int[0];
     private final Object frameLock = new Object();
     private volatile boolean newFrame = false;
+
+    /** DEBUG: counters for the flicker investigation. */
+    private long dbgVideoCbCount = 0;
+    private long dbgLastVideoCbLog = 0;
+    private int dbgLastVideoW = -1;
+    private int dbgLastVideoH = -1;
+    private long dbgRunFrameCount = 0;
+    private long dbgPollFrameHitCount = 0;
 
     /** Button state — written from server thread, read by input state callback. */
     private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
@@ -724,6 +746,7 @@ public class LibretroCoreWindows extends LibretroCore {
         // software pixel format path.
         if (core != null && gameLoaded) {
             try {
+                dbgRunFrameCount++;
                 core.retro_run();
             } catch (Throwable t) {
                 LOGGER.warn("retro_run threw: {}", t.getMessage());
@@ -740,6 +763,11 @@ public class LibretroCoreWindows extends LibretroCore {
             int copyLen = Math.min(frameBuffer.length, dst.length);
             System.arraycopy(frameBuffer, 0, dst, 0, copyLen);
             newFrame = false;
+            dbgPollFrameHitCount++;
+            if (copyLen != dst.length) {
+                LOGGER.warn("DEBUG pollFrame: size mismatch — frameBuf={}, dst={}, copied={}",
+                        frameBuffer.length, dst.length, copyLen);
+            }
             return true;
         }
     }
