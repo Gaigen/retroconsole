@@ -67,9 +67,9 @@ public abstract class LibretroCore implements AutoCloseable {
                 return LibretroCoreLinux.create(corePath, systemDir, saveDir);
 
             case WINDOWS:
-                LOGGER.warn("libretro cores are not yet supported on Windows (path={}). " +
-                        "Returning stub — no emulator will run.", corePath);
-                return new LibretroCoreWindows(corePath, systemDir, saveDir);
+                LibretroCoreWindows win = new LibretroCoreWindows(corePath, systemDir, saveDir);
+                win.loadNative(); // Step 1: JNA-load the .dll. No further work yet.
+                return win;
 
             case MACOS:
             case UNKNOWN:

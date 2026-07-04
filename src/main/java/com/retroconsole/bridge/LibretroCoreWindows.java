@@ -1,36 +1,31 @@
 package com.retroconsole.bridge;
 
+import com.sun.jna.Native;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 
 /**
- * Windows stub for {@link LibretroCore}.
+ * Windows implementation of {@link LibretroCore}. Built up step by step:
  *
- * <p>This is a deliberate starting point: the user wanted Linux code to stay focused on
- * Linux, and Windows support to start from a clean, minimal base. No JNA, no headless
- * GL, no Flycast patches — all of that lives in {@link LibretroCoreLinux} and has no
- * place in a Windows implementation that does not yet exist.
+ * <p><b>Step 1</b> (this commit): JNA-load the libretro {@code .dll} and
+ * verify it answers to {@code retro_api_version()}. Nothing else works
+ * yet — callbacks are not wired, {@link #loadGame(Path)} returns false.
  *
- * <p>Behaviour:
- * <ul>
- *   <li>{@link #loadGame(Path)} returns {@code false}.</li>
- *   <li>Frame sources stay at zero size.</li>
- *   <li>Inputs, save states, SRAM and reset are no-ops.</li>
- *   <li>The mod continues to load: blocks can be placed, the GUI can list cores,
- *       but the emulator thread will not start because {@code loadCoreAndGame}
- *       in {@code CoreManager} sees the {@code null} return.</li>
- * </ul>
- *
- * <p>To wire up real Windows support later, replace the bodies below with a JNA bridge
- * to {@code libretro.dll} / {@code headless_gl.dll} and (optionally) implement a
- * Windows headless GL backend. None of that should require touching
- * {@link LibretroCoreLinux}.
+ * <p>Subsequent steps will add environment callbacks, frame delivery and
+ * input. The Linux implementation lives in {@link LibretroCoreLinux} and
+ * is intentionally not consulted during development of this file — we
+ * build from libretro.h semantics, not by duplicating.
  */
 public class LibretroCoreWindows extends LibretroCore {
     private static final Logger LOGGER = LoggerFactory.getLogger("LibretroCoreWindows");
 
+    /** The loaded libretro core. Null until {@link #load(Path, String, String)}
+     *  reaches Step 1 and only ever non-null afterwards. */
+    private LibretroBridge core;
+
+    /** System / save directories to hand to the core on load. */
     private final String systemDir;
     private final String saveDir;
 
@@ -42,9 +37,43 @@ public class LibretroCoreWindows extends LibretroCore {
                 corePath, systemDir, saveDir);
     }
 
+    // ----- Step 1: actually load the .dll ----------------------------------
+
+    /**
+     * Replace the stub construction with a real JNA load. Called by
+     * {@link LibretroCore#load(Path, String, String)} through a side
+     * channel — the abstract base has the factory, this method is the
+     * Windows-specific kick-off. Calling it twice is a no-op.
+     */
+    void loadNative() {
+        if (core != null) return;
+        if (corePath == null) {
+            LOGGER.error("Cannot load Windows libretro core: corePath is null");
+            return;
+        }
+        String absPath = corePath.toAbsolutePath().toString();
+        LOGGER.info("Native.load({})", absPath);
+        try {
+            this.core = Native.load(absPath, LibretroBridge.class);
+            int apiVersion = core.retro_api_version();
+            LOGGER.info("Core loaded. API version: {}", apiVersion);
+        } catch (Throwable t) {
+            LOGGER.error("Failed to load libretro core at {}: {}", absPath, t.getMessage(), t);
+            this.core = null;
+        }
+    }
+
+    /** Test helper / future API surface — exposes whether the core is
+     *  currently loaded without leaking JNA types. */
+    public boolean isCoreLoaded() {
+        return core != null;
+    }
+
+    // ----- Stub implementations (Steps 2..N will replace these) -----------
+
     @Override
     public boolean loadGame(Path romPath) {
-        LOGGER.warn("loadGame({}) called but Windows emulator support is not implemented.",
+        LOGGER.warn("loadGame({}) called but Windows emulator support is not yet implemented.",
                 romPath);
         return false;
     }
