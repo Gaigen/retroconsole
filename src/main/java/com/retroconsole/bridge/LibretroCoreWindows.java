@@ -93,6 +93,17 @@ public class LibretroCoreWindows extends LibretroCore {
             // another thread could read an empty buffer while we
             // are still painting it.
             synchronized (frameLock) {
+                // GET_CAN_DUPE=true: NULL data means "repeat last frame",
+                // NOT a pixel buffer. Keep the previous contents and
+                // just signal a fresh frame so the client re-displays it.
+                // Crucial for PS1 interlaced — without this, the half
+                // frames overwrite the buffer with black, which is
+                // what we were sending every other call (~30-40% of
+                // all PS1 frames were black on the wire).
+                if (data == null && frameBuffer.length == len) {
+                    newFrame = true;
+                    return;
+                }
                 if (frameBuffer.length != len) frameBuffer = new int[len];
                 int[] dst = frameBuffer;
                 switch (pixelFormat) {
