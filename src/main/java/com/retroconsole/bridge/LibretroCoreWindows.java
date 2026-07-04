@@ -409,6 +409,34 @@ public class LibretroCoreWindows extends LibretroCore {
             case LibretroEnvironment.SET_KEYBOARD_CALLBACK:
                 return false;
 
+            // ----- PCSX-ReARMed / PS1 specifics ----------------------------------
+            case LibretroEnvironment.GET_DISK_CONTROL_INTERFACE_VERSION:
+                if (data != null) data.setInt(0, 1);
+                return true;
+            case LibretroEnvironment.SET_DISK_CONTROL_INTERFACE:
+                return true;
+            case LibretroEnvironment.SET_MEMORY_MAPS:  // 0x10024
+                return true;
+            case LibretroEnvironment.GET_CURRENT_SOFTWARE_FRAMEBUFFER: // 0x10028
+                // Some cores (PCSX-ReARMed) ask for a pointer to our software
+                // framebuffer so they can write pixels directly via raw memory.
+                // We do not currently provide such a writeback path; the core
+                // therefore falls back to the regular video_refresh callback.
+                // Returning true with a null-ish pointer is the documented way
+                // to say "no, use the standard callback please".
+                if (data != null) data.setPointer(0, null);
+                return true;
+            case LibretroEnvironment.SET_FASTFORWARDING_OVERRIDE:
+                return true;
+
+            // Core-private (non-standard) cmds that PCSX-ReARMed issues.
+            // We don't know what they want, but returning false makes
+            // PCSX-ReARMed complain. Accepting silently is harmless here.
+            case 54: // 0x36 — PCSX-ReARMed private
+            case 69: // 0x45 — PCSX-ReARMed private
+            case 0x10030:
+                return true;
+
             default:
                 LOGGER.warn("Unhandled env cmd {} (raw 0x{})",
                         LibretroEnvironment.name(cmd), Integer.toHexString(cmd));
