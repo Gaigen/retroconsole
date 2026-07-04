@@ -83,67 +83,84 @@ public class LibretroCoreWindows extends LibretroCore {
         this.envCallback = env;
         core.retro_set_environment(env);
 
-        // ----- Video (Step 4) -----
         LibretroBridge.RetroVideoRefresh videoCb = (data, w, h, pitch) -> {
+            dbgVideoCbCount++;
             if (w <= 0 || h <= 0) return; // core signals geometry change
             int len = w * h;
-            int[] dst;
+            // Hold the lock for the entire pixel conversion. We must
+            // allocate any replacement buffer AND fill it before
+            // releasing the lock, otherwise a fast pollFrame on
+            // another thread could read an empty buffer while we
+            // are still painting it.
             synchronized (frameLock) {
                 if (frameBuffer.length != len) frameBuffer = new int[len];
-                dst = frameBuffer;
-            }
-            switch (pixelFormat) {
-                case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888: {
-                    int stride = (int) (pitch / 4);
-                    for (int y = 0; y < h; y++) {
-                        for (int x = 0; x < w; x++) {
-                            int srcOffset = y * stride + x;
-                            int pixel;
-                            if (data == null) {
-                                pixel = 0;
-                            } else {
-                                pixel = data.getInt((long) srcOffset * 4);
+                int[] dst = frameBuffer;
+                switch (pixelFormat) {
+                    case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888: {
+                        int stride = (int) (pitch / 4);
+                        for (int y = 0; y < h; y++) {
+                            for (int x = 0; x < w; x++) {
+                                int srcOffset = y * stride + x;
+                                int pixel;
+                                if (data == null) {
+                                    pixel = 0;
+                                } else {
+                                    pixel = data.getInt((long) srcOffset * 4);
+                                }
+                                dst[y * w + x] = 0xFF000000 | (pixel & 0x00FFFFFF);
                             }
-                            dst[y * w + x] = 0xFF000000 | (pixel & 0x00FFFFFF);
                         }
+                        break;
                     }
-                    break;
-                }
-                case LibretroBridge.RETRO_PIXEL_FORMAT_RGB565: {
-                    // 16 bits per pixel, native endian (typically little-endian
-                    // on x86/amd64). Layout: RRRRRGGGGGGBBBBB.
-                    int stride = (int) (pitch / 2);
-                    for (int y = 0; y < h; y++) {
-                        for (int x = 0; x < w; x++) {
-                            int srcOffset = y * stride + x;
-                            short raw = (data == null) ? 0 : data.getShort((long) srcOffset * 2);
-                            int r = ((raw >> 11) & 0x1F) << 3;
-                            int g = ((raw >> 5)  & 0x3F) << 2;
-                            int b = ( raw        & 0x1F) << 3;
-                            dst[y * w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                    case LibretroBridge.RETRO_PIXEL_FORMAT_RGB565: {
+                        // 16 bits per pixel, little-endian on x86/amd64.
+                        // Layout: RRRRRGGGGGGBBBBB.
+                        int stride = (int) (pitch / 2);
+                        for (int y = 0; y < h; y++) {
+                            for (int x = 0; x < w; x++) {
+                                int srcOffset = y * stride + x;
+                                short raw = (data == null) ? 0 : data.getShort((long) srcOffset * 2);
+                                int r = ((raw >> 11) & 0x1F) << 3;
+                                int g = ((raw >> 5)  & 0x3F) << 2;
+                                int b = ( raw        & 0x1F) << 3;
+                                dst[y * w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                            }
                         }
+                        break;
                     }
-                    break;
-                }
-                case LibretroBridge.RETRO_PIXEL_FORMAT_0RGB1555: {
-                    int stride = (int) (pitch / 2);
-                    for (int y = 0; y < h; y++) {
-                        for (int x = 0; x < w; x++) {
-                            int srcOffset = y * stride + x;
-                            short raw = (data == null) ? 0 : data.getShort((long) srcOffset * 2);
-                            int r = ((raw >> 10) & 0x1F) << 3;
-                            int g = ((raw >> 5)  & 0x1F) << 3;
-                            int b = ( raw        & 0x1F) << 3;
-                            dst[y * w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                    case LibretroBridge.RETRO_PIXEL_FORMAT_0RGB1555: {
+                        int stride = (int) (pitch / 2);
+                        for (int y = 0; y < h; y++) {
+                            for (int x = 0; x < w; x++) {
+                                int srcOffset = y * stride + x;
+                                short raw = (data == null) ? 0 : data.getShort((long) srcOffset * 2);
+                                int r = ((raw >> 10) & 0x1F) << 3;
+                                int g = ((raw >> 5)  & 0x1F) << 3;
+                                int b = ( raw        & 0x1F) << 3;
+                                dst[y * w + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                            }
                         }
+                        break;
                     }
-                    break;
+                    default:
+                        java.util.Arrays.fill(dst, 0xFF000000);
+                        break;
                 }
-                default:
-                    java.util.Arrays.fill(dst, 0xFF000000);
-                    break;
+                newFrame = true;
             }
-            newFrame = true;
+            // DEBUG: aggregate per-second.
+            long nowNs = System.nanoTime();
+            if (nowNs - dbgLastVideoCbLog >= 1_000_000_000L) {
+                LOGGER.info("DEBUG videoCb: in last ~1s — totalCb={}, lastSize={}x{}, runFrames={}, pollHits={}",
+                        dbgVideoCbCount, w, h, dbgRunFrameCount, dbgPollFrameHitCount);
+                dbgLastVideoCbLog = nowNs;
+            }
+            if (w != dbgLastVideoW || h != dbgLastVideoH) {
+                LOGGER.info("DEBUG videoCb: geometry changed {}x{} -> {}x{} (cbCount={})",
+                        dbgLastVideoW, dbgLastVideoH, w, h, dbgVideoCbCount);
+                dbgLastVideoW = w;
+                dbgLastVideoH = h;
+            }
         };
         this.videoCallback = videoCb;
         core.retro_set_video_refresh(videoCb);
@@ -228,6 +245,15 @@ public class LibretroCoreWindows extends LibretroCore {
     /** L2 / R2 analog triggers. */
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
+
+    // DEBUG diagnostics (from previous diagnostic commit). These should be
+    // dropped once the PS1 flicker root cause is confirmed fixed.
+    private long dbgVideoCbCount = 0;
+    private long dbgLastVideoCbLog = 0;
+    private int dbgLastVideoW = -1;
+    private int dbgLastVideoH = -1;
+    private long dbgRunFrameCount = 0;
+    private long dbgPollFrameHitCount = 0;
 
     /** Most-recent accepted core options, key → default value. Populated
      *  dynamically by SET_VARIABLES / SET_CORE_OPTIONS / SET_CORE_OPTIONS_V2
@@ -724,6 +750,7 @@ public class LibretroCoreWindows extends LibretroCore {
         // software pixel format path.
         if (core != null && gameLoaded) {
             try {
+                dbgRunFrameCount++;
                 core.retro_run();
             } catch (Throwable t) {
                 LOGGER.warn("retro_run threw: {}", t.getMessage());
@@ -740,6 +767,7 @@ public class LibretroCoreWindows extends LibretroCore {
             int copyLen = Math.min(frameBuffer.length, dst.length);
             System.arraycopy(frameBuffer, 0, dst, 0, copyLen);
             newFrame = false;
+            dbgPollFrameHitCount++;
             return true;
         }
     }
