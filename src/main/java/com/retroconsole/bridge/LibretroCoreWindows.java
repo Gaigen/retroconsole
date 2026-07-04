@@ -1,6 +1,7 @@
 package com.retroconsole.bridge;
 
 import com.sun.jna.Native;
+import com.sun.jna.Pointer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,10 +41,14 @@ public class LibretroCoreWindows extends LibretroCore {
     // ----- Step 1: actually load the .dll ----------------------------------
 
     /**
-     * Replace the stub construction with a real JNA load. Called by
-     * {@link LibretroCore#load(Path, String, String)} through a side
-     * channel — the abstract base has the factory, this method is the
-     * Windows-specific kick-off. Calling it twice is a no-op.
+     * Replace the stub construction with a real JNA load and run the core's
+     * {@code retro_init()}. Calling it twice is a no-op.
+     *
+     * <p><b>Step 2</b>: registers a minimal environment callback and calls
+     * {@code retro_init}. The callback answers {@code GET_CAN_DUPE=true}
+     * (allow frame repeat) and refuses everything else — enough to get most
+     * cores through initialisation. Frames, audio and input are still
+     * stubbed.
      */
     void loadNative() {
         if (core != null) return;
@@ -57,10 +62,47 @@ public class LibretroCoreWindows extends LibretroCore {
             this.core = Native.load(absPath, LibretroBridge.class);
             int apiVersion = core.retro_api_version();
             LOGGER.info("Core loaded. API version: {}", apiVersion);
+
+            LOGGER.info("setupCallbacks()");
+            setupCallbacks();
+
+            LOGGER.info("retro_init()");
+            core.retro_init();
+            LOGGER.info("Core initialized.");
         } catch (Throwable t) {
             LOGGER.error("Failed to load libretro core at {}: {}", absPath, t.getMessage(), t);
             this.core = null;
         }
+    }
+
+    /** Register the environment callback with the core. Step 2 implements
+     *  just enough of {@code retro_environment} for {@code retro_init()} to
+     *  succeed. */
+    private void setupCallbacks() {
+        LibretroBridge.RetroEnvironment env = (cmd, data) -> handleEnvironment(cmd, data);
+        // Hold a strong reference so JNA doesn't let the trampoline be GC'd.
+        this.envCallback = env;
+        core.retro_set_environment(env);
+    }
+
+    /** Strong reference kept so JNA doesn't GC the callback trampoline. */
+    private LibretroBridge.RetroEnvironment envCallback;
+
+    /**
+     * Minimal environment callback. Step 2 only handles {@code GET_CAN_DUPE}
+     * (allow frame repeat, almost every core expects yes). Other commands
+     * are answered with {@code false} — the core may complain in its own log
+     * but should not crash. Later steps expand this to system/save
+     * directories, pixel format, log interface, etc.
+     */
+    private boolean handleEnvironment(int cmd, Pointer data) {
+        if (cmd == LibretroEnvironment.GET_CAN_DUPE) {
+            // data is a pointer to a single byte; write 1 (true).
+            if (data != null) data.setByte(0, (byte) 1);
+            return true;
+        }
+        // Everything else: refuse. This is a step-2 stub.
+        return false;
     }
 
     /** Test helper / future API surface — exposes whether the core is
