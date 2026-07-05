@@ -99,6 +99,7 @@ public class FrameSenderThread extends Thread {
     }
 
     void stopSender() {
+        LOGGER.info("stopSender(): terminating frame sender for {}", consolePos);
         running = false;
         interrupt();
     }

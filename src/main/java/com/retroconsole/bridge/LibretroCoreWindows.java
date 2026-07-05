@@ -792,8 +792,49 @@ public class LibretroCoreWindows extends LibretroCore {
 
     @Override
     public void close() throws Exception {
-        // Real unload happens in Step 7+. For now nothing is open that
-        // requires explicit teardown beyond the JNA handle we let GC clean up.
+        if (core == null) {
+            LOGGER.debug("close(): core already null — no-op");
+            return;
+        }
+        LOGGER.info("close(): shutting down libretro core {}", corePath);
+
+        if (gameLoaded) {
+            try {
+                core.retro_unload_game();
+                LOGGER.info("retro_unload_game: ok");
+            } catch (Throwable t) {
+                LOGGER.warn("retro_unload_game failed: {}", t.getMessage());
+            }
+            try {
+                core.retro_deinit();
+                LOGGER.info("retro_deinit: ok");
+            } catch (Throwable t) {
+                LOGGER.warn("retro_deinit failed: {}", t.getMessage());
+            }
+        } else {
+            LOGGER.warn("Skipping retro_deinit — game never loaded (avoids PCSX2-style teardown crash)");
+        }
+
+        // Drop references to native memory and JNI callbacks so JNA can
+        // unload the .dll on next re-load.
+        this.core = null;
+        this.envCallback = null;
+        this.videoCallback = null;
+        this.audioSampleCallback = null;
+        this.audioBatchCallback = null;
+        this.inputPollCallback = null;
+        this.inputStateCallback = null;
+        this.persistentSystemDir = null;
+        this.persistentSaveDir = null;
+        this.loadedGameInfo = null;
+        this.allocatedOptionMemory.clear();
+        synchronized (frameLock) {
+            this.frameBuffer = new int[0];
+            this.newFrame = false;
+        }
+        this.gameLoaded = false;
+
+        LOGGER.info("close(): clean shutdown complete");
     }
 
     public String getSystemDir() { return systemDir; }
