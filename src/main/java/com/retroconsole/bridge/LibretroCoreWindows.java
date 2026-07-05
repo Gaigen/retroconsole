@@ -84,7 +84,6 @@ public class LibretroCoreWindows extends LibretroCore {
         core.retro_set_environment(env);
 
         LibretroBridge.RetroVideoRefresh videoCb = (data, w, h, pitch) -> {
-            dbgVideoCbCount++;
             if (w <= 0 || h <= 0) return; // core signals geometry change
             int len = w * h;
             // Hold the lock for the entire pixel conversion. We must
@@ -158,19 +157,6 @@ public class LibretroCoreWindows extends LibretroCore {
                         break;
                 }
                 newFrame = true;
-            }
-            // DEBUG: aggregate per-second.
-            long nowNs = System.nanoTime();
-            if (nowNs - dbgLastVideoCbLog >= 1_000_000_000L) {
-                LOGGER.info("DEBUG videoCb: in last ~1s — totalCb={}, lastSize={}x{}, runFrames={}, pollHits={}",
-                        dbgVideoCbCount, w, h, dbgRunFrameCount, dbgPollFrameHitCount);
-                dbgLastVideoCbLog = nowNs;
-            }
-            if (w != dbgLastVideoW || h != dbgLastVideoH) {
-                LOGGER.info("DEBUG videoCb: geometry changed {}x{} -> {}x{} (cbCount={})",
-                        dbgLastVideoW, dbgLastVideoH, w, h, dbgVideoCbCount);
-                dbgLastVideoW = w;
-                dbgLastVideoH = h;
             }
         };
         this.videoCallback = videoCb;
@@ -256,15 +242,6 @@ public class LibretroCoreWindows extends LibretroCore {
     /** L2 / R2 analog triggers. */
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
-
-    // DEBUG diagnostics (from previous diagnostic commit). These should be
-    // dropped once the PS1 flicker root cause is confirmed fixed.
-    private long dbgVideoCbCount = 0;
-    private long dbgLastVideoCbLog = 0;
-    private int dbgLastVideoW = -1;
-    private int dbgLastVideoH = -1;
-    private long dbgRunFrameCount = 0;
-    private long dbgPollFrameHitCount = 0;
 
     /** Most-recent accepted core options, key → default value. Populated
      *  dynamically by SET_VARIABLES / SET_CORE_OPTIONS / SET_CORE_OPTIONS_V2
@@ -761,7 +738,6 @@ public class LibretroCoreWindows extends LibretroCore {
         // software pixel format path.
         if (core != null && gameLoaded) {
             try {
-                dbgRunFrameCount++;
                 core.retro_run();
             } catch (Throwable t) {
                 LOGGER.warn("retro_run threw: {}", t.getMessage());
@@ -778,7 +754,6 @@ public class LibretroCoreWindows extends LibretroCore {
             int copyLen = Math.min(frameBuffer.length, dst.length);
             System.arraycopy(frameBuffer, 0, dst, 0, copyLen);
             newFrame = false;
-            dbgPollFrameHitCount++;
             return true;
         }
     }
