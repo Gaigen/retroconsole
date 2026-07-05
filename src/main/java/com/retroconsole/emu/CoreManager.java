@@ -40,12 +40,11 @@ public class CoreManager {
      * Only extracts if the file doesn't exist or is outdated.
      */
     private static void extractBundledNatives(Path coresDir) {
-        // Bundled headless GL is Linux-only. Windows uses a separate backend
-        // (not yet implemented); other platforms have nothing to extract.
-        if (!com.retroconsole.platform.OsUtil.isLinux()) {
+        String bundledName = com.retroconsole.platform.OsUtil.bundledHeadlessGlName();
+        if (bundledName == null) {
             return;
         }
-        String[] bundled = { "libheadless_gl.so" };
+        String[] bundled = { bundledName };
         for (String name : bundled) {
             String resourceName = "/natives/" + name;
             // Our file is stored as .libheadless_gl.so (dot-prefixed, hidden)
@@ -92,6 +91,7 @@ public class CoreManager {
             List<Path> files = stream
                     .filter(p -> {
                         String name = p.getFileName().toString().toLowerCase();
+                        if (name.startsWith(".")) return false;
                         return name.endsWith(".so") || name.endsWith(".dll") || name.endsWith(".dylib");
                     })
                     .sorted()

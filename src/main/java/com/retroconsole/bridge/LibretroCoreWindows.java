@@ -2,11 +2,31 @@ package com.retroconsole.bridge;
 
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
+import com.sun.jna.NativeLibrary;
 import com.sun.jna.Pointer;
+import com.sun.jna.ptr.PointerByReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
+
+/** JNA interface to .libheadless_gl.dll — headless WGL context on Windows. */
+interface HeadlessGLWin extends com.sun.jna.Library {
+    int hlg_init_ex(int api, int major, int minor, int flags);
+    void hlg_destroy();
+    Pointer hlg_get_proc_address(String sym);
+    void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH);
+    void hlg_dump_hw_render(Pointer data, int size);
+    Pointer hlg_get_framebuffer_ptr();
+    Pointer hlg_get_proc_address_ptr();
+    Pointer hlg_get_log_cb_ptr();
+    int hlg_make_current();
+    void hlg_release();
+    void hlg_debug_fbo();
+    int hlg_resize(int w, int h);
+    String hlg_get_gpu_info();
+}
 
 /**
  * Windows implementation of {@link LibretroCore}. Built up step by step:
@@ -22,6 +42,124 @@ import java.nio.file.Path;
  */
 public class LibretroCoreWindows extends LibretroCore {
     private static final Logger LOGGER = LoggerFactory.getLogger("LibretroCoreWindows");
+
+    /**
+     * Static leak of every {@link LibretroBridge INSTANCE} we have ever
+     * opened. JNA unloads the native .dll the moment the last
+     * {@code Native.load()} reference becomes unreachable; if the .dll is
+     * unloaded while a callback trampoline still dangles on the C side
+     * (an asynchronous callback frame mid-call) we get a 0xC0000005
+     * "invalid memory access" with
+     * {@code faulting module = flycast_libretro.dll_unloaded}. Pinning the
+     * proxy here keeps the .dll resident for the lifetime of this class-
+     * loader, so the JVM never tries to FreeLibrary the .dll while we
+     * might still be calling into it.
+     *
+     * <p>The list is also how we "swap cores": when a console picks a new
+     * core, we drop the previous entry but keep the rest. Memory cost is
+     * bounded by how many distinct cores the player tries in one session
+     * (typically 1-2).
+     */
+    private static final java.util.List<LibretroBridge> KEEP_LOADED = new java.util.ArrayList<>();
+    /** JNA trampolines registered with native cores — must never be GC'd. */
+    private static final java.util.List<Object> PINNED_CALLBACKS = new java.util.ArrayList<>();
+
+    private static final Pointer RETRO_HW_FRAME_BUFFER_VALID = Pointer.createConstant(-1);
+
+    // HW render (Flycast)
+    private boolean hwRenderActive = false;
+    private boolean hwGpuLoggedOnEmulatorThread = false;
+    private boolean headlessGlReady = false;
+    private int headlessGlApi = -1;
+    private int hwPbufW = 0;
+    private int hwPbufH = 0;
+    private Pointer hwContextReset = null;
+    private Pointer hwContextDestroy = null;
+    private boolean hwContextResetDone = false;
+    private HeadlessGLWin headlessGl;
+
+    private HeadlessGLWin headlessGl() {
+        if (headlessGl == null) {
+            String path = Paths.get("config/retroconsole/cores/.libheadless_gl.dll")
+                    .toAbsolutePath().toString();
+            headlessGl = Native.load(path, HeadlessGLWin.class);
+        }
+        return headlessGl;
+    }
+
+    private boolean supportsHwRender() {
+        try {
+            headlessGl();
+            return true;
+        } catch (Throwable t) {
+            LOGGER.warn("Headless GL DLL not available: {}", t.getMessage());
+            return false;
+        }
+    }
+
+    private boolean ensureHeadlessGl(int ctxType) {
+        int api = (ctxType == 1 || ctxType == 2 || ctxType == 4) ? 1 : 0;
+        int major = 3;
+        int minor = (api == 1) ? 0 : (ctxType == 3 ? 3 : 1);
+        int flags = 0;
+        int profileKey = (api & 0xFF) | ((flags & 0xFF) << 8) | ((minor & 0xFF) << 16);
+        if (headlessGlReady && headlessGlApi == profileKey) return true;
+        if (headlessGlReady) {
+            try { headlessGl().hlg_destroy(); } catch (Throwable ignored) {}
+            headlessGlReady = false;
+            headlessGlApi = -1;
+        }
+        try {
+            int glOk = headlessGl().hlg_init_ex(api, major, minor, flags);
+            headlessGlReady = glOk != 0;
+            if (headlessGlReady) headlessGlApi = profileKey;
+            String apiName = api == 1 ? "GLES" + major : "GL " + major + "." + minor;
+            LOGGER.info("Headless GL context ({}): {}", apiName, headlessGlReady ? "OK" : "FAILED");
+            if (headlessGlReady) {
+                LOGGER.info("Headless GL GPU: {}", headlessGl().hlg_get_gpu_info());
+            }
+            return headlessGlReady;
+        } catch (Throwable t) {
+            LOGGER.warn("Headless GL init failed: {}", t.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Tear down HW render after a failed {@code retro_load_game} or before
+     * {@code hlg_destroy}. Flycast calls {@code context_reset} during load;
+     * destroying WGL without {@code context_destroy} leaves native GL state
+     * dangling and often kills the JVM with 0xC0000005.
+     */
+    private void teardownHwRender() {
+        if (!hwRenderActive && !headlessGlReady) return;
+        if (hwContextResetDone && hwContextDestroy != null
+                && Pointer.nativeValue(hwContextDestroy) != 0) {
+            try {
+                headlessGl().hlg_make_current();
+                LOGGER.info("Calling context_destroy @ {}", hwContextDestroy);
+                com.sun.jna.Function.getFunction(hwContextDestroy).invokeVoid(new Object[0]);
+                LOGGER.info("context_destroy completed");
+            } catch (Throwable t) {
+                LOGGER.warn("context_destroy failed: {}", t.getMessage());
+            }
+        }
+        if (headlessGlReady) {
+            try {
+                headlessGl().hlg_release();
+            } catch (Throwable ignored) {}
+        }
+        hwRenderActive = false;
+        hwContextResetDone = false;
+        hwContextReset = null;
+        hwContextDestroy = null;
+        hwGpuLoggedOnEmulatorThread = false;
+        hwPbufW = 0;
+        hwPbufH = 0;
+    }
+
+    /** Set after a successful {@code retro_init()}. */
+    private boolean coreInitialized;
 
     /** The loaded libretro core. Null until {@link #load(Path, String, String)}
      *  reaches Step 1 and only ever non-null afterwards. */
@@ -70,7 +208,10 @@ public class LibretroCoreWindows extends LibretroCore {
      */
     interface WinKernel32 extends com.sun.jna.Library {
         WinKernel32 INSTANCE = Native.load("kernel32", WinKernel32.class);
+        int GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS = 0x00000004;
+        int GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT = 0x00000002;
         Pointer GetModuleHandleW(String lpModuleName);
+        boolean GetModuleHandleExW(int dwFlags, Pointer lpModuleName, PointerByReference phModule);
         boolean VirtualProtect(Pointer lpAddress, long dwSize,
                                 int flNewProtect, int[] lpflOldProtect);
         int PAGE_EXECUTE_READ = 0x20;
@@ -80,32 +221,30 @@ public class LibretroCoreWindows extends LibretroCore {
         int PAGE_EXECUTE = 0x10;
     }
 
+    private static void pinForever(Object ref) {
+        if (ref != null && !PINNED_CALLBACKS.contains(ref)) {
+            PINNED_CALLBACKS.add(ref);
+        }
+    }
+
+    private static final byte[] NOP6 = new byte[] {
+            (byte) 0x90, (byte) 0x90, (byte) 0x90,
+            (byte) 0x90, (byte) 0x90, (byte) 0x90 };
+    private static final byte[] NOP2 = new byte[] { (byte) 0x90, (byte) 0x90 };
+
+    /** Flycast libretro callback / log BSS slots (narrow — not the import IAT). */
+    private static final long FLYCAST_CALLBACK_SLOT_LO = 0x7A2000L;
+    private static final long FLYCAST_CALLBACK_SLOT_HI = 0x7A5000L;
+
     /**
-     * Replace six bytes of native code inside flycast_libretro.dll with
-     * {@code 0x90 0x90 0x90 0x90 0x90 0x90} (six NOPs). The bytes
-     * targeted here are the first of eight back-to-back indirect calls of
-     * the form {@code ff 15 xx xx xx xx} (CALL QWORD PTR [rip+disp32])
-     * inside the core's option callback slot, found via static analysis of
-     * the .text section at RVA 0x668b6.
+     * Flycast without HW-renderer support dereferences unregistered libretro
+     * callback slots via {@code ff 15} thunks in {@code .data}. One build
+     * has six such sites (RVA 0x668b6 … 0x669c7) all targeting the same
+     * slot; patching only the first is not enough.
      *
-     * <p>Flycast without HW-renderer support reaches this slot while
-     * looking up frontend-supplied variable defaults; the page at that
-     * RVA crosses a callback that has never been registered with us, so
-     * dereferencing the callback vector dereferences garbage. NOP-out
-     * one such call and the JVM no longer crashes.
-     *
-     * <p>Pattern in the disassembly:
-     * <pre>
-     *   2e81b68b0: sub rsp,0x28
-     *   2e81b68b4: xor edx,edx
-     *   2e81b68b6: ff 15 ec cb 73 00  ; call QWORD PTR [rip+0x73cbec] =&gt; .data+0x4a8
-     *   2e81b68bc: shr eax,1
-     *   2e81b68be: and eax,0x1
-     *   2e81b68c1: add rsp,0x28
-     *   2e81b68c5: ret
-     * </pre>
-     * After the patch, the body still returns a (now meaningless) value
-     * because {@code shr/and} act on whatever was in {@code eax}.
+     * <p>We scan the loaded {@code .text} region at runtime (the on-disk PE
+     * image is sparse — bytes are only valid after {@code LoadLibrary}) and
+     * NOP every {@code ff 15} that shares the anchor thunk's target.
      */
     private void disableFlycastCrash() {
         if (!isFlycastCore()) return;
@@ -117,54 +256,228 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             long baseAddr = Pointer.nativeValue(base);
             LOGGER.info("disableFlycastCrash: Flycast baseAddr = 0x{}", Long.toHexString(baseAddr));
-            // First hot call-site inside the option-callback section.
-            long targetRva = 0x668b6L;
-            long pageSize = 0x1000L;
-            long targetAddr = baseAddr + targetRva;
-            long pageStart = (targetAddr) & ~(pageSize - 1);
-            long pageLen   = pageSize;
-            int[] oldProtect = new int[1];
-            if (!WinKernel32.INSTANCE.VirtualProtect(new Pointer(pageStart),
-                    pageLen, WinKernel32.INSTANCE.PAGE_EXECUTE_READWRITE, oldProtect)) {
-                LOGGER.warn("disableFlycastCrash: VirtualProtect(page=0x{} len={}) failed",
-                        Long.toHexString(pageStart), pageLen);
+
+            long[] textRange = readTextSectionRange(base);
+            if (textRange == null) {
+                LOGGER.warn("disableFlycastCrash: could not locate .text section");
                 return;
             }
-            try {
-                byte[] nops = new byte[] {
-                        (byte) 0x90, (byte) 0x90, (byte) 0x90,
-                        (byte) 0x90, (byte) 0x90, (byte) 0x90 };
-                byte[] original = new byte[nops.length];
-                Pointer p = new Pointer(targetAddr);
-                original[0] = p.getByte(0); original[1] = p.getByte(1); original[2] = p.getByte(2);
-                original[3] = p.getByte(3); original[4] = p.getByte(4); original[5] = p.getByte(5);
-                LOGGER.warn("disableFlycastCrash: patching RVA 0x{} (was {})",
-                        Long.toHexString(targetRva), bytesToHexNibble(original));
-                p.write(0, nops, 0, nops.length);
-                byte[] after = new byte[nops.length];
-                after[0] = p.getByte(0); after[1] = p.getByte(1); after[2] = p.getByte(2);
-                after[3] = p.getByte(3); after[4] = p.getByte(4); after[5] = p.getByte(5);
-                LOGGER.warn("disableFlycastCrash: verified ({})", bytesToHexNibble(after));
-            } finally {
-                int[] restored = new int[1];
-                if (!WinKernel32.INSTANCE.VirtualProtect(new Pointer(pageStart),
-                        pageLen, oldProtect[0], restored)) {
-                    LOGGER.warn("disableFlycastCrash: VirtualProtect restore failed");
-                }
+            long textVa = textRange[0];
+            long textEnd = textRange[1];
+
+            long anchorRva = 0x668b6L;
+            long targetRva = readFf15TargetRva(base, anchorRva);
+            if (targetRva < 0) {
+                LOGGER.warn("disableFlycastCrash: anchor RVA 0x{} is not ff 15 — skip",
+                        Long.toHexString(anchorRva));
+                return;
             }
+            LOGGER.info("disableFlycastCrash: anchor target RVA = 0x{}",
+                    Long.toHexString(targetRva));
+
+            java.util.List<Long> sites = findFf15CallSites(base, textVa, textEnd, targetRva);
+            LOGGER.info("disableFlycastCrash: {} ff15 site(s) share target 0x{}",
+                    sites.size(), Long.toHexString(targetRva));
+            int patched = 0;
+            for (long rva : sites) {
+                if (nopFlycastInsn(baseAddr, rva, NOP6)) patched++;
+            }
+            LOGGER.info("disableFlycastCrash: patched {}/{} option-callback site(s)", patched, sites.size());
+
+            int slotPatches = patchFf15ToCallbackSlots(base, baseAddr, textVa, textEnd);
+            LOGGER.info("disableFlycastCrash: patched {} ff15 site(s) targeting callback slots 0x{}..0x{}",
+                    slotPatches, Long.toHexString(FLYCAST_CALLBACK_SLOT_LO),
+                    Long.toHexString(FLYCAST_CALLBACK_SLOT_HI));
+
+            int rlg = patchRetroLoadGameRegion(base, baseAddr, textVa, textEnd);
+            LOGGER.info("disableFlycastCrash: patched {} site(s) inside retro_load_game", rlg);
         } catch (Throwable t) {
             LOGGER.error("disableFlycastCrash threw: {}", t.getMessage(), t);
         }
     }
 
+    /** NOP {@code ff 15} calls whose RIP-relative target lies in the callback-slot window. */
+    private int patchFf15ToCallbackSlots(Pointer imageBase, long baseAddr,
+            long textVa, long textEnd) {
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        int patched = 0;
+        for (long rva = textVa; rva + 6 < textEnd; rva++) {
+            Pointer p = imageBase.share(rva);
+            if ((p.getByte(0) & 0xFF) != 0xFF || (p.getByte(1) & 0xFF) != 0x15) continue;
+            int disp = p.getInt(2);
+            long target = rva + 6L + disp;
+            if (target < FLYCAST_CALLBACK_SLOT_LO || target >= FLYCAST_CALLBACK_SLOT_HI) continue;
+            if (!seen.add(rva)) continue;
+            if (nopFlycastInsn(baseAddr, rva, NOP6)) patched++;
+        }
+        return patched;
+    }
+
+    /**
+     * Linux NOPs {@code ff 15} and {@code ff d1} inside {@code retro_load_game}
+     * that reach Flycast log / libretro BSS callback slots.
+     */
+    private int patchRetroLoadGameRegion(Pointer imageBase, long baseAddr,
+            long textVa, long textEnd) {
+        if (corePath == null) return 0;
+        try {
+            NativeLibrary lib = NativeLibrary.getInstance(
+                    corePath.toAbsolutePath().toString());
+            Pointer fn = lib.getFunction("retro_load_game");
+            if (fn == null || Pointer.nativeValue(fn) == 0) return 0;
+            long fnRva = Pointer.nativeValue(fn) - baseAddr;
+            long scanEnd = Math.min(fnRva + 0x12000L, textEnd);
+            if (fnRva < textVa || fnRva >= textEnd) {
+                LOGGER.warn("disableFlycastCrash: retro_load_game RVA 0x{} outside .text 0x{}..0x{}",
+                        Long.toHexString(fnRva), Long.toHexString(textVa), Long.toHexString(textEnd));
+                return 0;
+            }
+            LOGGER.debug("disableFlycastCrash: retro_load_game RVA 0x{} scan to 0x{}",
+                    Long.toHexString(fnRva), Long.toHexString(scanEnd));
+
+            java.util.Set<Long> seen = new java.util.HashSet<>();
+            int patched = 0;
+            int d1Candidates = 0;
+            for (long rva = fnRva; rva + 6 < scanEnd; rva++) {
+                Pointer p = imageBase.share(rva);
+                int b0 = p.getByte(0) & 0xFF;
+                int b1 = p.getByte(1) & 0xFF;
+                if (b0 == 0xFF && b1 == 0x15) {
+                    int disp = p.getInt(2);
+                    long target = rva + 6L + disp;
+                    if (target >= FLYCAST_CALLBACK_SLOT_LO && target < FLYCAST_CALLBACK_SLOT_HI
+                            && seen.add(rva)) {
+                        if (nopFlycastInsn(baseAddr, rva, NOP6)) patched++;
+                    }
+                } else if (b0 == 0xFF && b1 == 0xD1) {
+                    d1Candidates++;
+                }
+            }
+            if (d1Candidates > 0 && d1Candidates <= 64) {
+                for (long rva = fnRva; rva + 2 < scanEnd; rva++) {
+                    Pointer p = imageBase.share(rva);
+                    if ((p.getByte(0) & 0xFF) == 0xFF && (p.getByte(1) & 0xFF) == 0xD1
+                            && seen.add(rva)) {
+                        if (nopFlycastInsn(baseAddr, rva, NOP2)) patched++;
+                    }
+                }
+            } else if (d1Candidates > 64) {
+                LOGGER.warn("disableFlycastCrash: retro_load_game has {} ff-d1 sites — skipping",
+                        d1Candidates);
+            }
+            return patched;
+        } catch (Throwable t) {
+            LOGGER.warn("disableFlycastCrash: retro_load_game scan failed: {}", t.getMessage());
+            return 0;
+        }
+    }
+
+    /** @return {@code [virtualAddress, virtualAddress+virtualSize]} or null */
+    private static long[] readTextSectionRange(Pointer imageBase) {
+        int eLfanew = imageBase.getInt(0x3C);
+        int numSections = imageBase.getShort(eLfanew + 6) & 0xFFFF;
+        int optHeaderSize = imageBase.getShort(eLfanew + 20) & 0xFFFF;
+        Pointer secTable = imageBase.share(eLfanew + 24 + optHeaderSize);
+        for (int i = 0; i < numSections; i++) {
+            Pointer sec = secTable.share(i * 40L);
+            byte[] nameBytes = sec.getByteArray(0, 8);
+            String name = new String(nameBytes, java.nio.charset.StandardCharsets.US_ASCII).trim();
+            if (name.startsWith(".text")) {
+                long vsize = Integer.toUnsignedLong(sec.getInt(8));
+                long va = Integer.toUnsignedLong(sec.getInt(12));
+                return new long[] { va, va + vsize };
+            }
+        }
+        return null;
+    }
+
+    private static long readFf15TargetRva(Pointer imageBase, long callRva) {
+        Pointer p = imageBase.share(callRva);
+        if ((p.getByte(0) & 0xFF) != 0xFF || (p.getByte(1) & 0xFF) != 0x15) return -1;
+        int disp = p.getInt(2);
+        return callRva + 6L + disp;
+    }
+
+    private static java.util.List<Long> findFf15CallSites(Pointer imageBase,
+            long textVa, long textEnd, long targetRva) {
+        java.util.List<Long> sites = new java.util.ArrayList<>();
+        for (long rva = textVa; rva + 6 < textEnd; rva++) {
+            Pointer p = imageBase.share(rva);
+            if ((p.getByte(0) & 0xFF) != 0xFF || (p.getByte(1) & 0xFF) != 0x15) continue;
+            int disp = p.getInt(2);
+            if (rva + 6L + disp == targetRva) sites.add(rva);
+        }
+        return sites;
+    }
+
+    private boolean nopFlycastInsn(long baseAddr, long rva, byte[] nops) {
+        long targetAddr = baseAddr + rva;
+        Pointer p = new Pointer(targetAddr);
+        int b0 = p.getByte(0) & 0xFF;
+        int b1 = p.getByte(1) & 0xFF;
+        if (nops.length == NOP6.length) {
+            if (b0 != 0xFF || b1 != 0x15) return false;
+        } else if (nops.length == NOP2.length) {
+            if (b0 != 0xFF || b1 != 0xD1) return false;
+        } else {
+            return false;
+        }
+        long pageSize = 0x1000L;
+        long pageStart = targetAddr & ~(pageSize - 1);
+        int[] oldProtect = new int[1];
+        if (!WinKernel32.INSTANCE.VirtualProtect(new Pointer(pageStart),
+                pageSize, WinKernel32.INSTANCE.PAGE_EXECUTE_READWRITE, oldProtect)) {
+            LOGGER.warn("disableFlycastCrash: VirtualProtect failed for RVA 0x{}",
+                    Long.toHexString(rva));
+            return false;
+        }
+        try {
+            byte[] original = p.getByteArray(0, nops.length);
+            LOGGER.debug("disableFlycastCrash: NOP RVA 0x{} (was {})",
+                    Long.toHexString(rva), bytesToHexNibble(original));
+            p.write(0, nops, 0, nops.length);
+            return true;
+        } finally {
+            int[] restored = new int[1];
+            WinKernel32.INSTANCE.VirtualProtect(new Pointer(pageStart),
+                    pageSize, oldProtect[0], restored);
+        }
+    }
+
     /**
      * Resolve the runtime base address of {@code flycast_libretro.dll}.
-     * JNA loads the .dll via a fully-qualified path so a bare
-     * GetModuleHandleW("flycast_libretro.dll") returns null; we try
-     * the bare name first, then the absolute path, then walk the module
-     * list to find a match.
+     * JNA loads via a fully-qualified path, so {@code GetModuleHandleW}
+     * with the short name often returns null. The reliable path is
+     * {@code GetModuleHandleExW(FROM_ADDRESS)} on an exported symbol.
      */
     private Pointer findFlycastBase() {
+        if (corePath != null) {
+            try {
+                NativeLibrary lib = NativeLibrary.getInstance(
+                        corePath.toAbsolutePath().toString());
+                for (String sym : new String[] { "retro_api_version", "retro_init", "retro_load_game" }) {
+                    try {
+                        Pointer fn = lib.getFunction(sym);
+                        if (fn == null || Pointer.nativeValue(fn) == 0) continue;
+                        PointerByReference mod = new PointerByReference();
+                        int flags = WinKernel32.GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                                | WinKernel32.GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+                        if (WinKernel32.INSTANCE.GetModuleHandleExW(flags, fn, mod)) {
+                            Pointer base = mod.getValue();
+                            if (base != null && Pointer.nativeValue(base) != 0) {
+                                LOGGER.info("findFlycastBase: GetModuleHandleExW via {} = 0x{}",
+                                        sym, Long.toHexString(Pointer.nativeValue(base)));
+                                return base;
+                            }
+                        }
+                    } catch (UnsatisfiedLinkError ignored) {
+                        // try next export
+                    }
+                }
+            } catch (Throwable t) {
+                LOGGER.debug("findFlycastBase: NativeLibrary path failed: {}", t.getMessage());
+            }
+        }
         String[] candidates = {
             "flycast_libretro.dll",
             corePath != null ? corePath.toAbsolutePath().toString() : null,
@@ -179,8 +492,8 @@ public class LibretroCoreWindows extends LibretroCore {
                 return p;
             }
         }
-        LOGGER.warn("findFlycastBase: GetModuleHandleW did not find flycast_libretro.dll; " +
-                "VirtualProtect-patch will be skipped. Path was: {}", corePath);
+        LOGGER.warn("findFlycastBase: could not resolve flycast_libretro.dll base; "
+                + "VirtualProtect-patch will be skipped. Path was: {}", corePath);
         return null;
     }
 
@@ -205,6 +518,14 @@ public class LibretroCoreWindows extends LibretroCore {
             int apiVersion = core.retro_api_version();
             LOGGER.info("Core loaded. API version: {} (corePath={})", apiVersion, corePath.getFileName());
 
+            // Pin every loaded core so JNA never FreeLibrary's a .dll while
+            // native code might still hold our callback pointers.
+            if (!KEEP_LOADED.contains(this.core)) {
+                KEEP_LOADED.add(this.core);
+                LOGGER.debug("Pinned libretro core load (held {} libraries so far)",
+                        KEEP_LOADED.size());
+            }
+
             // Flycast (Dreamcast emulator) crashes with SIGSEGV deep inside
             // the core on the first GET_VARIABLE it cannot satisfy when
             // SET_HW_RENDER is declined. The patch below replaces six
@@ -221,6 +542,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
             LOGGER.info("retro_init()");
             core.retro_init();
+            coreInitialized = true;
             LOGGER.info("retro_init() returned. Core initialized.");
         } catch (Throwable t) {
             LOGGER.error("Failed to load libretro core at {}: {}", absPath, t.getMessage(), t);
@@ -236,27 +558,44 @@ public class LibretroCoreWindows extends LibretroCore {
         core.retro_set_environment(env);
 
         LibretroBridge.RetroVideoRefresh videoCb = (data, w, h, pitch) -> {
-            if (w <= 0 || h <= 0) return; // core signals geometry change
-            int len = w * h;
-            // Hold the lock for the entire pixel conversion. We must
-            // allocate any replacement buffer AND fill it before
-            // releasing the lock, otherwise a fast pollFrame on
-            // another thread could read an empty buffer while we
-            // are still painting it.
+            if (w <= 0 || h <= 0) {
+                if (hwRenderActive) newFrame = true;
+                return;
+            }
             synchronized (frameLock) {
-                // GET_CAN_DUPE=true: NULL data means "repeat last frame",
-                // NOT a pixel buffer. Keep the previous contents and
-                // just signal a fresh frame so the client re-displays it.
-                // Crucial for PS1 interlaced — without this, the half
-                // frames overwrite the buffer with black, which is
-                // what we were sending every other call (~30-40% of
-                // all PS1 frames were black on the wire).
-                if (data == null && frameBuffer.length == len) {
+                long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
+                boolean hwFb = hwRenderActive && (data == null || dataAddr == -1 || dataAddr == 0);
+                if (!hwFb && (data == null || dataAddr == 0)) {
+                    if (frameBuffer.length == w * h) newFrame = true;
+                    return;
+                }
+                int len = w * h;
+                if (frameBuffer.length != len) frameBuffer = new int[len];
+                int[] dst = frameBuffer;
+
+                if (hwFb) {
+                    try {
+                        int surfW = Math.max(w, hwPbufW);
+                        int surfH = Math.max(h, hwPbufH);
+                        if (surfW != hwPbufW || surfH != hwPbufH) {
+                            headlessGl().hlg_resize(surfW, surfH);
+                            hwPbufW = surfW;
+                            hwPbufH = surfH;
+                        }
+                        int[] vp = new int[4];
+                        Memory nativePixels = new Memory((long) len * 4L);
+                        headlessGl().hlg_read_pixels(vp, nativePixels, len, w, h);
+                        for (int i = 0; i < len; i++) {
+                            int px = nativePixels.getInt((long) i * 4);
+                            dst[i] = 0xFF000000 | (px & 0x00FFFFFF);
+                        }
+                    } catch (Throwable t) {
+                        LOGGER.warn("HW readback failed: {}", t.getMessage());
+                    }
                     newFrame = true;
                     return;
                 }
-                if (frameBuffer.length != len) frameBuffer = new int[len];
-                int[] dst = frameBuffer;
+
                 switch (pixelFormat) {
                     case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888: {
                         int stride = (int) (pitch / 4);
@@ -359,6 +698,13 @@ public class LibretroCoreWindows extends LibretroCore {
         };
         this.inputStateCallback = inputStateCb;
         core.retro_set_input_state(inputStateCb);
+
+        pinForever(envCallback);
+        pinForever(videoCallback);
+        pinForever(audioSampleCallback);
+        pinForever(audioBatchCallback);
+        pinForever(inputPollCallback);
+        pinForever(inputStateCallback);
     }
 
     /** Strong reference kept so JNA doesn't GC the callback trampoline. */
@@ -403,7 +749,7 @@ public class LibretroCoreWindows extends LibretroCore {
      *  before the core reads them (e.g. via GET_VARIABLE). */
     private final java.util.List<Memory> allocatedOptionMemory = new java.util.ArrayList<>();
     /** Cores advertise which option version we agreed to support. */
-    private int coreOptionsVersion = 1; // default to v1, can be promoted to 2 by GET_CORE_OPTIONS_VERSION
+    private int coreOptionsVersion = 2;
 
     /** Whether SET_AUDIO_BUFFER_STATUS_CALLBACK has been registered (we decline,
      *  but the core still sends the cmd and we ack it). */
@@ -417,8 +763,12 @@ public class LibretroCoreWindows extends LibretroCore {
      * and hand it back on GET_VARIABLE.
      */
     private boolean handleEnvironment(int cmd, Pointer data) {
-        switch (cmd) {
+        int base = LibretroEnvironment.normalize(cmd);
+        switch (base) {
             // ----- memory + bookkeeping -----
+            case LibretroEnvironment.GET_OVERSCAN:
+                return false;
+
             case LibretroEnvironment.GET_CAN_DUPE:
                 if (data != null) data.setByte(0, (byte) 1);
                 return true;
@@ -558,26 +908,105 @@ public class LibretroCoreWindows extends LibretroCore {
                 LOGGER.info("Core requested GET_PERF_INTERFACE — declining (no perf callbacks).");
                 return false;
 
-            case LibretroEnvironment.GET_INPUT_BITMASKS:
+            case 51: // GET_INPUT_BITMASKS (experimental)
                 // Tell the core we honour the GET_INPUT_BITMASKS short-circuit
                 // (inputStateCallback already handles RETRO_DEVICE_ID_JOYPAD_MASK).
                 return true;
 
             case LibretroEnvironment.SET_HW_RENDER:
-                LOGGER.info("Core requested SET_HW_RENDER — refusing (no Windows HW renderer).");
-                return false;
+                if (data == null) return false;
+                try {
+                    int ctxType = data.getInt(0);
+                    String ctxName = switch (ctxType) {
+                        case 0 -> "NONE";
+                        case 1 -> "OPENGL";
+                        case 2 -> "OPENGLES2";
+                        case 3 -> "OPENGL_CORE";
+                        case 4 -> "OPENGLES3";
+                        case 6 -> "VULKAN";
+                        default -> "UNKNOWN(" + ctxType + ")";
+                    };
+                    LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
+
+                    if (ctxType == 0) {
+                        hwRenderActive = false;
+                        return true;
+                    }
+                    if (!supportsHwRender()) {
+                        LOGGER.info("Rejecting {} — headless GL DLL missing", ctxName);
+                        return false;
+                    }
+                    if (!ensureHeadlessGl(ctxType)) {
+                        LOGGER.info("Rejecting {} — headless WGL init failed", ctxName);
+                        return false;
+                    }
+                    if (ctxType != 1 && ctxType != 3 && ctxType != 4) {
+                        LOGGER.info("Rejecting {} — only OpenGL contexts supported", ctxName);
+                        return false;
+                    }
+
+                    int glMajor = 3;
+                    int glMinor = ctxType == 3 ? 3 : 1;
+                    headlessGl().hlg_dump_hw_render(data, 80);
+                    Pointer fbPtr = headlessGl().hlg_get_framebuffer_ptr();
+                    Pointer procPtr = headlessGl().hlg_get_proc_address_ptr();
+                    LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
+                    data.setPointer(16, fbPtr);
+                    data.setPointer(24, procPtr);
+                    data.setInt(36, glMajor);
+                    data.setInt(40, glMinor);
+                    data.setByte(44, (byte) 1);
+
+                    hwContextReset = data.getPointer(8);
+                    hwContextDestroy = data.getPointer(48);
+                    hwContextResetDone = false;
+
+                    if (isFlycastCore()) {
+                        Pointer contextResetPtr = data.getPointer(8);
+                        if (contextResetPtr != null && Pointer.nativeValue(contextResetPtr) != 0) {
+                            LOGGER.info("  Calling context_reset @ {}", contextResetPtr);
+                            com.sun.jna.Function.getFunction(contextResetPtr).invokeVoid(new Object[0]);
+                            hwContextResetDone = true;
+                            LOGGER.info("  context_reset completed");
+                        }
+                    }
+
+                    hwRenderActive = true;
+                    LOGGER.info("HW render context provided for {} (headless WGL)", ctxName);
+                    return true;
+                } catch (Throwable t) {
+                    LOGGER.error("Failed to handle SET_HW_RENDER", t);
+                    return false;
+                }
 
             case LibretroEnvironment.GET_PREFERRED_HW_RENDER:
-                if (data != null) data.setInt(0, 0 /* RETRO_HW_CONTEXT_NONE */);
+                if (data != null && supportsHwRender()) {
+                    data.setInt(0, LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE);
+                    LOGGER.info("Core requested GET_PREFERRED_HW_RENDER -> OPENGL_CORE");
+                    return true;
+                }
+                if (data != null) data.setInt(0, 0);
                 return true;
 
             case LibretroEnvironment.GET_RUMBLE_INTERFACE:
                 return false; // no rumble yet
 
             case LibretroEnvironment.GET_LOG_INTERFACE:
-                return false; // silent core
+                if (data == null) return false;
+                try {
+                    Pointer nativeLogCb = headlessGl().hlg_get_log_cb_ptr();
+                    if (nativeLogCb != null && Pointer.nativeValue(nativeLogCb) != 0) {
+                        data.setPointer(0, nativeLogCb);
+                        pinForever(nativeLogCb);
+                        LOGGER.info("Providing native log callback for core");
+                        return true;
+                    }
+                } catch (Throwable t) {
+                    LOGGER.debug("Native log cb unavailable: {}", t.getMessage());
+                }
+                return false;
 
-            case LibretroEnvironment.GET_VFS_INTERFACE:
+            case 45: // GET_VFS_INTERFACE (experimental)
             case 0x1002e: // some VFS-related cmd (experimented by Genesis)
             case 0x1002f:
                 return false;
@@ -591,9 +1020,11 @@ public class LibretroCoreWindows extends LibretroCore {
                 return true;
             case LibretroEnvironment.SET_DISK_CONTROL_INTERFACE:
                 return true;
-            case LibretroEnvironment.SET_MEMORY_MAPS:  // 0x10024
+            case LibretroEnvironment.SET_DISK_CONTROL_EXT_INTERFACE:
                 return true;
-            case LibretroEnvironment.GET_CURRENT_SOFTWARE_FRAMEBUFFER: // 0x10028
+            case 36: // SET_MEMORY_MAPS (experimental)
+                return true;
+            case 40: // GET_CURRENT_SOFTWARE_FRAMEBUFFER (experimental)
                 // Some cores (PCSX-ReARMed, Genesis) ask for a pointer to a
                 // software framebuffer so they can write pixels directly via
                 // raw memory. Per libretro.h, return false if we cannot
@@ -758,23 +1189,34 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     private boolean handleGetVariable(Pointer data) {
-        if (data == null) return false;
-        Pointer keyPtr = data.getPointer(0);
-        if (keyPtr == null) return false;
-        String key = readCString(keyPtr);
-        if (key == null || key.isEmpty()) return false;
-        LOGGER.info("GET_VARIABLE key='{}'", key);
+        try {
+            if (data == null) return false;
+            long dataAddr = Pointer.nativeValue(data);
+            if (dataAddr == 0) return false;
+            Pointer keyPtr = data.getPointer(0);
+            if (keyPtr == null) return false;
+            long keyAddr = Pointer.nativeValue(keyPtr);
+            if (keyAddr == 0 || keyAddr < 0x10000L) return false;
+            String key = readCString(keyPtr);
+            if (key == null || key.isEmpty()) return false;
 
-        String val = coreOptions.get(key);
-        if (val == null) return false;        // unknown key -> false (libretro canonical)
-        // Write pointer at offset Native.POINTER_SIZE (retro_variable.value).
-        byte[] bytes = val.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        Memory m = new Memory(bytes.length + 1L);
-        m.write(0, bytes, 0, bytes.length);
-        m.setByte(bytes.length, (byte) 0);
-        allocatedOptionMemory.add(m);
-        data.setPointer(Native.POINTER_SIZE, m);
-        return true;
+            // Flycast: return false → core uses compiled-in defaults. Returning
+            // true without SET_CORE_OPTIONS defs triggers DEBUGBREAK in the core.
+            if (isFlycastCore()) {
+                return false;
+            }
+
+            String val = coreOptions.get(key);
+            if (val == null) return false;
+            Memory m = new Memory(val.length() + 1L);
+            m.setString(0, val);
+            allocatedOptionMemory.add(m);
+            data.setPointer(Native.POINTER_SIZE, m);
+            return true;
+        } catch (Throwable t) {
+            LOGGER.warn("GET_VARIABLE failed: {}", t.getMessage());
+            return false;
+        }
     }
 
     /** Test helper / future API surface — exposes whether the core is
@@ -816,17 +1258,22 @@ public class LibretroCoreWindows extends LibretroCore {
 
         boolean ok;
         try {
+            if (isFlycastCore() && supportsHwRender()) {
+                ensureHeadlessGl(LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE);
+            }
             LOGGER.info("about to call core.retro_load_game()...");
             ok = core.retro_load_game(info);
             LOGGER.info("retro_load_game returned: {}", ok);
         } catch (Throwable t) {
             LOGGER.error("retro_load_game CRASHED for {}: {}", romPath, t.getMessage(), t);
+            teardownHwRender();
             freeGameInfo(info);
             return false;
         }
 
         if (!ok) {
             LOGGER.error("Core rejected ROM: {}", romPath.getFileName());
+            teardownHwRender();
             freeGameInfo(info);
             return false;
         }
@@ -844,6 +1291,15 @@ public class LibretroCoreWindows extends LibretroCore {
         this.width = avInfo.geometry.base_width;
         this.height = avInfo.geometry.base_height;
         this.gameLoaded = true;
+
+        if (hwRenderActive) {
+            try {
+                headlessGl().hlg_release();
+                LOGGER.info("WGL context released from init thread");
+            } catch (Throwable t) {
+                LOGGER.warn("Failed to release WGL context: {}", t.getMessage());
+            }
+        }
 
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
                 romPath.getFileName(), width, height,
@@ -864,7 +1320,8 @@ public class LibretroCoreWindows extends LibretroCore {
      */
     private LibretroBridge.RetroGameInfo buildGameInfo(Path romPath) throws java.io.IOException {
         var info = new LibretroBridge.RetroGameInfo();
-        info.path = romPath.toAbsolutePath().toString();
+        String abs = romPath.toAbsolutePath().normalize().toString();
+        info.path = isFlycastCore() ? abs.replace('\\', '/') : abs;
         info.meta = "";
 
         String lower = romPath.toString().toLowerCase();
@@ -884,8 +1341,9 @@ public class LibretroCoreWindows extends LibretroCore {
             mem.write(0, bytes, 0, bytes.length);
             info.data = mem;
             info.size = bytes.length;
+            allocatedOptionMemory.add(mem);
         }
-        info.write(); // marshal fields into native struct memory
+        info.write();
         return info;
     }
 
@@ -902,15 +1360,18 @@ public class LibretroCoreWindows extends LibretroCore {
 
     @Override
     public void runFrame() {
-        // Step 5: actually drive the core forward. No HW context switch —
-        // Windows impl refuses SET_HW_RENDER so the core stays on the
-        // software pixel format path.
         if (core != null && gameLoaded) {
+            if (hwRenderActive) {
+                try {
+                    if (headlessGl().hlg_make_current() != 0 && !hwGpuLoggedOnEmulatorThread) {
+                        hwGpuLoggedOnEmulatorThread = true;
+                        LOGGER.info("Emulator thread GPU: {}", headlessGl().hlg_get_gpu_info());
+                    }
+                } catch (Throwable ignored) {}
+            }
             try {
                 core.retro_run();
             } catch (Throwable t) {
-                // Temporary: log full stacktrace for the Genesis
-                // "Invalid memory access" investigation.
                 LOGGER.warn("retro_run threw: {}", t.getMessage(), t);
             }
         }
@@ -969,6 +1430,8 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         LOGGER.info("close(): shutting down libretro core {}", corePath);
 
+        teardownHwRender();
+
         if (gameLoaded) {
             try {
                 core.retro_unload_game();
@@ -982,12 +1445,21 @@ public class LibretroCoreWindows extends LibretroCore {
             } catch (Throwable t) {
                 LOGGER.warn("retro_deinit failed: {}", t.getMessage());
             }
-        } else {
-            LOGGER.warn("Skipping retro_deinit — game never loaded (avoids PCSX2-style teardown crash)");
+        } else if (coreInitialized) {
+            try {
+                core.retro_deinit();
+                LOGGER.info("retro_deinit: ok (game never loaded)");
+            } catch (Throwable t) {
+                LOGGER.warn("retro_deinit failed: {}", t.getMessage());
+            }
         }
 
-        // Drop references to native memory and JNI callbacks so JNA can
-        // unload the .dll on next re-load.
+        if (headlessGlReady) {
+            try { headlessGl().hlg_destroy(); } catch (Throwable ignored) {}
+            headlessGlReady = false;
+        }
+
+        // Drop our handle but never unpin KEEP_LOADED / PINNED_CALLBACKS.
         this.core = null;
         this.envCallback = null;
         this.videoCallback = null;
@@ -999,6 +1471,7 @@ public class LibretroCoreWindows extends LibretroCore {
         this.persistentSaveDir = null;
         this.loadedGameInfo = null;
         this.allocatedOptionMemory.clear();
+        this.coreInitialized = false;
         synchronized (frameLock) {
             this.frameBuffer = new int[0];
             this.newFrame = false;

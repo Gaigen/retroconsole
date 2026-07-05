@@ -50,15 +50,15 @@ public final class OsUtil {
     }
 
     /**
-     * Linux: {@code libheadless_gl.so} (extracted with a {@code .} prefix to keep the
-     * directories tidy). Windows/Mac: not yet defined — return {@code null} so callers
-     * know there is no bundled headless GL on this platform.
+     * Bundled headless GL library name inside {@code /natives/} (without dot prefix).
+     * Extracted to cores dir as {@code .libheadless_gl.<ext>}.
      */
     public static String bundledHeadlessGlName() {
-        if (isLinux()) {
-            return "libheadless_gl.so";
-        }
-        return null;
+        return switch (CURRENT) {
+            case LINUX -> "libheadless_gl.so";
+            case WINDOWS -> "libheadless_gl.dll";
+            default -> null;
+        };
     }
 
     private static OsFamily detect() {
