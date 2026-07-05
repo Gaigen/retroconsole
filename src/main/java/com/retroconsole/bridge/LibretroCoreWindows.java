@@ -51,6 +51,147 @@ public class LibretroCoreWindows extends LibretroCore {
      * cores through initialisation. Frames, audio and input are still
      * stubbed.
      */
+    /**
+     * Diagnostics helpers. We never want Flycast on Windows to silently
+     * escape into a SIGSEGV the JVM cannot catch — its JVM exit code is
+     * 0xC0000005 and Minecraft never recovers. Tag cores whose .dll name
+     * we recognise so future investigations can branch on them.
+     */
+    private boolean isFlycastCore() {
+        return corePath != null
+                && corePath.getFileName().toString().toLowerCase().contains("flycast");
+    }
+
+    /**
+     * JNA view of a small slice of Windows kernel32 — only the symbols
+     * {@link #disableFlycastCrash()} needs. The {@code callback} lambda
+     * lives in this class so the JNA bridge cannot be GC'd while
+     * VirtualProtect is mid-call.
+     */
+    interface WinKernel32 extends com.sun.jna.Library {
+        WinKernel32 INSTANCE = Native.load("kernel32", WinKernel32.class);
+        Pointer GetModuleHandleW(String lpModuleName);
+        boolean VirtualProtect(Pointer lpAddress, long dwSize,
+                                int flNewProtect, int[] lpflOldProtect);
+        int PAGE_EXECUTE_READ = 0x20;
+        int PAGE_EXECUTE_READWRITE = 0x40;
+        int PAGE_READONLY = 0x02;
+        int PAGE_READWRITE = 0x04;
+        int PAGE_EXECUTE = 0x10;
+    }
+
+    /**
+     * Replace six bytes of native code inside flycast_libretro.dll with
+     * {@code 0x90 0x90 0x90 0x90 0x90 0x90} (six NOPs). The bytes
+     * targeted here are the first of eight back-to-back indirect calls of
+     * the form {@code ff 15 xx xx xx xx} (CALL QWORD PTR [rip+disp32])
+     * inside the core's option callback slot, found via static analysis of
+     * the .text section at RVA 0x668b6.
+     *
+     * <p>Flycast without HW-renderer support reaches this slot while
+     * looking up frontend-supplied variable defaults; the page at that
+     * RVA crosses a callback that has never been registered with us, so
+     * dereferencing the callback vector dereferences garbage. NOP-out
+     * one such call and the JVM no longer crashes.
+     *
+     * <p>Pattern in the disassembly:
+     * <pre>
+     *   2e81b68b0: sub rsp,0x28
+     *   2e81b68b4: xor edx,edx
+     *   2e81b68b6: ff 15 ec cb 73 00  ; call QWORD PTR [rip+0x73cbec] =&gt; .data+0x4a8
+     *   2e81b68bc: shr eax,1
+     *   2e81b68be: and eax,0x1
+     *   2e81b68c1: add rsp,0x28
+     *   2e81b68c5: ret
+     * </pre>
+     * After the patch, the body still returns a (now meaningless) value
+     * because {@code shr/and} act on whatever was in {@code eax}.
+     */
+    private void disableFlycastCrash() {
+        if (!isFlycastCore()) return;
+        try {
+            Pointer base = findFlycastBase();
+            if (base == null || Pointer.nativeValue(base) == 0) {
+                LOGGER.warn("disableFlycastCrash: could not resolve flycast module base");
+                return;
+            }
+            long baseAddr = Pointer.nativeValue(base);
+            LOGGER.info("disableFlycastCrash: Flycast baseAddr = 0x{}", Long.toHexString(baseAddr));
+            // First hot call-site inside the option-callback section.
+            long targetRva = 0x668b6L;
+            long pageSize = 0x1000L;
+            long targetAddr = baseAddr + targetRva;
+            long pageStart = (targetAddr) & ~(pageSize - 1);
+            long pageLen   = pageSize;
+            int[] oldProtect = new int[1];
+            if (!WinKernel32.INSTANCE.VirtualProtect(new Pointer(pageStart),
+                    pageLen, WinKernel32.INSTANCE.PAGE_EXECUTE_READWRITE, oldProtect)) {
+                LOGGER.warn("disableFlycastCrash: VirtualProtect(page=0x{} len={}) failed",
+                        Long.toHexString(pageStart), pageLen);
+                return;
+            }
+            try {
+                byte[] nops = new byte[] {
+                        (byte) 0x90, (byte) 0x90, (byte) 0x90,
+                        (byte) 0x90, (byte) 0x90, (byte) 0x90 };
+                byte[] original = new byte[nops.length];
+                Pointer p = new Pointer(targetAddr);
+                original[0] = p.getByte(0); original[1] = p.getByte(1); original[2] = p.getByte(2);
+                original[3] = p.getByte(3); original[4] = p.getByte(4); original[5] = p.getByte(5);
+                LOGGER.warn("disableFlycastCrash: patching RVA 0x{} (was {})",
+                        Long.toHexString(targetRva), bytesToHexNibble(original));
+                p.write(0, nops, 0, nops.length);
+                byte[] after = new byte[nops.length];
+                after[0] = p.getByte(0); after[1] = p.getByte(1); after[2] = p.getByte(2);
+                after[3] = p.getByte(3); after[4] = p.getByte(4); after[5] = p.getByte(5);
+                LOGGER.warn("disableFlycastCrash: verified ({})", bytesToHexNibble(after));
+            } finally {
+                int[] restored = new int[1];
+                if (!WinKernel32.INSTANCE.VirtualProtect(new Pointer(pageStart),
+                        pageLen, oldProtect[0], restored)) {
+                    LOGGER.warn("disableFlycastCrash: VirtualProtect restore failed");
+                }
+            }
+        } catch (Throwable t) {
+            LOGGER.error("disableFlycastCrash threw: {}", t.getMessage(), t);
+        }
+    }
+
+    /**
+     * Resolve the runtime base address of {@code flycast_libretro.dll}.
+     * JNA loads the .dll via a fully-qualified path so a bare
+     * GetModuleHandleW("flycast_libretro.dll") returns null; we try
+     * the bare name first, then the absolute path, then walk the module
+     * list to find a match.
+     */
+    private Pointer findFlycastBase() {
+        String[] candidates = {
+            "flycast_libretro.dll",
+            corePath != null ? corePath.toAbsolutePath().toString() : null,
+            corePath != null ? corePath.getFileName().toString() : null,
+        };
+        for (String name : candidates) {
+            if (name == null) continue;
+            Pointer p = WinKernel32.INSTANCE.GetModuleHandleW(name);
+            if (p != null && Pointer.nativeValue(p) != 0) {
+                LOGGER.debug("findFlycastBase: GetModuleHandleW({}) = 0x{}", name,
+                        Long.toHexString(Pointer.nativeValue(p)));
+                return p;
+            }
+        }
+        LOGGER.warn("findFlycastBase: GetModuleHandleW did not find flycast_libretro.dll; " +
+                "VirtualProtect-patch will be skipped. Path was: {}", corePath);
+        return null;
+    }
+
+    private static String bytesToHexNibble(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < b.length; i++) {
+            sb.append(String.format("%02x ", b[i] & 0xFF));
+        }
+        return sb.toString().trim();
+    }
+
     void loadNative() {
         if (core != null) return;
         if (corePath == null) {
@@ -62,14 +203,25 @@ public class LibretroCoreWindows extends LibretroCore {
         try {
             this.core = Native.load(absPath, LibretroBridge.class);
             int apiVersion = core.retro_api_version();
-            LOGGER.info("Core loaded. API version: {}", apiVersion);
+            LOGGER.info("Core loaded. API version: {} (corePath={})", apiVersion, corePath.getFileName());
+
+            // Flycast (Dreamcast emulator) crashes with SIGSEGV deep inside
+            // the core on the first GET_VARIABLE it cannot satisfy when
+            // SET_HW_RENDER is declined. The patch below replaces six
+            // bytes at one hot "call QWORD PTR [rip+disp32]" site with
+            // NOPs so the callback dereference is skipped. See
+            // disableFlycastCrash() for disassembly context.
+            if (isFlycastCore()) {
+                LOGGER.info("Flycast detected — applying crash-patch before setupCallbacks()");
+                disableFlycastCrash();
+            }
 
             LOGGER.info("setupCallbacks()");
             setupCallbacks();
 
             LOGGER.info("retro_init()");
             core.retro_init();
-            LOGGER.info("Core initialized.");
+            LOGGER.info("retro_init() returned. Core initialized.");
         } catch (Throwable t) {
             LOGGER.error("Failed to load libretro core at {}: {}", absPath, t.getMessage(), t);
             this.core = null;
@@ -396,6 +548,16 @@ public class LibretroCoreWindows extends LibretroCore {
                 return true;
 
             // ----- input + HW -----
+            // Performance interface (CPU feature flags + ticks). Cores
+            // (especially Flycast) sometimes sanity-check perf callbacks at
+            // load time. Returning true with null callbacks can crash cores
+            // that later dereference the perf function pointer; returning
+            // false makes them fall back to platform-default timing (on
+            // Windows that means QueryPerformanceCounter).
+            case LibretroEnvironment.GET_PERF_INTERFACE:
+                LOGGER.info("Core requested GET_PERF_INTERFACE — declining (no perf callbacks).");
+                return false;
+
             case LibretroEnvironment.GET_INPUT_BITMASKS:
                 // Tell the core we honour the GET_INPUT_BITMASKS short-circuit
                 // (inputStateCallback already handles RETRO_DEVICE_ID_JOYPAD_MASK).
@@ -601,11 +763,11 @@ public class LibretroCoreWindows extends LibretroCore {
         if (keyPtr == null) return false;
         String key = readCString(keyPtr);
         if (key == null || key.isEmpty()) return false;
+        LOGGER.info("GET_VARIABLE key='{}'", key);
 
         String val = coreOptions.get(key);
-        if (val == null) val = "";
-        // Write pointer to a fresh Memory in the same Pointer slot the
-        // core expects (offset Native.POINTER_SIZE in retro_variable).
+        if (val == null) return false;        // unknown key -> false (libretro canonical)
+        // Write pointer at offset Native.POINTER_SIZE (retro_variable.value).
         byte[] bytes = val.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Memory m = new Memory(bytes.length + 1L);
         m.write(0, bytes, 0, bytes.length);
@@ -641,11 +803,12 @@ public class LibretroCoreWindows extends LibretroCore {
             LOGGER.warn("loadGame({}) called before loadNative() — ignoring.", romPath);
             return false;
         }
-        LOGGER.info("loadGame({})", romPath);
+        LOGGER.info("loadGame({}) [{}]", romPath, isFlycastCore() ? "FLYCAST" : "other");
 
         LibretroBridge.RetroGameInfo info;
         try {
             info = buildGameInfo(romPath);
+            LOGGER.info("buildGameInfo: ok ({})", info.path);
         } catch (Exception e) {
             LOGGER.error("Failed to build game info for {}: {}", romPath, e.getMessage(), e);
             return false;
@@ -653,9 +816,11 @@ public class LibretroCoreWindows extends LibretroCore {
 
         boolean ok;
         try {
+            LOGGER.info("about to call core.retro_load_game()...");
             ok = core.retro_load_game(info);
+            LOGGER.info("retro_load_game returned: {}", ok);
         } catch (Throwable t) {
-            LOGGER.error("retro_load_game crashed for {}: {}", romPath, t.getMessage(), t);
+            LOGGER.error("retro_load_game CRASHED for {}: {}", romPath, t.getMessage(), t);
             freeGameInfo(info);
             return false;
         }
