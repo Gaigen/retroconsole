@@ -432,14 +432,18 @@ public class LibretroCoreWindows extends LibretroCore {
             case LibretroEnvironment.SET_MEMORY_MAPS:  // 0x10024
                 return true;
             case LibretroEnvironment.GET_CURRENT_SOFTWARE_FRAMEBUFFER: // 0x10028
-                // Some cores (PCSX-ReARMed) ask for a pointer to our software
-                // framebuffer so they can write pixels directly via raw memory.
-                // We do not currently provide such a writeback path; the core
-                // therefore falls back to the regular video_refresh callback.
-                // Returning true with a null-ish pointer is the documented way
-                // to say "no, use the standard callback please".
-                if (data != null) data.setPointer(0, null);
-                return true;
+                // Some cores (PCSX-ReARMed, Genesis) ask for a pointer to a
+                // software framebuffer so they can write pixels directly via
+                // raw memory. Per libretro.h, return false if we cannot
+                // provide that path — the core will fall back to the
+                // regular video_refresh callback.
+                //
+                // Returning true with a null pointer is what we did before,
+                // and Genesis crashed (invalid memory access) inside
+                // retro_run the first time it tried to deref that null.
+                // Returning false stops that crash entirely. Other SW-only
+                // cores handle this gracefully.
+                return false;
             case LibretroEnvironment.SET_FASTFORWARDING_OVERRIDE:
                 return true;
 
@@ -740,7 +744,9 @@ public class LibretroCoreWindows extends LibretroCore {
             try {
                 core.retro_run();
             } catch (Throwable t) {
-                LOGGER.warn("retro_run threw: {}", t.getMessage());
+                // Temporary: log full stacktrace for the Genesis
+                // "Invalid memory access" investigation.
+                LOGGER.warn("retro_run threw: {}", t.getMessage(), t);
             }
         }
     }
