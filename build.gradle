@@ -77,33 +77,66 @@ idea {
     }
 }
 
-// Build headless EGL library for libretro HW rendering (Flycast/DC).
-// Linux-only: the .so is built with gcc via build_headless_gl.sh. On Windows
-// the mod currently has a stub LibretroCore implementation that does not
-// load any native GL; skip both this task and the resource-copy step so the
-// build does not fail on Windows.
-def isLinux = System.getProperty('os.name').toLowerCase().contains('linux')
+// Build headless GL library for libretro HW rendering (Flycast/DC).
+def osName = System.getProperty('os.name').toLowerCase()
+def isLinux = osName.contains('linux')
+def isWindows = osName.contains('win')
 
 tasks.register('buildHeadlessGL', Exec) {
-    description = 'Compile .libheadless_gl.so and copy to resources for bundling'
+    description = 'Compile headless GL native lib and copy to resources for bundling'
     group = 'native'
-    enabled = isLinux
-    commandLine 'bash', file('build_headless_gl.sh').absolutePath
-    inputs.file 'headless_gl.c'
-    inputs.file 'gles_wrappers.inc'
-    inputs.file 'build_headless_gl.sh'
-    outputs.file 'runs/client/config/retroconsole/cores/.libheadless_gl.so'
+    if (isLinux) {
+        commandLine 'bash', file('build_headless_gl.sh').absolutePath
+        inputs.file 'headless_gl.c'
+        inputs.file 'gles_wrappers.inc'
+        inputs.file 'build_headless_gl.sh'
+        outputs.file 'runs/client/config/retroconsole/cores/.libheadless_gl.so'
+    } else if (isWindows) {
+        commandLine 'cmd', '/c', file('build_headless_gl.bat').absolutePath
+        inputs.file 'headless_gl_win.c'
+        inputs.file 'build_headless_gl.bat'
+        outputs.file 'runs/client/config/retroconsole/cores/.libheadless_gl.dll'
+        // Gradle daemon may have started before winget updated PATH — merge
+        // machine + user PATH so gcc from a fresh MinGW install is visible.
+        def pathParts = [] as LinkedHashSet
+        ['Path', 'PATH'].each { key ->
+            def v = System.getenv(key)
+            if (v) pathParts.addAll(v.split(';').findAll { it?.trim() })
+        }
+        def localApp = System.getenv('LOCALAPPDATA')
+        if (localApp) {
+            def wingetPkgs = file("${localApp}/Microsoft/WinGet/Packages")
+            if (wingetPkgs.directory) {
+                wingetPkgs.eachDir { dir ->
+                    if (dir.name.startsWith('BrechtSanders.WinLibs')) {
+                        pathParts.add(new File(dir, 'mingw64/bin').absolutePath)
+                    }
+                }
+            }
+        }
+        ['C:/msys64/mingw64/bin', 'C:/mingw64/bin'].each { p ->
+            if (new File(p, 'gcc.exe').exists()) pathParts.add(p.replace('/', File.separator))
+        }
+        environment 'Path', pathParts.join(File.pathSeparator)
+    } else {
+        enabled = false
+    }
 }
 
-// Copy compiled .so into resources so it gets bundled in the mod jar
 tasks.register('copyHeadlessGLToResources', Copy) {
-    description = 'Copy .libheadless_gl.so to resources for jar bundling'
+    description = 'Copy headless GL native lib to resources for jar bundling'
     group = 'native'
-    enabled = isLinux
+    onlyIf { isLinux || isWindows }
     dependsOn 'buildHeadlessGL'
-    from('runs/client/config/retroconsole/cores/.libheadless_gl.so')
-    into('src/main/resources/natives')
-    rename { 'libheadless_gl.so' }
+    if (isLinux) {
+        from('runs/client/config/retroconsole/cores/.libheadless_gl.so')
+        into('src/main/resources/natives')
+        rename { 'libheadless_gl.so' }
+    } else if (isWindows) {
+        from('runs/client/config/retroconsole/cores/.libheadless_gl.dll')
+        into('src/main/resources/natives')
+        rename { 'libheadless_gl.dll' }
+    }
 }
 
 // Auto-build native lib before Java compilation (Linux only — Windows skips)

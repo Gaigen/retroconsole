@@ -64,9 +64,9 @@ public final class LibretroEnvironment {
 
     public static final int RETRO_HW_CONTEXT_OPENGL_CORE = 3;
 
-    /** Strip EXPERIMENTAL / PRIVATE flags before dispatch. */
+    /** Strip environment flags; libretro command id is in the low 16 bits. */
     public static int normalize(int cmd) {
-        return cmd & ~(EXPERIMENTAL | PRIVATE);
+        return cmd & 0xFFFF;
     }
 
     public static String name(int cmd) {
@@ -102,6 +102,7 @@ public final class LibretroEnvironment {
             case SET_SERIALIZATION_QUIRKS -> "SET_SERIALIZATION_QUIRKS";
             case GET_CORE_OPTIONS_VERSION -> "GET_CORE_OPTIONS_VERSION";
             case SET_CORE_OPTIONS -> "SET_CORE_OPTIONS";
+            case SET_CORE_OPTIONS_DISPLAY -> "SET_CORE_OPTIONS_DISPLAY";
             case SET_CORE_OPTIONS_V2 -> "SET_CORE_OPTIONS_V2";
             case GET_PREFERRED_HW_RENDER -> "GET_PREFERRED_HW_RENDER";
             case GET_DISK_CONTROL_INTERFACE_VERSION -> "GET_DISK_CONTROL_INTERFACE_VERSION";
