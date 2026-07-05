@@ -28,8 +28,17 @@ public class ThreadedEmulatorRuntime {
     public synchronized void start() {
         stop();
         running = true;
-        thread = new Thread(this::loop, "retro-emulator-thread");
-        thread.setDaemon(true);
+        Thread t = new Thread(this::loop, "retro-emulator-thread");
+        t.setDaemon(true);
+        // If the loop throws something our try/catch does not catch
+        // (e.g. an Error that escapes retro_run), log it instead of
+        // dumping a raw stack to stderr and silently exiting.
+        t.setUncaughtExceptionHandler((thread, ex) -> {
+            running = false;
+            System.err.println("[retro-emulator-thread] UNCAUGHT exception in loop:");
+            ex.printStackTrace(System.err);
+        });
+        thread = t;
         thread.start();
     }
 
