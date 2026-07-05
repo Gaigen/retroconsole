@@ -82,7 +82,12 @@ public class ServerConsoles {
         Entry e = ENTRIES.remove(pos);
         FrameSenderThread sender = FRAME_SENDERS.remove(pos);
         if (sender != null) sender.stopSender();
-        if (e != null) { e.threaded().stop(); e.runtime().close(); LOGGER.info("Stopped emulator at {}", pos); }
+        if (e != null) {
+            LOGGER.info("stopEmulator({}): core={}, rom={}", pos, e.coreName(), e.romId());
+            e.threaded().stop();
+            e.runtime().close();
+            LOGGER.info("Stopped emulator at {}", pos);
+        }
         VIEWERS.remove(pos);
     }
 
@@ -122,6 +127,7 @@ public class ServerConsoles {
     public static int viewDistance() { return VIEW_DISTANCE; }
 
     public static void stopAll() {
+        LOGGER.info("stopAll(): shutting down {} emulator(s)", FRAME_SENDERS.size());
         for (FrameSenderThread sender : FRAME_SENDERS.values()) sender.stopSender();
         FRAME_SENDERS.clear();
         for (Entry e : ENTRIES.values()) { e.threaded().stop(); e.runtime().close(); }
