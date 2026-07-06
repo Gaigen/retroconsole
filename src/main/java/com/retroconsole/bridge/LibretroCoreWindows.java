@@ -30,6 +30,8 @@ interface HeadlessGLWin extends com.sun.jna.Library {
     void hlg_capture_jvm_filter();
     /** Hook RtlAddVectoredExceptionHandler so Flycast VEH goes to tail. */
     void hlg_hook_addveh();
+    /** Reset isolated VEH state between core sessions (dispatcher + fly[]). */
+    void hlg_reset_veh_session();
 }
 
 /**
@@ -165,6 +167,15 @@ public class LibretroCoreWindows extends LibretroCore {
         }
     }
 
+    private void resetVehSession() {
+        try {
+            headlessGl().hlg_reset_veh_session();
+            LOGGER.info("Reset Flycast VEH dispatcher session state");
+        } catch (Throwable t) {
+            LOGGER.warn("hlg_reset_veh_session failed: {}", t.getMessage());
+        }
+    }
+
     private boolean supportsHwRender() {
         try {
             headlessGl();
@@ -209,17 +220,6 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private void teardownHwRender() {
         if (!hwRenderActive && !headlessGlReady) return;
-        if (hwContextResetDone && hwContextDestroy != null
-                && Pointer.nativeValue(hwContextDestroy) != 0) {
-            try {
-                headlessGl().hlg_make_current();
-                LOGGER.info("Calling context_destroy @ {}", hwContextDestroy);
-                com.sun.jna.Function.getFunction(hwContextDestroy).invokeVoid(new Object[0]);
-                LOGGER.info("context_destroy completed");
-            } catch (Throwable t) {
-                LOGGER.warn("context_destroy failed: {}", t.getMessage());
-            }
-        }
         if (headlessGlReady) {
             try { headlessGl().hlg_release(); } catch (Throwable ignored) {}
         }
@@ -235,6 +235,25 @@ public class LibretroCoreWindows extends LibretroCore {
         hwFrameH = 0;
         hwReadbackBuf = null;
         hwReadbackCap = 0;
+    }
+
+    /** context_destroy while core is still initialized — must run before retro_deinit. */
+    private void destroyHwGlContext() {
+        if (!hwContextResetDone || hwContextDestroy == null
+                || Pointer.nativeValue(hwContextDestroy) == 0) {
+            return;
+        }
+        try {
+            headlessGl().hlg_make_current();
+            LOGGER.info("Calling context_destroy @ {}", hwContextDestroy);
+            com.sun.jna.Function.getFunction(hwContextDestroy).invokeVoid(new Object[0]);
+            LOGGER.info("context_destroy completed");
+        } catch (Throwable t) {
+            LOGGER.warn("context_destroy failed: {}", t.getMessage());
+        } finally {
+            hwContextResetDone = false;
+            hwContextDestroy = null;
+        }
     }
 
     // ======================================================================
@@ -300,7 +319,15 @@ public class LibretroCoreWindows extends LibretroCore {
             LOGGER.info("retro_init() returned. Core initialized.");
         } catch (Throwable t) {
             LOGGER.error("Failed to load libretro core at {}: {}", absPath, t.getMessage(), t);
+            if (this.core != null) {
+                try { this.core.retro_deinit(); } catch (Throwable ignored) {}
+                KEEP_LOADED.remove(this.core);
+            }
+            if (isFlycastCore() && supportsHwRender()) {
+                resetVehSession();
+            }
             this.core = null;
+            this.coreInitialized = false;
         }
     }
 
@@ -1082,6 +1109,15 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         LOGGER.info("close(): shutting down libretro core {}", corePath);
 
+        if (gameLoaded) {
+            try {
+                core.retro_unload_game();
+                LOGGER.info("retro_unload_game: ok");
+            } catch (Throwable t) {
+                LOGGER.warn("retro_unload_game failed: {}", t.getMessage());
+            }
+        }
+
         if (hwRenderActive && headlessGlReady) {
             try {
                 headlessGl().hlg_make_current();
@@ -1091,14 +1127,9 @@ public class LibretroCoreWindows extends LibretroCore {
             }
         }
 
-        if (gameLoaded) {
-            try {
-                core.retro_unload_game();
-                LOGGER.info("retro_unload_game: ok");
-            } catch (Throwable t) {
-                LOGGER.warn("retro_unload_game failed: {}", t.getMessage());
-            }
-        }
+        /* HW GL context must be destroyed before retro_deinit (Flycast state machine). */
+        destroyHwGlContext();
+
         if (gameLoaded || coreInitialized) {
             try {
                 core.retro_deinit();
@@ -1108,6 +1139,10 @@ public class LibretroCoreWindows extends LibretroCore {
             }
         }
 
+        if (isFlycastCore() && supportsHwRender()) {
+            resetVehSession();
+        }
+
         teardownHwRender();
 
         if (headlessGlReady) {
@@ -1115,6 +1150,8 @@ public class LibretroCoreWindows extends LibretroCore {
             headlessGlReady = false;
         }
 
+        LibretroBridge closed = this.core;
+        KEEP_LOADED.remove(closed);
         this.core = null;
         this.envCallback = null;
         this.videoCallback = null;
