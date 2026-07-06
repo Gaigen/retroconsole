@@ -23,6 +23,8 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 runs {
     configureEach {
+        // Reduce signal usage from native cores (e.g. Flycast/libretro on Windows).
+
         systemProperty 'forge.logging.markers', 'REGISTRIES'
         systemProperty 'forge.logging.console.level', 'debug'
         modSource project.sourceSets.main
