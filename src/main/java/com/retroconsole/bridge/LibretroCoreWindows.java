@@ -933,6 +933,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private volatile int width;
     private volatile int height;
+    private volatile double timingFps = 60.0;
     private boolean gameLoaded;
 
     private boolean loadGameImpl(Path romPath) {
@@ -1003,6 +1004,7 @@ public class LibretroCoreWindows extends LibretroCore {
             this.height = 272;
             LOGGER.info("AV info geometry was 0x0 — using PSP default 480x272 until SET_SYSTEM_AV_INFO");
         }
+        this.timingFps = avInfo.timing_fps > 1.0 ? avInfo.timing_fps : 60.0;
         this.gameLoaded = true;
         audioPacing.reset();
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
@@ -1015,6 +1017,9 @@ public class LibretroCoreWindows extends LibretroCore {
 
     @Override public int getWidth()  { return width; }
     @Override public int getHeight() { return height; }
+
+    /** Точный FPS ядра (59.94 для PSP) — для пейсинга внешнего цикла FrameSender. */
+    public double getTimingFps() { return timingFps; }
 
     private LibretroBridge.RetroGameInfo buildGameInfo(Path romPath) throws java.io.IOException {
         var info = new LibretroBridge.RetroGameInfo();
