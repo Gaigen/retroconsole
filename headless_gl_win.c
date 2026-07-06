@@ -766,24 +766,34 @@
          if (rb) rb(HLG_GL_BACK);
      }
  
-     int vp[4] = {0};
-     gi(HLG_GL_VIEWPORT, vp);
-     int read_w = vp[2] > 0 ? vp[2] : (req_w > 0 ? req_w : s_w);
-     int read_h = vp[3] > 0 ? vp[3] : (req_h > 0 ? req_h : s_h);
-     if (max_pixels > 0 && read_w > 0 && (long long)read_w * read_h > max_pixels)
-         read_h = max_pixels / read_w;
-     if (read_w <= 0 || read_h <= 0) { LeaveCriticalSection(&s_gl_cs); return; }
- 
-     /* (B) отдаём Java РЕАЛЬНЫЕ размеры того, что прочитали */
-     viewport_out[0] = vp[0];
-     viewport_out[1] = vp[1];
-     viewport_out[2] = read_w;
-     viewport_out[3] = read_h;
- 
-     if (ps) ps(HLG_GL_PACK_ALIGNMENT, 4);
- 
-     /* glReadPixels сам синхронизирует пайплайн — glFinish не нужен */
-     rp(vp[0], vp[1], read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, pixels_out);
+    int vp[4] = {0};
+    gi(HLG_GL_VIEWPORT, vp);
+    int gl_w = vp[2] > 0 ? vp[2] : s_w;
+    int gl_h = vp[3] > 0 ? vp[3] : s_h;
+    if (gl_w <= 0 || gl_h <= 0) { gl_w = s_w; gl_h = s_h; }
+
+    /* Читаем ровно game frame size из video_cb (req_w/req_h), как headless_gl.c на Linux.
+     * PCSX2 с GameDB-хаками (nativeScaling/alignSprite) может держать GL viewport 640x480,
+     * а video_refresh отдаёт 640x256 или 512x256 — чтение по viewport даёт чёрные полосы. */
+    int read_w = (req_w > 0) ? req_w : gl_w;
+    int read_h = (req_h > 0) ? req_h : gl_h;
+    if (s_fbo_ready) {
+        if (read_w > s_w) read_w = s_w;
+        if (read_h > s_h) read_h = s_h;
+    }
+    if (max_pixels > 0 && read_w > 0 && (long long)read_w * read_h > max_pixels)
+        read_h = max_pixels / read_w;
+    if (read_w <= 0 || read_h <= 0) { LeaveCriticalSection(&s_gl_cs); return; }
+
+    viewport_out[0] = 0;
+    viewport_out[1] = 0;
+    viewport_out[2] = read_w;
+    viewport_out[3] = read_h;
+
+    if (ps) ps(HLG_GL_PACK_ALIGNMENT, 4);
+
+    /* glReadPixels сам синхронизирует пайплайн — glFinish не нужен */
+    rp(0, 0, read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, pixels_out);
  
      /* GL origin = низ-лево -> переворот строк */
      {
