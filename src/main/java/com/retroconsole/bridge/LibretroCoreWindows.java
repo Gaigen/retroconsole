@@ -625,21 +625,15 @@ public class LibretroCoreWindows extends LibretroCore {
                 }
                 return true;
             case LibretroEnvironment.SET_SYSTEM_AV_INFO:
-                // PPSSPP/PCSX2 отдают реальный размер И FPS именно здесь.
+                // PPSSPP отдаёт реальный размер именно здесь (на старте геометрия 0x0).
                 if (data != null) {
                     int w = data.getInt(0);   // geometry.base_width
                     int h = data.getInt(4);   // geometry.base_height
-                    // retro_system_timing.fps: double по офсету 24
-                    // (geometry 20 байт + выравнивание double до 8).
-                    double fps = data.getDouble(24);
                     if (w > 0 && h > 0) {
                         this.width = w;
                         this.height = h;
+                        LOGGER.info("SET_SYSTEM_AV_INFO: {}x{}", w, h);
                     }
-                    // КРИТИЧНО для PAL-игр PS2: ядро меняет 59.94 -> 50.0 именно
-                    // здесь. Без этого FrameSender гонит PAL-игру на ~20% быстрее.
-                    if (fps > 1.0 && fps < 1000.0) this.timingFps = fps;
-                    LOGGER.info("SET_SYSTEM_AV_INFO: {}x{} @ {} fps", w, h, fps);
                 }
                 return true;
             case LibretroEnvironment.GET_SYSTEM_DIRECTORY:
@@ -768,7 +762,6 @@ public class LibretroCoreWindows extends LibretroCore {
             String ctxName = switch (ctxType) {
                 case 0 -> "NONE"; case 1 -> "OPENGL"; case 2 -> "OPENGLES2";
                 case 3 -> "OPENGL_CORE"; case 4 -> "OPENGLES3"; case 6 -> "VULKAN";
-                case 7 -> "D3D11"; case 8 -> "D3D10"; case 9 -> "D3D12"; case 10 -> "D3D9";
                 default -> "UNKNOWN(" + ctxType + ")";
             };
             LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
