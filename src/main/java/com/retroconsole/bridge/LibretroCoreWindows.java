@@ -1181,23 +1181,22 @@ public class LibretroCoreWindows extends LibretroCore {
         if (!pending || w <= 0 || h <= 0) return;
         try {
             headlessGl().hlg_make_current();
-            int surfW = Math.max(Math.max(w, hwActualW), hwPbufW);
-            int surfH = Math.max(Math.max(h, hwActualH), hwPbufH);
+            int surfW = Math.max(w, hwPbufW);
+            int surfH = Math.max(h, hwPbufH);
             if (surfW != hwPbufW || surfH != hwPbufH) {
                 headlessGl().hlg_resize(surfW, surfH);
                 hwPbufW = surfW;
                 hwPbufH = surfH;
             }
-            int cap = surfW * surfH;
-            if (hwReadbackBuf == null || hwReadbackCap < cap) {
-                hwReadbackBuf = new Memory((long) cap * 4L);
-                hwReadbackCap = cap;
+            int len = w * h;
+            if (hwReadbackBuf == null || hwReadbackCap < len) {
+                hwReadbackBuf = new Memory((long) len * 4L);
+                hwReadbackCap = len;
             }
             int[] vp = new int[4];
-            headlessGl().hlg_read_pixels(vp, hwReadbackBuf, cap, w, h);
-            int aw = vp[2] > 0 ? vp[2] : w;
-            int ah = vp[3] > 0 ? vp[3] : h;
-            int len = aw * ah;
+            headlessGl().hlg_read_pixels(vp, hwReadbackBuf, len, w, h);
+            int aw = w;
+            int ah = h;
             if (len <= 0 || (long) len > hwReadbackCap) {
                 LOGGER.warn("HW frame {}x{} exceeds readback cap {}", aw, ah, hwReadbackCap);
                 return;
