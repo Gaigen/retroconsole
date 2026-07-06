@@ -1,18 +1,22 @@
 /*
  * headless_gl_win.c — Headless WGL OpenGL context for libretro on Windows.
  *
- * Изменения этого ревизии:
- *  (A) Рендер в собственный offscreen FBO (color RGBA8 + depth24stencil8),
- *      а не в back buffer скрытого окна. Надёжно на всех драйверах.
- *      hlg_get_framebuffer() отдаёт имя нашего FBO; bind(0) редиректится в него.
- *  (B) hlg_read_pixels честно возвращает реальные размеры viewport в viewport_out
- *      (это уже было) — теперь Java их использует.
- *  (C) VEH-изоляция Flycast: поддержка снятия отдельных хендлеров и hook
- *      RtlRemoveVectoredExceptionHandler -> нет use-after-free внутри сессии.
+ * Ревизия (PSP-fix):
+ *  (A) Рендер в собственный offscreen FBO (color RGBA8 + depth24stencil8).
+ *  (B) hlg_read_pixels возвращает реальные размеры viewport.
+ *  (C) VEH-изоляция Flycast + hook RtlRemoveVectoredExceptionHandler.
+ *  (D) НОВОЕ: hlg_init_ex гарантирует, что контекст можно сделать current на
+ *      ВЫЗЫВАЮЩЕМ потоке. Если контекст «застрял» current в другом потоке
+ *      (прошлая сессия / другая консоль), старый HGLRC бросается и создаётся
+ *      новый. Чинит "Failed to make WGL context current during SET_HW_RENDER"
+ *      -> software fallback у PPSSPP.
+ *  (E) НОВОЕ: real_remove_veh вызывается только под s_veh_cs (гонка
+ *      unpatch/repatch реальной функции ntdll).
+ *  (F) НОВОЕ: destroy сбрасывает кэш GL-указателей и FBO-состояние;
+ *      hlg_read_pixels восстанавливает READ_FRAMEBUFFER; GetLastError в логах.
  *
- * ВНИМАНИЕ: инлайновый патч ntdll оставлен самописным (без внешних зависимостей).
- * Для продакшена рекомендуется MinHook: он делает установку атомарно и с
- * настоящим трамплином. Здесь окно гонки минимизировано, но не устранено на 100%.
+ * ВНИМАНИЕ: инлайновый патч ntdll оставлен самописным. Для продакшена
+ * рекомендуется MinHook (атомарная установка + настоящий трамплин).
  *
  * Build (MinGW-w64):
  *   gcc -shared -O2 -o .libheadless_gl.dll headless_gl_win.c -lopengl32 -lgdi32 -luser32
@@ -46,6 +50,7 @@
  #define HLG_GL_DRAW_FRAMEBUFFER  0x8CA9
  #define HLG_GL_READ_FRAMEBUFFER  0x8CA8
  #define HLG_GL_FRAMEBUFFER       0x8D40
+ #define HLG_GL_READ_FB_BINDING   0x8CAA
  /* FBO / renderbuffer */
  #define HLG_GL_COLOR_ATTACHMENT0        0x8CE0
  #define HLG_GL_RENDERBUFFER             0x8D41
@@ -70,6 +75,9 @@
  static char  s_gpu_info[512] = "";
  static int   s_last_fbo = 0;
  static int   s_read_count = 0;
+ 
+ /* (F) объявлен здесь, чтобы destroy мог сбросить кэш */
+ static void (*real_glBindFramebuffer)(unsigned int, unsigned int);
  
  static void hlg_destroy_internal(void);
  
@@ -211,7 +219,7 @@
      FlushInstructionCache(GetCurrentProcess(), at, sizeof(patch));
  }
  
- /* снять патч -> вызвать реальную -> вернуть патч (под s_veh_cs) */
+ /* снять патч -> вызвать реальную -> вернуть патч (ВСЕГДА под s_veh_cs) */
  static PVOID real_add_veh(ULONG First, PVECTORED_EXCEPTION_HANDLER H)
  {
      DWORD old;
@@ -292,6 +300,7 @@
  {
      if (s_nvmem_lo < s_nvmem_hi)
          return (addr >= s_nvmem_lo && addr < s_nvmem_hi) ? 1 : 0;
+     /* эвристика до прихода строки BASE — только как fallback */
      if (addr < 0x00007FF400000000ULL || addr >= 0x00007FF500000000ULL)
          return 0;
      MEMORY_BASIC_INFORMATION mbi;
@@ -361,6 +370,9 @@
          if (!s_dispatcher)
              s_dispatcher = real_add_veh(1 /*head*/, hlg_dispatch_veh);
          LeaveCriticalSection(&s_veh_cs);
+         if (!handle)
+             fprintf(stderr, "[hlg-win] WARNING: fly table FULL — handler %p NOT registered!\n",
+                     (void *)Handler);
          fprintf(stderr, "[hlg-win] Flycast VEH %p ISOLATED (handle=%p)\n",
                  (void *)Handler, handle);
          fflush(stderr);
@@ -385,7 +397,11 @@
          fprintf(stderr, "[hlg-win] Flycast VEH removed (handle=%p)\n", Handle);
          return 1;
      }
-     return real_remove_veh(Handle);
+     /* (E) unpatch/repatch реальной функции — строго под CS (гонка с AddVEH) */
+     EnterCriticalSection(&s_veh_cs);
+     ULONG r = real_remove_veh(Handle);
+     LeaveCriticalSection(&s_veh_cs);
+     return r;
  }
  
  __declspec(dllexport) void hlg_capture_jvm_filter(void)
@@ -465,7 +481,14 @@
  {
      if (!s_initialized || !s_hdc || !s_hglrc) return 0;
      if (wglGetCurrentContext() == s_hglrc) return 1;
-     return wglMakeCurrent(s_hdc, s_hglrc) ? 1 : 0;
+     if (!wglMakeCurrent(s_hdc, s_hglrc)) {
+         /* (F) диагностика: чаще всего err=170 (ERROR_BUSY) — контекст current
+          * в другом потоке. Java-сторона в этом случае пересоздаёт контекст. */
+         fprintf(stderr, "[hlg-win] wglMakeCurrent FAILED (err=%lu, tid=%lu)\n",
+                 GetLastError(), GetCurrentThreadId());
+         return 0;
+     }
+     return 1;
  }
  
  static LRESULT CALLBACK hidden_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -552,36 +575,43 @@
  __declspec(dllexport) int hlg_init_ex(int api, int major, int minor, int flags)
  {
      int compat = flags & 1;
+     ensure_cs();
      if (s_initialized) {
-         if (s_api_mode == (api ? 1 : 0) && s_gl_major == major &&
-             s_gl_minor == minor && s_compat_profile == compat)
+         int same = (s_api_mode == (api ? 1 : 0) && s_gl_major == major &&
+                     s_gl_minor == minor && s_compat_profile == compat);
+         /* (D) early-return ТОЛЬКО если контекст реально доступен вызывающему
+          * потоку. Иначе (застрял current в другом потоке / параметры другие)
+          * — пересоздаём. Это чинит software fallback у PPSSPP. */
+         if (same && s_hdc && s_hglrc && wglMakeCurrent(s_hdc, s_hglrc))
              return 1;
+         fprintf(stderr, "[hlg-win] reinit: same=%d err=%lu tid=%lu — recreating context\n",
+                 same, GetLastError(), GetCurrentThreadId());
          hlg_destroy_internal();
      }
      s_api_mode       = api ? 1 : 0;
      s_compat_profile = compat;
      s_gl_major       = major;
      s_gl_minor       = minor;
-     ensure_cs();
  
      if (s_api_mode == 1) {
          fprintf(stderr, "[hlg-win] GLES not supported on Windows WGL — use desktop GL\n");
          return 0;
      }
      if (!create_hidden_window()) {
-         fprintf(stderr, "[hlg-win] hidden window creation failed\n");
+         fprintf(stderr, "[hlg-win] hidden window creation failed (err=%lu)\n", GetLastError());
          return 0;
      }
      if (!create_gl_context(major, minor, compat)) {
-         fprintf(stderr, "[hlg-win] GL %d.%d context creation failed\n", major, minor);
+         fprintf(stderr, "[hlg-win] GL %d.%d context creation failed (err=%lu)\n",
+                 major, minor, GetLastError());
          hlg_destroy_internal();
          return 0;
      }
      s_initialized = 1;
      log_gpu_identity();
-     fprintf(stderr, "[hlg-win] init OK: GL %d.%d %s %dx%d (fbo=%d)\n",
+     fprintf(stderr, "[hlg-win] init OK: GL %d.%d %s %dx%d (fbo=%d, tid=%lu)\n",
              s_gl_major, s_gl_minor, s_compat_profile ? "Compat" : "Core",
-             s_w, s_h, s_fbo_ready);
+             s_w, s_h, s_fbo_ready, GetCurrentThreadId());
      return 1;
  }
  
@@ -595,14 +625,27 @@
  static void hlg_destroy_internal(void)
  {
      if (s_hglrc) {
-         wglMakeCurrent(s_hdc, s_hglrc);
-         destroy_offscreen_fbo();
-         wglMakeCurrent(NULL, NULL);
-         wglDeleteContext(s_hglrc);
+         if (wglMakeCurrent(s_hdc, s_hglrc)) {
+             destroy_offscreen_fbo();
+             wglMakeCurrent(NULL, NULL);
+             if (!wglDeleteContext(s_hglrc))
+                 fprintf(stderr, "[hlg-win] wglDeleteContext failed (err=%lu) — abandoning\n",
+                         GetLastError());
+         } else {
+             /* (D) контекст current в другом потоке: бросаем HGLRC. Утечка
+              * одного контекста лучше, чем software fallback нового ядра. */
+             fprintf(stderr, "[hlg-win] context current in another thread (err=%lu) — abandoning HGLRC %p\n",
+                     GetLastError(), (void *)s_hglrc);
+         }
          s_hglrc = NULL;
      }
      if (s_hdc && s_hwnd) { ReleaseDC(s_hwnd, s_hdc); s_hdc = NULL; }
      if (s_hwnd) { DestroyWindow(s_hwnd); s_hwnd = NULL; }
+     /* (F) сбрасываем всё, что было привязано к старому контексту */
+     s_fbo = s_color_rb = s_depth_rb = 0;
+     s_fbo_ready = 0;
+     s_fbo_funcs_ready = 0;
+     real_glBindFramebuffer = NULL;
      s_initialized = 0;
      s_gpu_info[0] = '\0';
      s_last_fbo    = 0;
@@ -615,7 +658,8 @@
          EnterCriticalSection(&s_gl_cs);
          wglMakeCurrent(NULL, NULL);
          LeaveCriticalSection(&s_gl_cs);
-         fprintf(stderr, "[hlg-win] release: context detached from init thread\n");
+         fprintf(stderr, "[hlg-win] release: context detached from thread %lu\n",
+                 GetCurrentThreadId());
      }
  }
  
@@ -647,7 +691,6 @@
      return 1;
  }
  
- static void (*real_glBindFramebuffer)(unsigned int, unsigned int);
  static void tracked_glBindFramebuffer(unsigned int target, unsigned int fbo)
  {
      if (!ensure_current()) return;
@@ -707,16 +750,16 @@
      typedef void (*glReadPixels_t)(int, int, int, int, unsigned int, unsigned int, void *);
      typedef void (*glReadBuffer_t)(unsigned int);
      typedef void (*glPixelStorei_t)(unsigned int, int);
-     typedef void (*glFinish_t)(void);
      glGetIntegerv_t gi  = (glGetIntegerv_t)load_gl("glGetIntegerv");
      glReadPixels_t  rp  = (glReadPixels_t)load_gl("glReadPixels");
      glReadBuffer_t  rb  = (glReadBuffer_t)load_gl("glReadBuffer");
      glPixelStorei_t ps  = (glPixelStorei_t)load_gl("glPixelStorei");
-     glFinish_t      fin = (glFinish_t)load_gl("glFinish");
      if (!gi || !rp) { LeaveCriticalSection(&s_gl_cs); return; }
  
-     /* (A) читаем из нашего offscreen FBO, если он есть */
+     /* (A) читаем из нашего offscreen FBO; (F) запоминаем прежний READ-бинд */
+     int prev_read = -1;
      if (s_fbo_ready && ensure_fbo_funcs()) {
+         gi(HLG_GL_READ_FB_BINDING, &prev_read);
          p_BindFB(HLG_GL_READ_FRAMEBUFFER, s_fbo);
          if (rb) rb(HLG_GL_COLOR_ATTACHMENT0);
      } else {
@@ -738,8 +781,8 @@
      viewport_out[3] = read_h;
  
      if (ps) ps(HLG_GL_PACK_ALIGNMENT, 4);
-     if (fin && (s_read_count % 120) == 0) fin();
  
+     /* glReadPixels сам синхронизирует пайплайн — glFinish не нужен */
      rp(vp[0], vp[1], read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, pixels_out);
  
      /* GL origin = низ-лево -> переворот строк */
@@ -758,6 +801,13 @@
              free(tmp);
          }
      }
+ 
+     /* (F) восстановить READ_FRAMEBUFFER (0 при редиректе значит наш FBO) */
+     if (s_fbo_ready && s_fbo_funcs_ready && prev_read >= 0) {
+         unsigned int restore = prev_read != 0 ? (unsigned int)prev_read : s_fbo;
+         p_BindFB(HLG_GL_READ_FRAMEBUFFER, restore);
+     }
+ 
      s_read_count++;
      LeaveCriticalSection(&s_gl_cs);
  }
