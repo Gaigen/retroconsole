@@ -411,7 +411,10 @@ public class LibretroCoreWindows extends LibretroCore {
 
         this.audioSampleCallback = (left, right) -> { /* discard */ };
         core.retro_set_audio_sample(audioSampleCallback);
-        this.audioBatchCallback = (data, frames) -> frames;
+        this.audioBatchCallback = (data, frames) -> {
+            audioPacing.consumeSamples((int) frames);
+            return frames;
+        };
         core.retro_set_audio_sample_batch(audioBatchCallback);
 
         this.inputPollCallback = () -> { /* nothing to poll */ };
@@ -482,6 +485,9 @@ public class LibretroCoreWindows extends LibretroCore {
             new java.util.concurrent.atomic.AtomicIntegerArray(4);
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
+
+    /** Flycast (и др.) синхронизируют время по потреблению audio samples. */
+    private final AudioPacing audioPacing = new AudioPacing(44100);
 
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
     private final java.util.List<Memory> allocatedOptionMemory = new java.util.ArrayList<>();
@@ -945,6 +951,7 @@ public class LibretroCoreWindows extends LibretroCore {
         this.width = avInfo.geometry.base_width;
         this.height = avInfo.geometry.base_height;
         this.gameLoaded = true;
+        audioPacing.reset();
 
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
                 romPath.getFileName(), width, height,
@@ -1169,6 +1176,7 @@ public class LibretroCoreWindows extends LibretroCore {
             this.newFrame = false;
         }
         this.gameLoaded = false;
+        audioPacing.reset();
         LOGGER.info("close(): clean shutdown complete");
     }
 
