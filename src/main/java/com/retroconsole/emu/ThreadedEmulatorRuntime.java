@@ -102,11 +102,18 @@ public class ThreadedEmulatorRuntime {
     public synchronized void stop() {
         running = false;
         if (thread != null) {
-            thread.interrupt();
             try {
-                thread.join(1000);
+                thread.join(3000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+            }
+            if (thread.isAlive()) {
+                thread.interrupt();
+                try {
+                    thread.join(1000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
             }
             thread = null;
         }

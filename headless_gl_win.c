@@ -272,6 +272,24 @@
      fprintf(stderr, "[hlg-win] RtlAddVectoredExceptionHandler hooked (Flycast VEH isolated)\n");
      fflush(stderr);
  }
+
+ /* Between core sessions: drop dispatcher + cached Flycast handlers (hook stays). */
+ __declspec(dllexport) void hlg_reset_veh_session(void) {
+     if (!s_veh_hooked) return;
+     EnterCriticalSection(&s_veh_cs);
+     if (s_dispatcher) {
+         RemoveVectoredExceptionHandler(s_dispatcher);
+         s_dispatcher = NULL;
+     }
+     s_fly_count = 0;
+     memset(s_fly, 0, sizeof(s_fly));
+     s_nvmem_lo = 0;
+     s_nvmem_hi = 0;
+     s_dispatch_log_left = 5;
+     LeaveCriticalSection(&s_veh_cs);
+     fprintf(stderr, "[hlg-win] VEH session reset (dispatcher removed, fly[]=cleared)\n");
+     fflush(stderr);
+ }
  
  /* =========================================================================
   *  GL context plumbing
