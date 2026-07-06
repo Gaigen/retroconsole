@@ -7,6 +7,7 @@ import com.sun.jna.Pointer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -137,6 +138,12 @@ public class LibretroCoreWindows extends LibretroCore {
     private boolean hwContextResetDone = false;
     private int hwGlMajor = 3;
     private int hwGlMinor = 3;
+    // Реально прочитанные размеры кадра (viewport Flycast), а не заявленная геометрия.
+    private volatile int hwActualW = 0;
+    private volatile int hwActualH = 0;
+    // Версия GL, запрошенная ядром в SET_HW_RENDER.
+    private int hwReqGlMajor = 3;
+    private int hwReqGlMinor = 3;
 
     private HeadlessGLWin headlessGl;
 
@@ -186,12 +193,23 @@ public class LibretroCoreWindows extends LibretroCore {
         }
     }
 
-    private boolean ensureHeadlessGl(int ctxType) {
-        int api = (ctxType == 1 || ctxType == 2 || ctxType == 4) ? 1 : 0;
-        int major = 3;
-        int minor = (api == 1) ? 0 : (ctxType == 3 ? 3 : 1);
-        int flags = 0;
-        int profileKey = (api & 0xFF) | ((flags & 0xFF) << 8) | ((minor & 0xFF) << 16);
+    private boolean ensureHeadlessGl(int ctxType, int reqMajor, int reqMinor) {
+        boolean gles = (ctxType == 2 || ctxType == 4);
+        int api = gles ? 1 : 0;
+        // core-профиль только для OPENGL_CORE (3); для OPENGL (1) — compatibility.
+        int flags = (ctxType == 3) ? 0 : 1;
+
+        int major = reqMajor > 0 ? reqMajor : 3;
+        int minor = reqMinor >= 0 ? reqMinor : 0;
+        // Для core-профиля версия обязана быть >= 3.2; поднимаем до 3.3.
+        if (!gles && flags == 0 && (major < 3 || (major == 3 && minor < 3))) {
+            major = 3;
+            minor = 3;
+        }
+        if (gles) { major = (ctxType == 4) ? 3 : 2; minor = 0; }
+
+        int profileKey = (api & 0xFF) | ((flags & 0xFF) << 8)
+                | ((minor & 0xFF) << 16) | ((major & 0xFF) << 24);
         if (headlessGlReady && headlessGlApi == profileKey) return true;
         if (headlessGlReady) {
             try { headlessGl().hlg_destroy(); } catch (Throwable ignored) {}
@@ -206,7 +224,8 @@ public class LibretroCoreWindows extends LibretroCore {
                 hwGlMajor = major;
                 hwGlMinor = minor;
             }
-            String apiName = api == 1 ? "GLES" + major : "GL " + major + "." + minor;
+            String apiName = api == 1 ? "GLES" + major : "GL " + major + "." + minor
+                    + (flags == 0 ? " Core" : " Compat");
             LOGGER.info("Headless GL context ({}): {}", apiName, headlessGlReady ? "OK" : "FAILED");
             if (headlessGlReady) {
                 LOGGER.info("Headless GL GPU: {}", headlessGl().hlg_get_gpu_info());
@@ -701,44 +720,57 @@ public class LibretroCoreWindows extends LibretroCore {
                 default -> "UNKNOWN(" + ctxType + ")";
             };
             LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
-
             if (ctxType == 0) {
                 hwRenderActive = false;
                 return true;
             }
-            if (!supportsHwRender())        { return false; }
-            if (!ensureHeadlessGl(ctxType)) { return false; }
+            if (!supportsHwRender())  { return false; }
             if (ctxType != 1 && ctxType != 3 && ctxType != 4) { return false; }
+
+            // Читаем версию, запрошенную ядром (version_major @0x24, version_minor @0x28).
+            int reqMajor = data.getInt(0x24);
+            int reqMinor = data.getInt(0x28);
+            if (reqMajor <= 0) { reqMajor = 3; reqMinor = 3; }
+            hwReqGlMajor = reqMajor;
+            hwReqGlMinor = reqMinor;
+
+            if (!ensureHeadlessGl(ctxType, reqMajor, reqMinor)) { return false; }
 
             hwContextReset   = data.getPointer(0x08);
             hwContextDestroy = data.getPointer(0x30);
-
             if (headlessGl().hlg_make_current() == 0) {
                 LOGGER.error("Failed to make WGL context current during SET_HW_RENDER");
                 return false;
             }
-
             headlessGl().hlg_dump_hw_render(data, 80);
-
             Pointer fbPtr   = headlessGl().hlg_get_framebuffer_ptr();
             Pointer procPtr = headlessGl().hlg_get_proc_address_ptr();
             pinForever(fbPtr);
             pinForever(procPtr);
-
             data.setPointer(0x10, fbPtr);
             data.setPointer(0x18, procPtr);
-            data.setByte(0x22, (byte) 1);
-            data.setInt(0x24, hwGlMajor);
+            data.setByte(0x22, (byte) 1);              // bottom_left_origin
+            data.setInt(0x24, hwGlMajor);              // отдаём фактически созданную версию
             data.setInt(0x28, hwGlMinor);
-
             hwContextResetDone = false;
             hwRenderActive = true;
-            LOGGER.info("SET_HW_RENDER accepted; context_reset deferred until after retro_load_game");
+            LOGGER.info("SET_HW_RENDER accepted (GL {}.{}); context_reset deferred",
+                    hwGlMajor, hwGlMinor);
             return true;
         } catch (Throwable t) {
             LOGGER.error("Failed to handle SET_HW_RENDER", t);
             return false;
         }
+    }
+
+    /** Выделить нативную C-строку в UTF-8 с нуль-терминатором. */
+    private Memory allocCString(String s) {
+        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        Memory m = new Memory(b.length + 1L);
+        m.write(0, b, 0, b.length);
+        m.setByte(b.length, (byte) 0);
+        allocatedOptionMemory.add(m);
+        return m;
     }
 
     private boolean returnCString(Pointer data, String s, boolean useSystemDirSlot) {
@@ -845,26 +877,18 @@ public class LibretroCoreWindows extends LibretroCore {
             if (isFlycastCore()) {
                 String override = FLYCAST_OVERRIDES.get(key);
                 if (override == null) {
-                    // ДИАГНОСТИКА: печатаем каждый уникальный ключ один раз.
                     if (loggedFlycastKeys.add(key)) {
                         LOGGER.info("Flycast queried option (no override): {}", key);
                     }
                     return false;
                 }
-                Memory m = new Memory(override.length() + 1L);
-                m.setString(0, override);
-                allocatedOptionMemory.add(m);
-                data.setPointer(Native.POINTER_SIZE, m);
+                data.setPointer(Native.POINTER_SIZE, allocCString(override));
                 LOGGER.info("Flycast option override: {} = {}", key, override);
                 return true;
             }
-
             String val = coreOptions.get(key);
             if (val == null) return false;
-            Memory m = new Memory(val.length() + 1L);
-            m.setString(0, val);
-            allocatedOptionMemory.add(m);
-            data.setPointer(Native.POINTER_SIZE, m);
+            data.setPointer(Native.POINTER_SIZE, allocCString(val));
             return true;
         } catch (Throwable t) {
             LOGGER.warn("GET_VARIABLE failed: {}", t.getMessage());
@@ -903,7 +927,8 @@ public class LibretroCoreWindows extends LibretroCore {
         boolean ok;
         try {
             if (isFlycastCore() && supportsHwRender()) {
-                ensureHeadlessGl(LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE);
+                ensureHeadlessGl(LibretroEnvironment.RETRO_HW_CONTEXT_OPENGL_CORE,
+                        hwReqGlMajor, hwReqGlMinor);
             }
             LOGGER.info("about to call core.retro_load_game()...");
             ok = core.retro_load_game(info);
@@ -1000,8 +1025,7 @@ public class LibretroCoreWindows extends LibretroCore {
     private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
 
     private void drainHwFrame() {
-        boolean pending;
-        int w, h;
+        boolean pending; int w, h;
         synchronized (frameLock) {
             pending = hwFramePending;
             w = hwFrameW;
@@ -1009,23 +1033,36 @@ public class LibretroCoreWindows extends LibretroCore {
             hwFramePending = false;
         }
         if (!pending || w <= 0 || h <= 0) return;
-
-        int len = w * h;
         try {
             headlessGl().hlg_make_current();
-            int surfW = Math.max(w, hwPbufW);
-            int surfH = Math.max(h, hwPbufH);
+            // Surface должен покрывать и заявленную геометрию, и реальный viewport
+            // прошлого кадра (Flycast может рендерить в повышенном разрешении).
+            int surfW = Math.max(Math.max(w, hwActualW), hwPbufW);
+            int surfH = Math.max(Math.max(h, hwActualH), hwPbufH);
             if (surfW != hwPbufW || surfH != hwPbufH) {
                 headlessGl().hlg_resize(surfW, surfH);
                 hwPbufW = surfW;
                 hwPbufH = surfH;
             }
-            if (hwReadbackBuf == null || hwReadbackCap < len) {
-                hwReadbackBuf = new Memory((long) len * 4L);
-                hwReadbackCap = len;
+            int cap = surfW * surfH;
+            if (hwReadbackBuf == null || hwReadbackCap < cap) {
+                hwReadbackBuf = new Memory((long) cap * 4L);
+                hwReadbackCap = cap;
             }
             int[] vp = new int[4];
-            headlessGl().hlg_read_pixels(vp, hwReadbackBuf, len, w, h);
+            headlessGl().hlg_read_pixels(vp, hwReadbackBuf, cap, w, h);
+
+            // (B) истинные размеры кадра приходят из C, а не из geometry.
+            int aw = vp[2] > 0 ? vp[2] : w;
+            int ah = vp[3] > 0 ? vp[3] : h;
+            int len = aw * ah;
+            if (len <= 0 || (long) len > hwReadbackCap) {
+                LOGGER.warn("HW frame {}x{} exceeds readback cap {}", aw, ah, hwReadbackCap);
+                return;
+            }
+            hwActualW = aw;
+            hwActualH = ah;
+
             synchronized (frameLock) {
                 if (frameBuffer.length != len) frameBuffer = new int[len];
                 int[] dst = frameBuffer;
@@ -1033,6 +1070,9 @@ public class LibretroCoreWindows extends LibretroCore {
                     int px = hwReadbackBuf.getInt((long) i * 4);
                     dst[i] = 0xFF000000 | (px & 0x00FFFFFF);
                 }
+                // Текстура на стороне Minecraft должна совпадать с реальным кадром.
+                this.width = aw;
+                this.height = ah;
                 newFrame = true;
             }
         } catch (Throwable t) {
