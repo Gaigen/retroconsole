@@ -96,9 +96,9 @@ public class NetworkHandler {
         ctx.enqueueWork(() -> {
             BlockEntity be = ctx.player().level().getBlockEntity(pkt.pos());
             if (be instanceof RetroConsoleBlockEntity console) {
+                console.setOwnerId(ctx.player().getUUID());
                 console.setCoreName(pkt.coreName());
                 console.setRomId(pkt.romId());
-                // setRomId() triggers startEmulator() internally
             }
         });
     }

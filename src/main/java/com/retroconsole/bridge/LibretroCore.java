@@ -136,4 +136,9 @@ public abstract class LibretroCore implements AutoCloseable {
     public Path getCorePath() {
         return corePath;
     }
+
+    public boolean isPcsx2Core() {
+        return corePath != null
+                && corePath.getFileName().toString().toLowerCase().contains("pcsx2");
+    }
 }

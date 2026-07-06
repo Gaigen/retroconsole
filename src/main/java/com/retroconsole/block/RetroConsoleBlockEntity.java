@@ -10,10 +10,13 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.UUID;
+
 public class RetroConsoleBlockEntity extends BlockEntity {
 
     private String romId = "";
     private String coreName = "";
+    private UUID ownerId;
 
     public RetroConsoleBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.RETRO_CONSOLE_BE.get(), pos, state);
@@ -49,9 +52,18 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         }
     }
 
+    public UUID getOwnerId() {
+        return ownerId;
+    }
+
+    public void setOwnerId(UUID ownerId) {
+        this.ownerId = ownerId;
+        setChanged();
+    }
+
     private void startEmulator() {
         if (level instanceof ServerLevel && !coreName.isEmpty() && !romId.isEmpty()) {
-            ServerConsoles.startEmulator(worldPosition, coreName, romId);
+            ServerConsoles.startEmulator(worldPosition, coreName, romId, ownerId);
         }
     }
 
@@ -74,6 +86,9 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         super.saveAdditional(tag, registries);
         tag.putString("RomId", romId);
         tag.putString("CoreName", coreName);
+        if (ownerId != null) {
+            tag.putUUID("OwnerId", ownerId);
+        }
     }
 
     @Override
@@ -81,6 +96,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         super.loadAdditional(tag, registries);
         romId = tag.getString("RomId");
         coreName = tag.getString("CoreName");
+        ownerId = tag.hasUUID("OwnerId") ? tag.getUUID("OwnerId") : null;
     }
 
     @Override
