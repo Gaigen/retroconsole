@@ -37,9 +37,11 @@ public abstract class LibretroCore implements AutoCloseable {
         @Override public boolean unserialize(byte[] data) { return false; }
         @Override public byte[] getSaveRam() { return null; }
         @Override public void setSaveRam(byte[] sram) { }
-        @Override public int readAudio(short[] dst) { return 0; }
+        @Override public int readAudio(short[] dst) { return readAudio(dst, dst.length); }
+        @Override public int readAudio(short[] dst, int maxShorts) { return 0; }
         @Override public double getAudioSampleRate() { return 48000.0; }
         @Override public double getTimingFps() { return 60.0; }
+        @Override public boolean prefersAvLockstep() { return false; }
         @Override public void close() { }
     };
 
@@ -110,13 +112,22 @@ public abstract class LibretroCore implements AutoCloseable {
     public abstract void setSaveRam(byte[] sram);
 
     /** До dst.length сэмплов interleaved-стерео 16-bit; возвращает число short'ов. */
-    public int readAudio(short[] dst) { return 0; }
+    public int readAudio(short[] dst) { return readAudio(dst, dst.length); }
+
+    /** То же, но не более maxShorts сэмплов за вызов (для lockstep A/V). */
+    public int readAudio(short[] dst, int maxShorts) { return 0; }
 
     /** Частота PCM, Гц. */
     public double getAudioSampleRate() { return 48000.0; }
 
     /** Точный FPS ядра — для пейсинга FrameSender. */
     public double getTimingFps() { return 60.0; }
+
+    /**
+     * PCSX2 отдаёт весь PCM одним batch в конце retro_run — аудио и видео
+     * нужно слать вместе. Остальные ядра (PSP, PS1, …) — потоковый звук.
+     */
+    public boolean prefersAvLockstep() { return false; }
 
     @Override
     public abstract void close() throws Exception;

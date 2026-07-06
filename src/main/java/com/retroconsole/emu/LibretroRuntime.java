@@ -60,6 +60,9 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
     @Override
     public int getHeight() { return height; }
 
+    @Override
+    public double getTimingFps() { return core.getTimingFps(); }
+
     /**
      * Called by ThreadedEmulatorRuntime indirectly — ServerConsoles calls pollFrame.
      * This is the bridge: pollFrame copies from LibretroCore's internal buffer
@@ -71,9 +74,9 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
 
     public int readAudio(short[] dst) { return core.readAudio(dst); }
 
-    public double getAudioSampleRate() { return core.getAudioSampleRate(); }
+    public int readAudio(short[] dst, int maxShorts) { return core.readAudio(dst, maxShorts); }
 
-    public double getTimingFps() { return core.getTimingFps(); }
+    public double getAudioSampleRate() { return core.getAudioSampleRate(); }
 
     public LibretroCore getCore() { return core; }
 

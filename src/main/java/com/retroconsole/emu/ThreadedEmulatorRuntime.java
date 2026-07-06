@@ -12,17 +12,16 @@ public class ThreadedEmulatorRuntime {
 
     private volatile int currentWidth;
     private volatile int currentHeight;
-    private final int targetFps;
 
     public ThreadedEmulatorRuntime(FrameSource source, int defaultWidth, int defaultHeight) {
         this(source, defaultWidth, defaultHeight, 60);
     }
 
+    /** @deprecated initial targetFps is ignored — loop uses {@link FrameSource#getTimingFps()}. */
     public ThreadedEmulatorRuntime(FrameSource source, int defaultWidth, int defaultHeight, int targetFps) {
         this.source = source;
         this.currentWidth = defaultWidth;
         this.currentHeight = defaultHeight;
-        this.targetFps = targetFps;
     }
 
     public synchronized void start() {
@@ -43,18 +42,19 @@ public class ThreadedEmulatorRuntime {
     }
 
     private void loop() {
-        long frameNs = 1_000_000_000L / targetFps;
         long next = System.nanoTime();
 
         while (running) {
+            double fps = Math.max(1.0, source.getTimingFps());
+            long frameNs = (long) (1_000_000_000L / fps);
+            next += frameNs;
+
             source.runFrame();
             newFrame = true;
 
-            // Update dimensions in case they changed
             currentWidth = source.getWidth();
             currentHeight = source.getHeight();
 
-            next += frameNs;
             long sleepTime = next - System.nanoTime();
             if (sleepTime > 0) {
                 try {
@@ -62,11 +62,15 @@ public class ThreadedEmulatorRuntime {
                 } catch (InterruptedException e) {
                     break;
                 }
-            } else {
-                // Fell behind — reset timing
+            } else if (sleepTime < -frameNs) {
                 next = System.nanoTime();
             }
         }
+    }
+
+    /** True while a frame is waiting for {@link #pollFrame(int[])}. */
+    public boolean hasNewFrame() {
+        return newFrame;
     }
 
     /**

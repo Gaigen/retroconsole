@@ -25,6 +25,14 @@ public class ServerConsoles {
     private static final Map<BlockPos, FrameSenderThread> FRAME_SENDERS = new HashMap<>();
     private static CoreManager coreManager;
 
+    /** Фоновый shutdown ядра — не блокирует server thread при ломании блока. */
+    private static final java.util.concurrent.ExecutorService SHUTDOWN_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "retro-console-shutdown");
+                t.setDaemon(true);
+                return t;
+            });
+
     private record Entry(
             LibretroRuntime runtime,
             ThreadedEmulatorRuntime threaded,
@@ -86,28 +94,47 @@ public class ServerConsoles {
         pos = pos.immutable();
         Entry e = ENTRIES.remove(pos);
         FrameSenderThread sender = FRAME_SENDERS.remove(pos);
-        if (sender != null) sender.stopSender();
+        if (sender != null) sender.stopAndJoin();
         if (e != null) {
             LOGGER.info("stopEmulator({}): core={}, rom={}", pos, e.coreName(), e.romId());
             e.threaded().stop();
-            e.runtime().close();
-            LOGGER.info("Stopped emulator at {}", pos);
+            scheduleClose(e.runtime(), pos);
         }
         notifyConsoleStopped(pos);
         VIEWERS.remove(pos);
     }
 
+    private static void scheduleClose(LibretroRuntime runtime, BlockPos pos) {
+        SHUTDOWN_EXECUTOR.submit(() -> {
+            try {
+                runtime.close();
+                LOGGER.info("Core shutdown finished for {}", pos);
+            } catch (Exception ex) {
+                LOGGER.warn("Core shutdown failed for {}: {}", pos, ex.getMessage());
+            }
+        });
+    }
+
+    private static void awaitShutdown(long timeoutSec) {
+        try {
+            SHUTDOWN_EXECUTOR.submit(() -> null).get(timeoutSec, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            LOGGER.warn("Core shutdown still running after {}s", timeoutSec);
+        } catch (Exception e) {
+            LOGGER.debug("Shutdown wait: {}", e.getMessage());
+        }
+    }
+
     private static void notifyConsoleStopped(BlockPos pos) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
-        if (server == null) return;
+        if (server == null || !server.isRunning()) return;
         int viewDist = viewDistance();
         RetroStopConsolePacket packet = new RetroStopConsolePacket(pos);
-        for (ServerLevel level : server.getAllLevels()) {
-            for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
-                if (player.level() != level) continue;
-                if (player.blockPosition().distSqr(pos) < (long) viewDist * viewDist) {
-                    PacketDistributor.sendToPlayer(player, packet);
-                }
+        long radiusSq = (long) viewDist * viewDist;
+        for (ServerPlayer player : new ArrayList<>(server.getPlayerList().getPlayers())) {
+            if (player.hasDisconnected()) continue;
+            if (player.blockPosition().distSqr(pos) < radiusSq) {
+                PacketDistributor.sendToPlayer(player, packet);
             }
         }
     }
@@ -149,10 +176,34 @@ public class ServerConsoles {
 
     public static void stopAll() {
         LOGGER.info("stopAll(): shutting down {} emulator(s)", FRAME_SENDERS.size());
-        for (FrameSenderThread sender : FRAME_SENDERS.values()) sender.stopSender();
+        for (FrameSenderThread sender : new ArrayList<>(FRAME_SENDERS.values())) {
+            sender.stopAndJoin();
+        }
         FRAME_SENDERS.clear();
-        for (Entry e : ENTRIES.values()) { e.threaded().stop(); e.runtime().close(); }
-        ENTRIES.clear(); VIEWERS.clear();
+        List<LibretroRuntime> runtimes = new ArrayList<>();
+        for (Entry e : new ArrayList<>(ENTRIES.values())) {
+            e.threaded().stop();
+            runtimes.add(e.runtime());
+        }
+        ENTRIES.clear();
+        VIEWERS.clear();
+        for (LibretroRuntime runtime : runtimes) {
+            try {
+                SHUTDOWN_EXECUTOR.submit(() -> {
+                    try {
+                        runtime.close();
+                    } catch (Exception ex) {
+                        LOGGER.warn("Core shutdown failed: {}", ex.getMessage());
+                    }
+                    return null;
+                }).get(15, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                LOGGER.warn("Core shutdown timed out during world stop");
+            } catch (Exception e) {
+                LOGGER.warn("Core shutdown error: {}", e.getMessage());
+            }
+        }
+        awaitShutdown(2);
         LOGGER.info("All emulators stopped.");
     }
 }

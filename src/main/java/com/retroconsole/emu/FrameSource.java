@@ -16,4 +16,9 @@ public interface FrameSource {
 
     /** Get current frame height in pixels. */
     int getHeight();
+
+    /** Native frame rate for pacing (defaults to 60 Hz). */
+    default double getTimingFps() {
+        return 60.0;
+    }
 }

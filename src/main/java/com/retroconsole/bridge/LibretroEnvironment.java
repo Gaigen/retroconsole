@@ -61,6 +61,7 @@ public final class LibretroEnvironment {
     public static final int SET_MEMORY_MAPS                     = 36 | EXPERIMENTAL;
     public static final int GET_CURRENT_SOFTWARE_FRAMEBUFFER    = 40 | EXPERIMENTAL;
     public static final int SET_AUDIO_BUFFER_STATUS_CALLBACK      = 62;
+    public static final int GET_AUDIO_VIDEO_ENABLE                = 47;
 
     public static final int RETRO_HW_CONTEXT_OPENGL_CORE = 3;
 
@@ -110,6 +111,7 @@ public final class LibretroEnvironment {
             case GET_MESSAGE_INTERFACE_VERSION -> "GET_MESSAGE_INTERFACE_VERSION";
             case SET_MESSAGE_EXT -> "SET_MESSAGE_EXT";
             case SET_MINIMUM_AUDIO_LATENCY -> "SET_MINIMUM_AUDIO_LATENCY";
+            case GET_AUDIO_VIDEO_ENABLE -> "GET_AUDIO_VIDEO_ENABLE";
             case SET_CORE_OPTIONS_V2_INTL -> "SET_CORE_OPTIONS_V2_INTL";
             case SET_VARIABLE -> "SET_VARIABLE";
             case 45 -> "GET_VFS_INTERFACE";

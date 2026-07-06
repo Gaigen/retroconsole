@@ -597,6 +597,10 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private boolean handleEnvironment(int cmd, Pointer data) {
+        if (cmd == 0x1002f) {
+            if (data != null) data.setInt(0, 3);
+            return true;
+        }
         int base = LibretroEnvironment.normalize(cmd);
         switch (base) {
             case LibretroEnvironment.GET_CAN_DUPE -> {
@@ -929,6 +933,10 @@ public class LibretroCoreLinux extends LibretroCore {
                 return true;
             }
             case LibretroEnvironment.SET_MINIMUM_AUDIO_LATENCY -> {
+                return true;
+            }
+            case LibretroEnvironment.GET_AUDIO_VIDEO_ENABLE -> {
+                if (data != null) data.setInt(0, 3);
                 return true;
             }
             case LibretroEnvironment.SET_FASTFORWARDING_OVERRIDE -> {
@@ -1306,6 +1314,8 @@ public class LibretroCoreLinux extends LibretroCore {
 
     @Override public double getTimingFps() { return timingFps; }
 
+    @Override public boolean prefersAvLockstep() { return isPcsx2Core(); }
+
     @Override public double getAudioSampleRate() { return audioSampleRate; }
 
     private void appendAudio(Pointer data, int samples) {
@@ -1319,9 +1329,9 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     @Override
-    public int readAudio(short[] dst) {
+    public int readAudio(short[] dst, int maxShorts) {
         synchronized (audioLock) {
-            int n = Math.min(audioCount, dst.length);
+            int n = Math.min(audioCount, Math.min(dst.length, Math.max(0, maxShorts)));
             if (n == 0) return 0;
             int readPos = (audioWrite - audioCount + AUDIO_RING_CAP) % AUDIO_RING_CAP;
             if (readPos + n <= AUDIO_RING_CAP) {
