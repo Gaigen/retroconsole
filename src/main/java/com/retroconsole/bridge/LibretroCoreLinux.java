@@ -117,6 +117,14 @@ public class LibretroCoreLinux extends LibretroCore {
 
     // Audio-based frame pacing — Flycast uses audio consumption rate for timing
     private final AudioPacing audioPacing = new AudioPacing(44100);
+    private static final int AUDIO_RING_CAP = 48000 * 2;
+    private final short[] audioRing = new short[AUDIO_RING_CAP];
+    private int audioWrite;
+    private int audioCount;
+    private final Object audioLock = new Object();
+    private short[] audioBulkScratch = new short[4096];
+    private volatile double audioSampleRate = 48000.0;
+    private volatile double timingFps = 60.0;
 
     // Input state — written by server thread, read by emulator thread
     // AtomicIntegerArray for lock-free inter-thread visibility
@@ -326,7 +334,14 @@ public class LibretroCoreLinux extends LibretroCore {
         core.retro_set_audio_sample(audioCallback);
 
         audioBatchCallback = (data, frames) -> {
-            audioPacing.consumeSamples((int) frames);
+            int frameCount = (int) frames;
+            if (frameCount > 0 && data != null) {
+                int samples = frameCount * 2;
+                synchronized (audioLock) {
+                    appendAudio(data, samples);
+                }
+            }
+            audioPacing.consumeSamples(frameCount);
             return frames;
         };
         core.retro_set_audio_sample_batch(audioBatchCallback);
@@ -788,7 +803,24 @@ public class LibretroCoreLinux extends LibretroCore {
                 return true;
             }
             case LibretroEnvironment.SET_SYSTEM_AV_INFO -> {
-                LOGGER.info("Core requesting SET_SYSTEM_AV_INFO");
+                if (data != null) {
+                    int w = data.getInt(0);
+                    int h = data.getInt(4);
+                    double fps = data.getDouble(24);
+                    double sr = data.getDouble(32);
+                    if (w > 0 && h > 0) {
+                        synchronized (frameLock) {
+                            frameWidth = w;
+                            frameHeight = h;
+                        }
+                    }
+                    if (fps > 1.0 && fps < 1000.0) timingFps = fps;
+                    if (sr > 8000.0 && sr < 384000.0) {
+                        audioSampleRate = sr;
+                        audioPacing.setSampleRate((int) Math.round(sr));
+                    }
+                    LOGGER.info("SET_SYSTEM_AV_INFO: {}x{} @ {} fps, {} Hz", w, h, fps, sr);
+                }
                 return true;
             }
             case LibretroEnvironment.SET_CONTROLLER_INFO -> {
@@ -1177,6 +1209,12 @@ public class LibretroCoreLinux extends LibretroCore {
             LOGGER.info("Resolution: {}x{}, FPS: {}, Sample rate: {}",
                     avInfo.geometry.base_width, avInfo.geometry.base_height,
                     avInfo.timing_fps, avInfo.timing_sample_rate);
+            timingFps = avInfo.timing_fps > 1.0 ? avInfo.timing_fps : 60.0;
+            if (avInfo.timing_sample_rate > 8000.0) {
+                audioSampleRate = avInfo.timing_sample_rate;
+                audioPacing.setSampleRate((int) Math.round(audioSampleRate));
+            }
+            audioPacing.reset();
 
             // Release EGL from load thread so the core's render thread can take it.
             if (hwRenderActive) {
@@ -1264,6 +1302,38 @@ public class LibretroCoreLinux extends LibretroCore {
 
     public int getHeight() {
         synchronized (frameLock) { return frameHeight; }
+    }
+
+    @Override public double getTimingFps() { return timingFps; }
+
+    @Override public double getAudioSampleRate() { return audioSampleRate; }
+
+    private void appendAudio(Pointer data, int samples) {
+        if (audioBulkScratch.length < samples) audioBulkScratch = new short[samples];
+        data.read(0, audioBulkScratch, 0, samples);
+        for (int i = 0; i < samples; i++) {
+            audioRing[audioWrite] = audioBulkScratch[i];
+            audioWrite = (audioWrite + 1) % AUDIO_RING_CAP;
+            if (audioCount < AUDIO_RING_CAP) audioCount++;
+        }
+    }
+
+    @Override
+    public int readAudio(short[] dst) {
+        synchronized (audioLock) {
+            int n = Math.min(audioCount, dst.length);
+            if (n == 0) return 0;
+            int readPos = (audioWrite - audioCount + AUDIO_RING_CAP) % AUDIO_RING_CAP;
+            if (readPos + n <= AUDIO_RING_CAP) {
+                System.arraycopy(audioRing, readPos, dst, 0, n);
+            } else {
+                int first = AUDIO_RING_CAP - readPos;
+                System.arraycopy(audioRing, readPos, dst, 0, first);
+                System.arraycopy(audioRing, 0, dst, first, n - first);
+            }
+            audioCount -= n;
+            return n;
+        }
     }
 
     /**

@@ -4,7 +4,12 @@ import com.retroconsole.emu.CoreManager;
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
 import net.minecraft.core.BlockPos;
+import com.retroconsole.network.RetroStopConsolePacket;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,7 +74,7 @@ public class ServerConsoles {
         // FrameSenderThread runs at ~60 Hz independent of Minecraft's
         // 20 Hz server tick — otherwise PS1 (and any interlaced core) shows
         // severe flicker because the client only sees one frame per tick.
-        FrameSenderThread sender = new FrameSenderThread(pos, threaded);
+        FrameSenderThread sender = new FrameSenderThread(pos, threaded, runtime.getCore());
         sender.start();
 
         ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId));
@@ -88,7 +93,23 @@ public class ServerConsoles {
             e.runtime().close();
             LOGGER.info("Stopped emulator at {}", pos);
         }
+        notifyConsoleStopped(pos);
         VIEWERS.remove(pos);
+    }
+
+    private static void notifyConsoleStopped(BlockPos pos) {
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) return;
+        int viewDist = viewDistance();
+        RetroStopConsolePacket packet = new RetroStopConsolePacket(pos);
+        for (ServerLevel level : server.getAllLevels()) {
+            for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
+                if (player.level() != level) continue;
+                if (player.blockPosition().distSqr(pos) < (long) viewDist * viewDist) {
+                    PacketDistributor.sendToPlayer(player, packet);
+                }
+            }
+        }
     }
 
     public static void tick(ServerLevel level) {

@@ -1,6 +1,7 @@
 package com.retroconsole.network;
 
 import com.retroconsole.block.RetroConsoleBlockEntity;
+import com.retroconsole.client.ClientAudioHandler;
 import com.retroconsole.client.ClientConsoles;
 import com.retroconsole.client.TvScreen;
 import com.retroconsole.server.ServerConsoles;
@@ -22,6 +23,10 @@ public class NetworkHandler {
         // Client-bound
         r.playToClient(RetroFramePacket.TYPE, RetroFramePacket.STREAM_CODEC,
                 NetworkHandler::handleFrame);
+        r.playToClient(RetroAudioPayload.TYPE, RetroAudioPayload.STREAM_CODEC,
+                ClientAudioHandler::handle);
+        r.playToClient(RetroStopConsolePacket.TYPE, RetroStopConsolePacket.STREAM_CODEC,
+                NetworkHandler::handleStopConsole);
         r.playToClient(RetroOpenScreenPacket.TYPE, RetroOpenScreenPacket.STREAM_CODEC,
                 NetworkHandler::handleOpenScreen);
 
@@ -44,6 +49,13 @@ public class NetworkHandler {
             if (frame != null) {
                 ClientConsoles.updateFrame(pkt.pos(), frame, pkt.width(), pkt.height());
             }
+        });
+    }
+
+    private static void handleStopConsole(RetroStopConsolePacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            ClientConsoles.dispose(pkt.pos());
+            ClientAudioHandler.stop(pkt.pos());
         });
     }
 
