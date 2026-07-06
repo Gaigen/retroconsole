@@ -5,7 +5,8 @@
  *
  * NEW (Windows fix): hook RtlAddVectoredExceptionHandler to isolate Flycast's
  *   VEH behind our dispatcher. JVM safepoint polls skip Flycast; fast-mem
- *   faults on mapped nvmem regions are routed to Flycast handlers only.
+ *   faults (RIP in flycast DLL or fault addr in nvmem, incl. dynarec JIT) go
+ *   to Flycast handlers. Bounds parsed from Flycast VMEM log line.
  *
  * Build (MinGW-w64):
  *   gcc -shared -O2 -o .libheadless_gl.dll headless_gl_win.c -lopengl32 -lgdi32 -luser32
@@ -83,6 +84,9 @@
  static PVECTORED_EXCEPTION_HANDLER s_fly[8]; /* обработчики Flycast (изъятые) */
  static int   s_fly_count = 0;
  static PVOID s_dispatcher = NULL;            /* наш единственный реальный VEH */
+ static int   s_dispatch_log_left = 5;        /* первые N AV — в stderr для отладки */
+ static ULONG_PTR s_nvmem_lo = 0;             /* из VMEM-лога Flycast + mirror margin */
+ static ULONG_PTR s_nvmem_hi = 0;
 
  static PVOID WINAPI hook_AddVEH(ULONG First, PVECTORED_EXCEPTION_HANDLER Handler);
 
@@ -129,25 +133,100 @@
      return 0;
  }
 
- /* наш диспетчер: Flycast зовём ТОЛЬКО для его mapped-памяти, остальное — в HotSpot */
+ /* фолт произошёл в коде flycast? (fast-mem load/store) */
+ static int is_flycast_ctx(PEXCEPTION_POINTERS ep) {
+     if (!ep || !ep->ContextRecord) return 0;
+#if defined(_M_X64) || defined(__x86_64__)
+     return is_flycast_addr((void*)ep->ContextRecord->Rip);
+#elif defined(_M_IX86) || defined(__i386__)
+     return is_flycast_addr((void*)ep->ContextRecord->Eip);
+#else
+     return 0;
+#endif
+ }
+
+ /* обновить границы nvmem из строки Flycast "BASE ... RAM ... VRAM64 ... ARAM ..." */
+ static void parse_vmem_bounds(const char *msg) {
+     const char *vmem = strstr(msg, "BASE ");
+     if (!vmem) return;
+     unsigned long long base = 0, ram = 0, vram = 0, aram = 0;
+     unsigned ram_mb = 0, vram_mb = 0, aram_mb = 0;
+     if (sscanf(vmem,
+                "BASE %llx RAM(%u MB) %llx VRAM64(%u MB) %llx ARAM(%u MB) %llx",
+                &base, &ram_mb, &ram, &vram_mb, &vram, &aram_mb, &aram) < 7)
+         return;
+     ULONG_PTR lo = (ULONG_PTR)base;
+     ULONG_PTR hi = (ULONG_PTR)aram + (ULONG_PTR)aram_mb * 1024 * 1024;
+     ULONG_PTR ram_end = (ULONG_PTR)ram + (ULONG_PTR)ram_mb * 1024 * 1024;
+     ULONG_PTR vram_end = (ULONG_PTR)vram + (ULONG_PTR)vram_mb * 1024 * 1024;
+     ULONG_PTR aram_end = hi;
+     if ((ULONG_PTR)ram < lo) lo = (ULONG_PTR)ram;
+     if ((ULONG_PTR)vram < lo) lo = (ULONG_PTR)vram;
+     if ((ULONG_PTR)aram < lo) lo = (ULONG_PTR)aram;
+     if (ram_end > hi) hi = ram_end;
+     if (vram_end > hi) hi = vram_end;
+     if (aram_end > hi) hi = aram_end;
+     /* fastmem mirror: фолты бывают ~0x80100000 ниже BASE (dynarec JIT) */
+     if (lo > 0x81000000ULL) lo -= 0x81000000ULL;
+     hi += 0x1000000ULL;
+     s_nvmem_lo = lo;
+     s_nvmem_hi = hi;
+     fprintf(stderr, "[hlg-win] nvmem bounds: %p - %p\n", (void*)lo, (void*)hi);
+     fflush(stderr);
+ }
+
+ /* адрес фолта в арене nvmem Flycast? (включая дыры между mapping'ами) */
+ static int is_nvmem_addr(ULONG_PTR addr) {
+     if (s_nvmem_lo < s_nvmem_hi) {
+         if (addr >= s_nvmem_lo && addr < s_nvmem_hi)
+             return 1;
+         return 0;
+     }
+     /* до парсинга VMEM — грубая эвристика по старшим битам */
+     if (addr < 0x00007FF400000000ULL || addr >= 0x00007FF500000000ULL)
+         return 0;
+     MEMORY_BASIC_INFORMATION mbi;
+     if (VirtualQuery((LPCVOID)addr, &mbi, sizeof(mbi)) != sizeof(mbi))
+         return 1;
+     if (mbi.Type == MEM_MAPPED) return 1;
+     if (mbi.State == MEM_FREE || mbi.State == MEM_RESERVE) return 1;
+     return 0;
+ }
+
+ static int should_route_flycast(PEXCEPTION_POINTERS ep) {
+     if (is_flycast_ctx(ep)) return 1;
+     ULONG_PTR addr = (ULONG_PTR)ep->ExceptionRecord->ExceptionInformation[1];
+     return is_nvmem_addr(addr);
+ }
+
+ /* наш диспетчер: Flycast — если RIP в DLL или адрес в nvmem (dynarec JIT) */
  static LONG CALLBACK hlg_dispatch_veh(PEXCEPTION_POINTERS ep) {
      EXCEPTION_RECORD* er = ep->ExceptionRecord;
      if (er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
          return EXCEPTION_CONTINUE_SEARCH;
-     ULONG_PTR addr = (ULONG_PTR)er->ExceptionInformation[1];
-     MEMORY_BASIC_INFORMATION mbi;
-     int isFly = 0;
-     if (VirtualQuery((LPCVOID)addr, &mbi, sizeof(mbi)) == sizeof(mbi))
-         isFly = (mbi.Type == MEM_MAPPED);      /* nvmem Flycast = mapped секции */
-     if (isFly) {
+
+     int route_fly = should_route_flycast(ep);
+     if (s_dispatch_log_left > 0) {
+         ULONG_PTR addr = (ULONG_PTR)er->ExceptionInformation[1];
+#if defined(_M_X64) || defined(__x86_64__)
+         void* rip = (void*)ep->ContextRecord->Rip;
+#else
+         void* rip = (void*)ep->ContextRecord->Eip;
+#endif
+         fprintf(stderr, "[hlg-win] AV dispatch: rip=%p addr=%p route_fly=%d\n",
+                 rip, (void*)addr, route_fly);
+         fflush(stderr);
+         s_dispatch_log_left--;
+     }
+
+     if (route_fly) {
          for (int i = 0; i < s_fly_count; ++i) {
              LONG r = s_fly[i](ep);
              if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
          }
-         /* Flycast не починил свой mapped-фолт — пусть падает как обычно */
          return EXCEPTION_CONTINUE_SEARCH;
      }
-     /* poll/null-check JVM: НЕ отдаём Flycast, уходим в frame-SEH HotSpot */
+     /* poll/null-check JVM — HotSpot VEH / frame-SEH */
      return EXCEPTION_CONTINUE_SEARCH;
  }
 
@@ -527,6 +606,7 @@
      va_start(ap, fmt);
      vsnprintf(buf, sizeof(buf), fmt ? fmt : "(null)", ap);
      va_end(ap);
+     parse_vmem_bounds(buf);
      fprintf(stderr, "[hlg-win][%d] %s\n", level, buf);
  }
  
