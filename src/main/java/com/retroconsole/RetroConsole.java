@@ -13,11 +13,16 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig.Type;
 import net.neoforged.neoforge.registries.DeferredRegister;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.lang.management.ManagementFactory;
 import java.util.function.Supplier;
 
 @Mod(RetroConsole.MOD_ID)
 public class RetroConsole {
+
+    private static final Logger BOOT_LOGGER = LoggerFactory.getLogger("RetroConsole-Boot");
 
     public static final String MOD_ID = "retroconsole";
 
@@ -37,6 +42,8 @@ public class RetroConsole {
     );
 
     public RetroConsole(IEventBus modEventBus, ModContainer modContainer) {
+        BOOT_LOGGER.info("JVM args: {}", ManagementFactory.getRuntimeMXBean().getInputArguments());
+
         // Register the config so ModConfig.* Spec values become resolvable.
         // Directory creation itself is lazy — RetroConsolePaths creates each
         // folder on first read; the first caller is usually the first time

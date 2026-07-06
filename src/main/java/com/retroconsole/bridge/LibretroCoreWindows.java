@@ -25,6 +25,11 @@ interface HeadlessGLWin extends com.sun.jna.Library {
     void hlg_debug_fbo();
     int hlg_resize(int w, int h);
     String hlg_get_gpu_info();
+
+    /** Capture HotSpot UEF before Flycast core loads (diagnostic, optional). */
+    void hlg_capture_jvm_filter();
+    /** Hook RtlAddVectoredExceptionHandler so Flycast VEH goes to tail. */
+    void hlg_hook_addveh();
 }
 
 /**
@@ -43,9 +48,8 @@ public class LibretroCoreWindows extends LibretroCore {
     private static final java.util.List<Object> PINNED_CALLBACKS = new java.util.ArrayList<>();
 
     /** Точечные переопределения опций для Flycast (имена ключей — как в этой сборке ядра). */
-    private static final java.util.Map<String, String> FLYCAST_OVERRIDES = java.util.Map.ofEntries(
-            java.util.Map.entry("reicast_threaded_rendering", "disabled"), // рендер ТОЛЬКО на нашем потоке
-            java.util.Map.entry("reicast_dynarec_enable",     "disabled")  // интерпретатор, без JIT
+    private static final java.util.Map<String, String> FLYCAST_OVERRIDES = java.util.Map.of(
+            "reicast_threaded_rendering", "disabled" // рендер ТОЛЬКО на нашем потоке
     );
 
     /** Диагностика: печатаем каждый уникальный запрошенный ключ опции один раз. */
@@ -121,6 +125,11 @@ public class LibretroCoreWindows extends LibretroCore {
     private int headlessGlApi = -1;
     private int hwPbufW = 0;
     private int hwPbufH = 0;
+    private volatile boolean hwFramePending = false;
+    private int hwFrameW = 0;
+    private int hwFrameH = 0;
+    private Memory hwReadbackBuf = null;
+    private int hwReadbackCap = 0;
     private Pointer hwContextReset = null;
     private Pointer hwContextDestroy = null;
     private boolean hwContextResetDone = false;
@@ -136,6 +145,24 @@ public class LibretroCoreWindows extends LibretroCore {
             headlessGl = Native.load(path, HeadlessGLWin.class);
         }
         return headlessGl;
+    }
+
+    private void captureJvmExceptionFilter() {
+        try {
+            headlessGl().hlg_capture_jvm_filter();
+            LOGGER.info("Captured JVM unhandled-exception filter (pre-Flycast)");
+        } catch (Throwable t) {
+            LOGGER.warn("hlg_capture_jvm_filter failed: {}", t.getMessage());
+        }
+    }
+
+    private void hookAddVeh() {
+        try {
+            headlessGl().hlg_hook_addveh();
+            LOGGER.info("Hooked RtlAddVectoredExceptionHandler (Flycast VEH -> tail)");
+        } catch (Throwable t) {
+            LOGGER.warn("hlg_hook_addveh failed: {}", t.getMessage());
+        }
     }
 
     private boolean supportsHwRender() {
@@ -203,6 +230,11 @@ public class LibretroCoreWindows extends LibretroCore {
         hwGpuLoggedOnEmulatorThread = false;
         hwPbufW = 0;
         hwPbufH = 0;
+        hwFramePending = false;
+        hwFrameW = 0;
+        hwFrameH = 0;
+        hwReadbackBuf = null;
+        hwReadbackCap = 0;
     }
 
     // ======================================================================
@@ -247,6 +279,10 @@ public class LibretroCoreWindows extends LibretroCore {
         String absPath = corePath.toAbsolutePath().toString();
         LOGGER.info("Native.load({})", absPath);
         try {
+            if (isFlycastCore() && supportsHwRender()) {
+                captureJvmExceptionFilter();
+                hookAddVeh();
+            }
             this.core = Native.load(absPath, LibretroBridge.class);
             int apiVersion = core.retro_api_version();
             LOGGER.info("Core loaded. API version: {} (corePath={})", apiVersion, corePath.getFileName());
@@ -290,25 +326,9 @@ public class LibretroCoreWindows extends LibretroCore {
                 int[] dst = frameBuffer;
 
                 if (hwFb) {
-                    try {
-                        int surfW = Math.max(w, hwPbufW);
-                        int surfH = Math.max(h, hwPbufH);
-                        if (surfW != hwPbufW || surfH != hwPbufH) {
-                            headlessGl().hlg_resize(surfW, surfH);
-                            hwPbufW = surfW;
-                            hwPbufH = surfH;
-                        }
-                        int[] vp = new int[4];
-                        Memory nativePixels = new Memory((long) len * 4L);
-                        headlessGl().hlg_read_pixels(vp, nativePixels, len, w, h);
-                        for (int i = 0; i < len; i++) {
-                            int px = nativePixels.getInt((long) i * 4);
-                            dst[i] = 0xFF000000 | (px & 0x00FFFFFF);
-                        }
-                    } catch (Throwable t) {
-                        LOGGER.warn("HW readback failed: {}", t.getMessage());
-                    }
-                    newFrame = true;
+                    hwFrameW = w;
+                    hwFrameH = h;
+                    hwFramePending = true;
                     return;
                 }
 
@@ -945,6 +965,47 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
 
+    private void drainHwFrame() {
+        boolean pending;
+        int w, h;
+        synchronized (frameLock) {
+            pending = hwFramePending;
+            w = hwFrameW;
+            h = hwFrameH;
+            hwFramePending = false;
+        }
+        if (!pending || w <= 0 || h <= 0) return;
+
+        int len = w * h;
+        try {
+            headlessGl().hlg_make_current();
+            int surfW = Math.max(w, hwPbufW);
+            int surfH = Math.max(h, hwPbufH);
+            if (surfW != hwPbufW || surfH != hwPbufH) {
+                headlessGl().hlg_resize(surfW, surfH);
+                hwPbufW = surfW;
+                hwPbufH = surfH;
+            }
+            if (hwReadbackBuf == null || hwReadbackCap < len) {
+                hwReadbackBuf = new Memory((long) len * 4L);
+                hwReadbackCap = len;
+            }
+            int[] vp = new int[4];
+            headlessGl().hlg_read_pixels(vp, hwReadbackBuf, len, w, h);
+            synchronized (frameLock) {
+                if (frameBuffer.length != len) frameBuffer = new int[len];
+                int[] dst = frameBuffer;
+                for (int i = 0; i < len; i++) {
+                    int px = hwReadbackBuf.getInt((long) i * 4);
+                    dst[i] = 0xFF000000 | (px & 0x00FFFFFF);
+                }
+                newFrame = true;
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("HW readback failed: {}", t.getMessage());
+        }
+    }
+
     // ======================================================================
     // ===== runFrameImpl (на retro-core-thread) ============================
     // ======================================================================
@@ -961,6 +1022,7 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             try {
                 core.retro_run();
+                if (hwRenderActive) drainHwFrame();
             } catch (Throwable t) {
                 LOGGER.warn("retro_run threw: {}", t.getMessage(), t);
             }
@@ -1047,6 +1109,7 @@ public class LibretroCoreWindows extends LibretroCore {
         }
 
         teardownHwRender();
+
         if (headlessGlReady) {
             try { headlessGl().hlg_destroy(); } catch (Throwable ignored) {}
             headlessGlReady = false;
