@@ -1,5 +1,6 @@
 package com.retroconsole.bridge;
 
+import com.retroconsole.platform.CoreSavePolicy;
 import com.retroconsole.platform.OsUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -142,6 +143,10 @@ public abstract class LibretroCore implements AutoCloseable {
     /** Path to the core binary the user requested, or {@code null} for fallback instances. */
     public Path getCorePath() {
         return corePath;
+    }
+
+    public boolean usesFrontendBatteryRam() {
+        return CoreSavePolicy.usesFrontendBatteryRam(corePath);
     }
 
     public boolean isPcsx2Core() {

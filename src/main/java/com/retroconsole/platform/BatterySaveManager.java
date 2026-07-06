@@ -18,6 +18,7 @@ public final class BatterySaveManager {
     }
 
     public static void loadIntoCore(LibretroCore core, Path romPath, Path saveRoot) {
+        if (!CoreSavePolicy.usesFrontendBatteryRam(core.getCorePath())) return;
         Path file = SaveFiles.batterySavePath(saveRoot, romPath);
         if (!Files.isRegularFile(file)) return;
         try {
@@ -38,6 +39,7 @@ public final class BatterySaveManager {
     }
 
     public static boolean saveFromCore(LibretroCore core, Path romPath, Path saveRoot) {
+        if (!CoreSavePolicy.usesFrontendBatteryRam(core.getCorePath())) return false;
         byte[] sram = core.getSaveRam();
         if (sram == null || sram.length == 0) return false;
         Path file = SaveFiles.batterySavePath(saveRoot, romPath);

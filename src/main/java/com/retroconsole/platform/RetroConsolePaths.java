@@ -109,9 +109,20 @@ public final class RetroConsolePaths {
         return p;
     }
 
+    /** Flycast BIOS / shared VMU files (when per-game VMUs are disabled). */
+    public static Path dreamcastDir() {
+        Path p = systemDir().resolve("dc").toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(p);
+        } catch (Exception ex) {
+            LOGGER.error("Failed to create Dreamcast system directory at {}: {}", p, ex.getMessage());
+        }
+        return p;
+    }
+
     /** One-shot: make sure every RetroConsole-controlled directory exists. */
     public static void ensureAllExist() {
-        coresDir(); romsDir(); systemDir(); saveDir(); pcsx2BiosDir(); pcsx2MemcardsDir();
+        coresDir(); romsDir(); systemDir(); saveDir(); pcsx2BiosDir(); pcsx2MemcardsDir(); dreamcastDir();
         logPathsSummary();
     }
 
@@ -128,6 +139,7 @@ public final class RetroConsolePaths {
             LOGGER.info("  saves      -> {}", saveDir().toAbsolutePath().normalize());
             LOGGER.info("  pcsx2/bios -> {}", pcsx2BiosDir().toAbsolutePath().normalize());
             LOGGER.info("  pcsx2/mcd  -> {} (PS2 memory cards)", pcsx2MemcardsDir().toAbsolutePath().normalize());
+            LOGGER.info("  dc/        -> {} (Dreamcast BIOS / shared VMU)", dreamcastDir().toAbsolutePath().normalize());
         } catch (Exception ex) {
             LOGGER.warn("Could not log RetroConsole paths yet: {}", ex.getMessage());
         }

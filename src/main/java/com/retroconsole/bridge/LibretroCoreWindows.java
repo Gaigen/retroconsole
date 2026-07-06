@@ -71,8 +71,16 @@ public class LibretroCoreWindows extends LibretroCore {
     private static final java.util.Map<String, java.util.Map<String, String>> CORE_OVERRIDES =
             java.util.Map.of(
                     "flycast", java.util.Map.of(
-                            // рендер ТОЛЬКО на нашем потоке
-                            "reicast_threaded_rendering", "disabled"),
+                            "reicast_threaded_rendering", "disabled",
+                            // VMU per game → player save dir (not shared system/dc/)
+                            "flycast_per_content_vmus", "VMU A1",
+                            "reicast_per_content_vmus", "VMU A1",
+                            "flycast_device_port1_slot1", "VMU",
+                            "reicast_device_port1_slot1", "VMU"),
+                    "pcsx_rearmed", java.util.Map.of(
+                            // r26+: libretro|serial|shared — NOT enabled/disabled
+                            "pcsx_rearmed_memcard1", "libretro",
+                            "pcsx_rearmed_memcard2", "shared"),
                     "ppsspp", java.util.Map.of(
                             // JIT — основной источник скорости PPSSPP
                             "ppsspp_cpu_core", "JIT",
@@ -989,28 +997,67 @@ public class LibretroCoreWindows extends LibretroCore {
             String key = readCString(keyPtr);
             if (key == null || key.isEmpty()) return false;
 
-            // 1) Явный оверрайд для текущего ядра.
-            java.util.Map<String, String> ov = currentOverrides();
-            if (!ov.isEmpty()) {
-                String override = ov.get(key);
-                if (override != null) {
-                    data.setPointer(Native.POINTER_SIZE, allocCString(override));
-                    if (loggedOptionKeys.add(key))
-                        LOGGER.info("Core option override: {} = {}", key, override);
-                    return true;
-                }
-                if (loggedOptionKeys.add(key))
-                    LOGGER.info("Core queried option (no override): {}", key);
-            }
-            // 2) Дефолт из объявленных ядром опций.
-            String val = coreOptions.get(key);
-            if (val == null) return false;
+            String val = resolveCoreOption(key);
+            if (val == null || val.isEmpty()) return false;
             data.setPointer(Native.POINTER_SIZE, allocCString(val));
+            if (loggedOptionKeys.add(key)) {
+                LOGGER.info("Core option: {} = {}", key, val);
+            }
             return true;
         } catch (Throwable t) {
             LOGGER.warn("GET_VARIABLE failed: {}", t.getMessage());
             return false;
         }
+    }
+
+    private String resolveCoreOption(String key) {
+        java.util.Map<String, String> ov = currentOverrides();
+        if (!ov.isEmpty()) {
+            String override = ov.get(key);
+            if (override != null) return override;
+        }
+        String val = coreOptions.get(key);
+        if (val != null && !val.isEmpty()) return val;
+        if (key.startsWith("pcsx_rearmed_")) return applyPcsxRearmedDefault(key);
+        if (key.startsWith("flycast_") || key.startsWith("reicast_")) return applyFlycastDefault(key);
+        if (key.startsWith("ppsspp_")) return applyPpssppDefault(key);
+        if (key.startsWith("pcsx2_")) return applyPcsx2Default(key);
+        return null;
+    }
+
+    private static String applyPcsxRearmedDefault(String key) {
+        return switch (key) {
+            case "pcsx_rearmed_memcard1" -> "libretro";
+            case "pcsx_rearmed_memcard2" -> "shared";
+            default -> null;
+        };
+    }
+
+    private static String applyFlycastDefault(String key) {
+        return switch (key) {
+            case "flycast_per_content_vmus", "reicast_per_content_vmus" -> "VMU A1";
+            case "flycast_device_port1_slot1", "reicast_device_port1_slot1" -> "VMU";
+            case "reicast_threaded_rendering" -> "disabled";
+            default -> null;
+        };
+    }
+
+    private static String applyPpssppDefault(String key) {
+        return switch (key) {
+            case "ppsspp_cpu_core" -> "JIT";
+            case "ppsspp_fast_memory" -> "disabled";
+            case "ppsspp_frameskip" -> "0";
+            case "ppsspp_auto_frameskip" -> "disabled";
+            case "ppsspp_internal_resolution" -> "960x544";
+            default -> null;
+        };
+    }
+
+    private static String applyPcsx2Default(String key) {
+        return switch (key) {
+            case "pcsx2_fastboot" -> "enabled";
+            default -> null;
+        };
     }
 
     public boolean isCoreLoaded() { return core != null; }
@@ -1023,6 +1070,8 @@ public class LibretroCoreWindows extends LibretroCore {
     private volatile int height;
     private volatile double timingFps = 60.0;
     private boolean gameLoaded;
+    private volatile boolean pendingBatteryLoad;
+    private Path pendingBatteryRomPath;
 
     private boolean loadGameImpl(Path romPath) {
         if (core == null) {
@@ -1079,7 +1128,7 @@ public class LibretroCoreWindows extends LibretroCore {
             }
         }
 
-        core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+        registerControllerPorts();
 
         var avInfo = new LibretroBridge.RetroSystemAVInfo();
         core.retro_get_system_av_info(avInfo);
@@ -1102,11 +1151,25 @@ public class LibretroCoreWindows extends LibretroCore {
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
                 romPath.getFileName(), width, height,
                 avInfo.timing_fps, avInfo.timing_sample_rate);
-        if (saveDir != null) {
-            com.retroconsole.platform.BatterySaveManager.loadIntoCore(
-                    this, romPath, java.nio.file.Path.of(saveDir));
+        if (saveDir != null && usesFrontendBatteryRam()) {
+            pendingBatteryRomPath = romPath;
+            pendingBatteryLoad = true;
         }
         return true;
+    }
+
+    private void registerControllerPorts() {
+        if (isFlycastCore()) {
+            // Flycast waits until all 4 ports are set before update_variables()
+            // configures VMU in expansion slot A1 (see retro_set_controller_port_device).
+            core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+            for (int port = 1; port < 4; port++) {
+                core.retro_set_controller_port_device(port, LibretroBridge.RETRO_DEVICE_NONE);
+            }
+            LOGGER.info("Flycast: all controller ports registered (VMU slot A1 active)");
+        } else {
+            core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+        }
     }
 
     private LibretroBridge.RetroGameInfo loadedGameInfo;
@@ -1251,10 +1314,18 @@ public class LibretroCoreWindows extends LibretroCore {
             try {
                 core.retro_run();
                 if (hwRenderActive) drainHwFrame();
+                maybeLoadPendingBattery();
             } catch (Throwable t) {
                 LOGGER.warn("retro_run threw: {}", t.getMessage(), t);
             }
         }
+    }
+
+    private void maybeLoadPendingBattery() {
+        if (!pendingBatteryLoad || saveDir == null || pendingBatteryRomPath == null) return;
+        pendingBatteryLoad = false;
+        com.retroconsole.platform.BatterySaveManager.loadIntoCore(
+                this, pendingBatteryRomPath, java.nio.file.Path.of(saveDir));
     }
 
     // ----- pollFrame / input: с любого потока, GL не трогают --------------
