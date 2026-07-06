@@ -82,7 +82,13 @@ public class LibretroCoreWindows extends LibretroCore {
                             "ppsspp_frameskip", "0",
                             "ppsspp_auto_frameskip", "disabled",
                             // 2x (960x544); GTX 1080 потянет и 3x-4x
-                            "ppsspp_internal_resolution", "960x544"));
+                            "ppsspp_internal_resolution", "960x544"),
+                    "pcsx2", java.util.Map.of(
+                            // ВАЖНО: имя файла ровно как в system/pcsx2/bios —
+                            // ядро логирует найденные BIOS строкой "Bios Found: ..."
+                            "pcsx2_bios", "SCPH-70000 JP 200-040614.BIN",
+                            // пропустить анимацию загрузки PS2 BIOS
+                            "pcsx2_fastboot", "enabled"));
 
     /** Диагностика: печатаем каждый уникальный запрошенный ключ опции один раз. */
     private final java.util.Set<String> loggedOptionKeys =
@@ -619,15 +625,21 @@ public class LibretroCoreWindows extends LibretroCore {
                 }
                 return true;
             case LibretroEnvironment.SET_SYSTEM_AV_INFO:
-                // PPSSPP отдаёт реальный размер именно здесь (на старте геометрия 0x0).
+                // PPSSPP/PCSX2 отдают реальный размер И FPS именно здесь.
                 if (data != null) {
                     int w = data.getInt(0);   // geometry.base_width
                     int h = data.getInt(4);   // geometry.base_height
+                    // retro_system_timing.fps: double по офсету 24
+                    // (geometry 20 байт + выравнивание double до 8).
+                    double fps = data.getDouble(24);
                     if (w > 0 && h > 0) {
                         this.width = w;
                         this.height = h;
-                        LOGGER.info("SET_SYSTEM_AV_INFO: {}x{}", w, h);
                     }
+                    // КРИТИЧНО для PAL-игр PS2: ядро меняет 59.94 -> 50.0 именно
+                    // здесь. Без этого FrameSender гонит PAL-игру на ~20% быстрее.
+                    if (fps > 1.0 && fps < 1000.0) this.timingFps = fps;
+                    LOGGER.info("SET_SYSTEM_AV_INFO: {}x{} @ {} fps", w, h, fps);
                 }
                 return true;
             case LibretroEnvironment.GET_SYSTEM_DIRECTORY:
@@ -756,6 +768,7 @@ public class LibretroCoreWindows extends LibretroCore {
             String ctxName = switch (ctxType) {
                 case 0 -> "NONE"; case 1 -> "OPENGL"; case 2 -> "OPENGLES2";
                 case 3 -> "OPENGL_CORE"; case 4 -> "OPENGLES3"; case 6 -> "VULKAN";
+                case 7 -> "D3D11"; case 8 -> "D3D10"; case 9 -> "D3D12"; case 10 -> "D3D9";
                 default -> "UNKNOWN(" + ctxType + ")";
             };
             LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
@@ -855,9 +868,10 @@ public class LibretroCoreWindows extends LibretroCore {
         int semi = value.indexOf(';');
         if (semi < 0) return "";
         String opts = value.substring(semi + 1).trim();
-        int pipe = opts.lastIndexOf('|');
+        // В v1-формате "desc; opt1|opt2|..." дефолт — ПЕРВАЯ опция, не последняя.
+        int pipe = opts.indexOf('|');
         if (pipe < 0) return opts;
-        return opts.substring(pipe + 1).trim();
+        return opts.substring(0, pipe).trim();
     }
 
     private void parseV1Structs(Pointer array, boolean v2) {
@@ -881,13 +895,25 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     private void parseV2Defs(Pointer data) {
-        Pointer array = data.getPointer(0);
-        if (array == null) return;
-        parseV1Structs(array, true);
+        // data = retro_core_options_v2*: { categories*, definitions* }
+        Pointer defs = data.getPointer(Native.POINTER_SIZE);
+        if (defs == null) defs = data.getPointer(0); // fallback для нестандартных сборок
+        if (defs == null) return;
+        parseV1Structs(defs, true);
     }
 
     private void parseV2Intl(Pointer data) {
-        LOGGER.debug("SET_CORE_OPTIONS_V2_INTL: accepted (parallel V2 defs already parsed).");
+        // data = retro_core_options_v2_intl*: { us*, local* }.
+        // PCSX2 объявляет опции ТОЛЬКО через intl-вариант — если его не парсить,
+        // coreOptions остаётся пустым и GET_VARIABLE("pcsx2_bios") вернёт false
+        // -> "Could not find any valid PS2 BIOS File" -> retro_load_game = false.
+        Pointer us = data.getPointer(0);
+        if (us != null) {
+            parseV2Defs(us);
+            LOGGER.info("SET_CORE_OPTIONS_V2_INTL: parsed US definitions");
+        } else {
+            LOGGER.debug("SET_CORE_OPTIONS_V2_INTL: null us definitions");
+        }
     }
 
     private boolean handleGetVariable(Pointer data) {
