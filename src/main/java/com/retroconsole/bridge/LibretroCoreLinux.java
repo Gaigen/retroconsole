@@ -1233,6 +1233,10 @@ public class LibretroCoreLinux extends LibretroCore {
                     LOGGER.warn("Failed to release EGL context: {}", t.getMessage());
                 }
             }
+            if (saveDir != null) {
+                com.retroconsole.platform.BatterySaveManager.loadIntoCore(
+                        this, romPath, java.nio.file.Path.of(saveDir));
+            }
         } else {
             LOGGER.error("Core rejected game: {}", romPath.getFileName());
         }
@@ -1397,6 +1401,16 @@ public class LibretroCoreLinux extends LibretroCore {
 
     // --- Save states ---
 
+    @Override
+    public long getSerializeSize() {
+        if (core == null) return 0;
+        try {
+            return core.retro_serialize_size();
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
     public byte[] serialize() {
         long size = core.retro_serialize_size();
         if (size <= 0) return null;
@@ -1423,13 +1437,13 @@ public class LibretroCoreLinux extends LibretroCore {
         return data.getByteArray(0, (int) size);
     }
 
-    public void setSaveRam(byte[] sram) {
-        if (sram == null) return;
+    public boolean setSaveRam(byte[] sram) {
+        if (sram == null) return false;
         Pointer data = core.retro_get_memory_data(LibretroBridge.RETRO_MEMORY_SAVE_RAM);
         long size = core.retro_get_memory_size(LibretroBridge.RETRO_MEMORY_SAVE_RAM);
-        if (data != null && size > 0) {
-            data.write(0, sram, 0, (int) Math.min(sram.length, size));
-        }
+        if (data == null || size <= 0) return false;
+        data.write(0, sram, 0, (int) Math.min(sram.length, size));
+        return true;
     }
 
     private String findFirstPcsx2BiosFilename() {

@@ -36,7 +36,7 @@ public abstract class LibretroCore implements AutoCloseable {
         @Override public byte[] serialize() { return null; }
         @Override public boolean unserialize(byte[] data) { return false; }
         @Override public byte[] getSaveRam() { return null; }
-        @Override public void setSaveRam(byte[] sram) { }
+        @Override public boolean setSaveRam(byte[] sram) { return false; }
         @Override public int readAudio(short[] dst) { return readAudio(dst, dst.length); }
         @Override public int readAudio(short[] dst, int maxShorts) { return 0; }
         @Override public double getAudioSampleRate() { return 48000.0; }
@@ -109,7 +109,14 @@ public abstract class LibretroCore implements AutoCloseable {
 
     public abstract byte[] getSaveRam();
 
-    public abstract void setSaveRam(byte[] sram);
+    public abstract boolean setSaveRam(byte[] sram);
+
+    /** {@code retro_serialize_size()} — 0 if unsupported. */
+    public long getSerializeSize() { return 0; }
+
+    public boolean supportsSaveStates() {
+        return !isPcsx2Core() && getSerializeSize() > 0;
+    }
 
     /** До dst.length сэмплов interleaved-стерео 16-bit; возвращает число short'ов. */
     public int readAudio(short[] dst) { return readAudio(dst, dst.length); }

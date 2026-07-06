@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import com.retroconsole.platform.PlayerPaths;
 import com.retroconsole.platform.RetroConsolePaths;
+import com.retroconsole.platform.SaveStateManager;
 
 import java.nio.file.Path;
 import java.util.*;
@@ -94,7 +95,7 @@ public class ServerConsoles {
         // FrameSenderThread runs at ~60 Hz independent of Minecraft's
         // 20 Hz server tick — otherwise PS1 (and any interlaced core) shows
         // severe flicker because the client only sees one frame per tick.
-        FrameSenderThread sender = new FrameSenderThread(pos, threaded, runtime.getCore());
+        FrameSenderThread sender = new FrameSenderThread(pos, threaded, runtime);
         sender.start();
 
         ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId, ownerId));
@@ -170,6 +171,14 @@ public class ServerConsoles {
     public static void handleAnalog(BlockPos pos, int stick, int axis, short value) {
         Entry e = ENTRIES.get(pos.immutable());
         if (e != null) e.runtime().setAnalog(stick, axis, value);
+    }
+
+    public static void handleSaveState(BlockPos pos, int slot, boolean save) {
+        Entry e = ENTRIES.get(pos.immutable());
+        if (e == null) return;
+        if (slot < 0 || slot > SaveStateManager.MAX_SLOT) return;
+        boolean ok = save ? e.runtime().saveState(slot) : e.runtime().loadState(slot);
+        LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, pos, ok);
     }
 
     public static void addViewer(BlockPos pos, UUID playerId) {

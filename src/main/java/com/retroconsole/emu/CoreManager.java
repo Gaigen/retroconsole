@@ -1,8 +1,8 @@
 package com.retroconsole.emu;
 
 import com.retroconsole.bridge.LibretroCore;
-import com.retroconsole.platform.PlayerPaths;
 import com.retroconsole.platform.Pcsx2MemcardSync;
+import com.retroconsole.platform.PlayerPaths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -164,7 +164,8 @@ public class CoreManager {
                 return null;
             }
 
-            return new LibretroRuntime(core, romPath, playerPaths);
+            LibretroRuntime runtime = new LibretroRuntime(core, romPath, playerPaths);
+            return runtime;
         } catch (Exception e) {
             if (pcsx2) {
                 Pcsx2MemcardSync.export(playerPaths);

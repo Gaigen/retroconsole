@@ -1,8 +1,10 @@
 package com.retroconsole.emu;
 
 import com.retroconsole.bridge.LibretroCore;
+import com.retroconsole.platform.BatterySaveManager;
 import com.retroconsole.platform.PlayerPaths;
 import com.retroconsole.platform.Pcsx2MemcardSync;
+import com.retroconsole.platform.SaveStateManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -92,6 +94,22 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
 
     public PlayerPaths getPlayerPaths() { return playerPaths; }
 
+    public boolean supportsSaveStates() {
+        return SaveStateManager.supportsSaveStates(core);
+    }
+
+    public boolean saveBattery() {
+        return BatterySaveManager.saveFromCore(core, romPath, playerPaths);
+    }
+
+    public boolean saveState(int slot) {
+        return SaveStateManager.save(core, romPath, playerPaths, slot);
+    }
+
+    public boolean loadState(int slot) {
+        return SaveStateManager.load(core, romPath, playerPaths, slot);
+    }
+
     // --- Input ---
 
     public void setButton(int buttonId, boolean pressed) {
@@ -120,25 +138,13 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
         return core.getSaveRam();
     }
 
-    public void setSaveRam(byte[] data) {
-        core.setSaveRam(data);
+    public boolean setSaveRam(byte[] data) {
+        return core.setSaveRam(data);
     }
 
     @Override
     public void close() {
-        // Save SRAM on close
-        try {
-            byte[] sram = core.getSaveRam();
-            if (sram != null && sram.length > 0) {
-                Path sramPath = playerPaths.saveDir().resolve(
-                        romPath.getFileName().toString() + ".srm");
-                java.nio.file.Files.createDirectories(sramPath.getParent());
-                java.nio.file.Files.write(sramPath, sram);
-                LOGGER.info("Saved SRAM: {} ({} bytes)", sramPath, sram.length);
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Failed to save SRAM", e);
-        }
+        saveBattery();
 
         try {
             core.close();

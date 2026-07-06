@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.retroconsole.bridge.LibretroBridge;
 import com.retroconsole.network.RetroAnalogPacket;
 import com.retroconsole.network.RetroInputPacket;
+import com.retroconsole.network.RetroSaveStatePacket;
 import com.retroconsole.network.RetroViewPacket;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
@@ -93,7 +94,8 @@ public class TvScreen extends Screen {
         String hints = "\u00a7eZ\u00a7r=A \u00a7eX\u00a7r=B \u00a7eC\u00a7r=X \u00a7eV\u00a7r=Y  "
                 + "\u00a7eQ/W\u00a7r=L1/R1 \u00a7eE/R\u00a7r=L2/R2  "
                 + "\u00a7eArrows\u00a7r=D-Pad  \u00a7eIJKL\u00a7r=L-Stick \u00a7eTFGH\u00a7r=R-Stick  "
-                + "\u00a7eN/M\u00a7r=L3/R3  \u00a7eEnter\u00a7r=Start \u00a7eShift\u00a7r=Select  \u00a7eEsc\u00a7r=Close";
+                + "\u00a7eN/M\u00a7r=L3/R3  \u00a7eEnter\u00a7r=Start \u00a7eShift\u00a7r=Select  "
+                + "\u00a7eF5/F6\u00a7r=Save/Load  \u00a7eEsc\u00a7r=Close";
         int hintWidth = this.font.width(hints);
         guiGraphics.drawString(this.font, hints,
                 (this.width - hintWidth) / 2, this.height - 20, 0xAAAAAA);
@@ -103,6 +105,15 @@ public class TvScreen extends Screen {
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == InputConstants.KEY_ESCAPE) {
             close();
+            return true;
+        }
+
+        if (keyCode == InputConstants.KEY_F5) {
+            PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true));
+            return true;
+        }
+        if (keyCode == InputConstants.KEY_F6) {
+            PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, false));
             return true;
         }
 

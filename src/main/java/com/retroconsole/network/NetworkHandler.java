@@ -39,6 +39,8 @@ public class NetworkHandler {
                 NetworkHandler::handleView);
         r.playToServer(RetroCoreSelectPacket.TYPE, RetroCoreSelectPacket.STREAM_CODEC,
                 NetworkHandler::handleCoreSelect);
+        r.playToServer(RetroSaveStatePacket.TYPE, RetroSaveStatePacket.STREAM_CODEC,
+                NetworkHandler::handleSaveState);
     }
 
     // --- Client-bound ---
@@ -101,5 +103,9 @@ public class NetworkHandler {
                 console.setRomId(pkt.romId());
             }
         });
+    }
+
+    private static void handleSaveState(RetroSaveStatePacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> ServerConsoles.handleSaveState(pkt.pos(), pkt.slot(), pkt.save()));
     }
 }
