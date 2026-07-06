@@ -362,6 +362,12 @@ public class LibretroCoreWindows extends LibretroCore {
 
     public LibretroCoreWindows(Path corePath, String systemDir, String saveDir) {
         super(corePath);
+        if (systemDir != null) {
+            systemDir = Path.of(systemDir).toAbsolutePath().normalize().toString();
+        }
+        if (saveDir != null) {
+            saveDir = Path.of(saveDir).toAbsolutePath().normalize().toString();
+        }
         this.systemDir = systemDir;
         this.saveDir = saveDir;
         LOGGER.info("Windows libretro core stub created for {} (system={}, save={})",
@@ -374,10 +380,6 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private boolean isFlycastCore() {
         return coreName().contains("flycast");
-    }
-
-    private boolean isPcsx2Core() {
-        return coreName().contains("pcsx2");
     }
 
     /** Flycast/PPSSPP синхронизируют FPS через audio-pacing; PCSX2 — нет (bulk batch в конце retro_run). */
@@ -693,8 +695,16 @@ public class LibretroCoreWindows extends LibretroCore {
                 }
                 return true;
             case LibretroEnvironment.GET_SYSTEM_DIRECTORY:
+                if (isPcsx2Core() && loggedOptionKeys.add("__logged_system_dir__")) {
+                    LOGGER.info("PCSX2 system dir -> {} (memory cards: {}/pcsx2/memcards/)",
+                            systemDir, systemDir);
+                }
                 return returnCString(data, systemDir, true);
             case LibretroEnvironment.GET_SAVE_DIRECTORY:
+                if (loggedOptionKeys.add("__logged_save_dir__")) {
+                    LOGGER.info("Core save dir -> {} (SRAM/PPSSPP; PS2 uses system/pcsx2/memcards/)",
+                            saveDir);
+                }
                 return returnCString(data, saveDir, false);
             case LibretroEnvironment.GET_LIBRETRO_PATH:
                 if (data == null || corePath == null) return false;

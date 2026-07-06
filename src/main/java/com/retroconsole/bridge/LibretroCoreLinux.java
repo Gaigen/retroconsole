@@ -1461,11 +1461,6 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    private boolean isPcsx2Core() {
-        return corePath != null
-                && corePath.getFileName().toString().toLowerCase().contains("pcsx2");
-    }
-
     private void logPcsx2BiosDirIfNeeded() {
         if (!isPcsx2Core() || systemDir == null) return;
         Path biosDir = Path.of(systemDir, "pcsx2", "bios");

@@ -94,9 +94,24 @@ public final class RetroConsolePaths {
         return p;
     }
 
+    /**
+     * LRPS2 stores PS2 memory cards here (NOT in {@link #saveDir()}).
+     * @see <a href="https://docs.libretro.com/library/lrps2/">LRPS2 Directories</a>
+     */
+    public static Path pcsx2MemcardsDir() {
+        Path p = systemDir().resolve("pcsx2").resolve("memcards")
+                .toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(p);
+        } catch (Exception ex) {
+            LOGGER.error("Failed to create pcsx2/memcards directory at {}: {}", p, ex.getMessage());
+        }
+        return p;
+    }
+
     /** One-shot: make sure every RetroConsole-controlled directory exists. */
     public static void ensureAllExist() {
-        coresDir(); romsDir(); systemDir(); saveDir(); pcsx2BiosDir();
+        coresDir(); romsDir(); systemDir(); saveDir(); pcsx2BiosDir(); pcsx2MemcardsDir();
         logPathsSummary();
     }
 
@@ -112,6 +127,7 @@ public final class RetroConsolePaths {
             LOGGER.info("  system     -> {}", systemDir().toAbsolutePath().normalize());
             LOGGER.info("  saves      -> {}", saveDir().toAbsolutePath().normalize());
             LOGGER.info("  pcsx2/bios -> {}", pcsx2BiosDir().toAbsolutePath().normalize());
+            LOGGER.info("  pcsx2/mcd  -> {} (PS2 memory cards)", pcsx2MemcardsDir().toAbsolutePath().normalize());
         } catch (Exception ex) {
             LOGGER.warn("Could not log RetroConsole paths yet: {}", ex.getMessage());
         }

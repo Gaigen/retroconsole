@@ -1,6 +1,8 @@
 package com.retroconsole.emu;
 
 import com.retroconsole.bridge.LibretroCore;
+import com.retroconsole.platform.PlayerPaths;
+import com.retroconsole.platform.Pcsx2MemcardSync;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -143,22 +145,39 @@ public class CoreManager {
      * @param romPath  Path to the ROM file
      * @return LibretroRuntime wrapping the loaded core, or null on failure
      */
-    public LibretroRuntime loadCoreAndGame(Path corePath, Path romPath) {
+    public LibretroRuntime loadCoreAndGame(Path corePath, Path romPath, PlayerPaths playerPaths) {
+        boolean pcsx2 = corePath.getFileName().toString().toLowerCase().contains("pcsx2");
+        if (pcsx2) {
+            Pcsx2MemcardSync.install(playerPaths);
+        }
         try {
             LibretroCore core = LibretroCore.load(
-                    corePath, systemDir.toString(), saveDir.toString());
+                    corePath,
+                    playerPaths.systemDir().toString(),
+                    playerPaths.saveDir().toString());
 
             if (!core.loadGame(romPath)) {
                 core.close();
+                if (pcsx2) {
+                    Pcsx2MemcardSync.export(playerPaths);
+                }
                 return null;
             }
 
-            LibretroRuntime runtime = new LibretroRuntime(core, romPath);
-            return runtime;
+            return new LibretroRuntime(core, romPath, playerPaths);
         } catch (Exception e) {
+            if (pcsx2) {
+                Pcsx2MemcardSync.export(playerPaths);
+            }
             LOGGER.error("Failed to load core {} with ROM {}", corePath, romPath, e);
             return null;
         }
+    }
+
+    /** @deprecated use {@link #loadCoreAndGame(Path, Path, PlayerPaths)} */
+    @Deprecated
+    public LibretroRuntime loadCoreAndGame(Path corePath, Path romPath) {
+        return loadCoreAndGame(corePath, romPath, PlayerPaths.shared());
     }
 
     public Path getCoresDir() { return coresDir; }

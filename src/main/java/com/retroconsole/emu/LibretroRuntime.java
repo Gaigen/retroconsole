@@ -1,6 +1,8 @@
 package com.retroconsole.emu;
 
 import com.retroconsole.bridge.LibretroCore;
+import com.retroconsole.platform.PlayerPaths;
+import com.retroconsole.platform.Pcsx2MemcardSync;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,16 +17,22 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
 
     private final LibretroCore core;
     private final Path romPath;
+    private final PlayerPaths playerPaths;
     private int[] frameBuffer;
     private int width;
     private int height;
 
-    public LibretroRuntime(LibretroCore core, Path romPath) {
+    public LibretroRuntime(LibretroCore core, Path romPath, PlayerPaths playerPaths) {
         this.core = core;
         this.romPath = romPath;
+        this.playerPaths = playerPaths != null ? playerPaths : PlayerPaths.shared();
         this.width = core.getWidth();
         this.height = core.getHeight();
         this.frameBuffer = new int[Math.max(width, 1) * Math.max(height, 1)];
+    }
+
+    public LibretroRuntime(LibretroCore core, Path romPath) {
+        this(core, romPath, PlayerPaths.shared());
     }
 
     @Override
@@ -82,6 +90,8 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
 
     public Path getRomPath() { return romPath; }
 
+    public PlayerPaths getPlayerPaths() { return playerPaths; }
+
     // --- Input ---
 
     public void setButton(int buttonId, boolean pressed) {
@@ -120,10 +130,11 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
         try {
             byte[] sram = core.getSaveRam();
             if (sram != null && sram.length > 0) {
-                Path sramPath = romPath.resolveSibling(
+                Path sramPath = playerPaths.saveDir().resolve(
                         romPath.getFileName().toString() + ".srm");
+                java.nio.file.Files.createDirectories(sramPath.getParent());
                 java.nio.file.Files.write(sramPath, sram);
-                LOGGER.info("Saved SRAM: {} ({} bytes)", sramPath.getFileName(), sram.length);
+                LOGGER.info("Saved SRAM: {} ({} bytes)", sramPath, sram.length);
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to save SRAM", e);
@@ -133,6 +144,10 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
             core.close();
         } catch (Exception e) {
             LOGGER.warn("Failed to close core", e);
+        }
+
+        if (core.isPcsx2Core()) {
+            Pcsx2MemcardSync.export(playerPaths);
         }
     }
 }

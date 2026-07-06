@@ -13,6 +13,9 @@ import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.retroconsole.platform.PlayerPaths;
+import com.retroconsole.platform.RetroConsolePaths;
+
 import java.nio.file.Path;
 import java.util.*;
 
@@ -38,7 +41,8 @@ public class ServerConsoles {
             ThreadedEmulatorRuntime threaded,
             int[] buf,
             String coreName,
-            String romId
+            String romId,
+            UUID ownerId
     ) {}
 
     public static void init() {
@@ -59,19 +63,27 @@ public class ServerConsoles {
         }
     }
 
-    public static void startEmulator(BlockPos pos, String coreName, String romId) {
+    public static void startEmulator(BlockPos pos, String coreName, String romId, UUID ownerId) {
         pos = pos.immutable();
         Entry existing = ENTRIES.get(pos);
         if (existing != null) {
-            if (existing.romId().equals(romId) && existing.coreName().equals(coreName)) return;
+            if (existing.romId().equals(romId) && existing.coreName().equals(coreName)
+                    && Objects.equals(existing.ownerId(), ownerId)) {
+                return;
+            }
             stopEmulator(pos);
         }
         if (coreManager == null) init();
         var coreInfo = coreManager.findCore(coreName);
         if (coreInfo == null) { LOGGER.error("Core not found: {}", coreName); return; }
-        Path romPath = com.retroconsole.platform.RetroConsolePaths.romsDir().resolve(romId).normalize();
+        Path romPath = RetroConsolePaths.romsDir().resolve(romId).normalize();
         if (!romPath.toFile().exists()) { LOGGER.error("ROM not found: {}", romPath); return; }
-        LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath);
+
+        PlayerPaths playerPaths = ownerId != null
+                ? PlayerPaths.forPlayer(ownerId)
+                : PlayerPaths.shared();
+
+        LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath, playerPaths);
         if (runtime == null) { LOGGER.error("Failed to load core {} with ROM {}", coreName, romId); return; }
         int w = Math.max(runtime.getWidth(), 1);
         int h = Math.max(runtime.getHeight(), 1);
@@ -85,9 +97,14 @@ public class ServerConsoles {
         FrameSenderThread sender = new FrameSenderThread(pos, threaded, runtime.getCore());
         sender.start();
 
-        ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId));
+        ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId, ownerId));
         FRAME_SENDERS.put(pos, sender);
-        LOGGER.info("Started {} emulator at {} ({}x{})", coreName, pos, w, h);
+        LOGGER.info("Started {} emulator at {} ({}x{}, owner={})",
+                coreName, pos, w, h, ownerId);
+    }
+
+    public static void startEmulator(BlockPos pos, String coreName, String romId) {
+        startEmulator(pos, coreName, romId, null);
     }
 
     public static void stopEmulator(BlockPos pos) {
