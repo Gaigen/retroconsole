@@ -13,7 +13,7 @@ package com.retroconsole.bridge;
  * too many samples, the callback sleeps to let "virtual time" catch up.
  */
 public class AudioPacing {
-    private final int sampleRate;
+    private int sampleRate;
     private long startTime;
     private long totalSamplesConsumed;
     private boolean started;
@@ -23,6 +23,10 @@ public class AudioPacing {
 
     public AudioPacing(int sampleRate) {
         this.sampleRate = sampleRate;
+    }
+
+    public void setSampleRate(int sampleRate) {
+        if (sampleRate > 0) this.sampleRate = sampleRate;
     }
 
     /**

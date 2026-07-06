@@ -1,6 +1,7 @@
 package com.retroconsole.server;
 
 import com.retroconsole.RetroConsole;
+import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
@@ -31,6 +32,10 @@ public class ServerTickHandler {
     public static void sendFrameToPlayer(ServerPlayer player, BlockPos pos,
                                           int[] frame, int width, int height) {
         RetroFramePacket packet = RetroFramePacket.create(pos, frame, width, height);
+        PacketDistributor.sendToPlayer(player, packet);
+    }
+
+    public static void sendAudioToPlayer(ServerPlayer player, RetroAudioPayload packet) {
         PacketDistributor.sendToPlayer(player, packet);
     }
 }

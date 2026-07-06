@@ -495,7 +495,14 @@ public class LibretroCoreWindows extends LibretroCore {
         this.audioSampleCallback = (left, right) -> { /* discard */ };
         core.retro_set_audio_sample(audioSampleCallback);
         this.audioBatchCallback = (data, frames) -> {
-            audioPacing.consumeSamples((int) frames);
+            int frameCount = (int) frames;
+            if (frameCount > 0 && data != null) {
+                int samples = frameCount * 2;
+                synchronized (audioLock) {
+                    appendAudio(data, samples);
+                }
+            }
+            audioPacing.consumeSamples(frameCount);
             return frames;
         };
         core.retro_set_audio_sample_batch(audioBatchCallback);
@@ -565,6 +572,13 @@ public class LibretroCoreWindows extends LibretroCore {
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
     /** Flycast/PPSSPP синхронизируют время по потреблению audio samples. */
     private final AudioPacing audioPacing = new AudioPacing(44100);
+    private static final int AUDIO_RING_CAP = 48000 * 2;
+    private final short[] audioRing = new short[AUDIO_RING_CAP];
+    private int audioWrite;
+    private int audioCount;
+    private final Object audioLock = new Object();
+    private short[] audioBulkScratch = new short[4096];
+    private volatile double audioSampleRate = 48000.0;
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
     private final java.util.List<Memory> allocatedOptionMemory = new java.util.ArrayList<>();
     private int coreOptionsVersion = 2;
@@ -639,7 +653,10 @@ public class LibretroCoreWindows extends LibretroCore {
                     // КРИТИЧНО для PAL-игр PS2: ядро меняет 59.94 -> 50.0 именно
                     // здесь. Без этого FrameSender гонит PAL-игру на ~20% быстрее.
                     if (fps > 1.0 && fps < 1000.0) this.timingFps = fps;
-                    LOGGER.info("SET_SYSTEM_AV_INFO: {}x{} @ {} fps", w, h, fps);
+                    double sr = data.getDouble(32);
+                    if (sr > 8000.0 && sr < 384000.0) this.audioSampleRate = sr;
+                    audioPacing.setSampleRate((int) Math.round(this.audioSampleRate));
+                    LOGGER.info("SET_SYSTEM_AV_INFO: {}x{} @ {} fps, {} Hz", w, h, fps, sr);
                 }
                 return true;
             case LibretroEnvironment.GET_SYSTEM_DIRECTORY:
@@ -1031,6 +1048,10 @@ public class LibretroCoreWindows extends LibretroCore {
             LOGGER.info("AV info geometry was 0x0 — using PSP default 480x272 until SET_SYSTEM_AV_INFO");
         }
         this.timingFps = avInfo.timing_fps > 1.0 ? avInfo.timing_fps : 60.0;
+        if (avInfo.timing_sample_rate > 8000.0) {
+            this.audioSampleRate = avInfo.timing_sample_rate;
+            audioPacing.setSampleRate((int) Math.round(this.audioSampleRate));
+        }
         this.gameLoaded = true;
         audioPacing.reset();
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
@@ -1045,7 +1066,38 @@ public class LibretroCoreWindows extends LibretroCore {
     @Override public int getHeight() { return height; }
 
     /** Точный FPS ядра (59.94 для PSP) — для пейсинга внешнего цикла FrameSender. */
-    public double getTimingFps() { return timingFps; }
+    @Override public double getTimingFps() { return timingFps; }
+
+    @Override public double getAudioSampleRate() { return audioSampleRate; }
+
+    private void appendAudio(com.sun.jna.Pointer data, int samples) {
+        if (audioBulkScratch.length < samples) audioBulkScratch = new short[samples];
+        data.read(0, audioBulkScratch, 0, samples);
+        for (int i = 0; i < samples; i++) {
+            audioRing[audioWrite] = audioBulkScratch[i];
+            audioWrite = (audioWrite + 1) % AUDIO_RING_CAP;
+            if (audioCount < AUDIO_RING_CAP) audioCount++;
+        }
+    }
+
+    /** До dst.length сэмплов interleaved-стерео 16-bit; возвращает число short'ов. */
+    @Override
+    public int readAudio(short[] dst) {
+        synchronized (audioLock) {
+            int n = Math.min(audioCount, dst.length);
+            if (n == 0) return 0;
+            int readPos = (audioWrite - audioCount + AUDIO_RING_CAP) % AUDIO_RING_CAP;
+            if (readPos + n <= AUDIO_RING_CAP) {
+                System.arraycopy(audioRing, readPos, dst, 0, n);
+            } else {
+                int first = AUDIO_RING_CAP - readPos;
+                System.arraycopy(audioRing, readPos, dst, 0, first);
+                System.arraycopy(audioRing, 0, dst, first, n - first);
+            }
+            audioCount -= n;
+            return n;
+        }
+    }
 
     private LibretroBridge.RetroGameInfo buildGameInfo(Path romPath) throws java.io.IOException {
         var info = new LibretroBridge.RetroGameInfo();

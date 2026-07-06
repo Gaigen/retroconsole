@@ -1,6 +1,8 @@
 package com.retroconsole.server;
 
+import com.retroconsole.bridge.LibretroCore;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
+import com.retroconsole.network.RetroAudioPayload;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -10,39 +12,27 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Sends libretro emulator frames over the network at a fixed rate,
- * independent of Minecraft's {@code ServerTickEvent} (which fires at
- * 20 Hz by default and is too coarse for interlaced PSX).
- *
- * <p>Without this thread, the player would only see ~20 fps regardless
- * of what the emulator produces, because {@code ServerConsoles.tick}
- * runs on the Minecraft server tick. With this thread, the frame send
- * rate is {@link #PERIOD_NS} = 60 Hz.
- *
- * <p>The thread reads from {@link ThreadedEmulatorRuntime#pollFrame(int[])}
- * just like the old tick path. It is started in
- * {@code ServerConsoles.startEmulator} and stopped in {@code stopEmulator}
- * or {@link #stopAll()}.
- *
- * <p>The thread resolves its {@link MinecraftServer} reference lazily on
- * each frame, so it survives restarts of the underlying server object
- * if that ever happens.
+ * Sends libretro emulator frames and audio over the network at the core's native
+ * frame rate, independent of Minecraft's {@code ServerTickEvent}.
  */
 public class FrameSenderThread extends Thread {
     private static final Logger LOGGER = LoggerFactory.getLogger("FrameSender-Thread");
-    private static final long PERIOD_NS = 16_666_666L; // ~60 Hz
+    private static final long DEFAULT_PERIOD_NS = 16_666_666L;
+    private static final double AUDIO_RADIUS = 32.0;
 
     private final BlockPos consolePos;
     private final ThreadedEmulatorRuntime threaded;
-    /** Reusable buffer sized to the current geometry; reallocated when it changes. */
+    private final LibretroCore core;
     private int[] buf = new int[0];
+    private final short[] audioChunk = new short[9600];
     private volatile boolean running = true;
 
-    FrameSenderThread(BlockPos consolePos, ThreadedEmulatorRuntime threaded) {
+    FrameSenderThread(BlockPos consolePos, ThreadedEmulatorRuntime threaded, LibretroCore core) {
         super("retro-frame-sender-" + consolePos.toShortString());
         setDaemon(true);
         this.consolePos = consolePos;
         this.threaded = threaded;
+        this.core = core;
     }
 
     @Override
@@ -50,16 +40,19 @@ public class FrameSenderThread extends Thread {
         try {
             long next = System.nanoTime();
             while (running) {
-                next += PERIOD_NS;
+                double fps = core.getTimingFps();
+                long periodNs = fps > 1.0 ? (long) (1_000_000_000L / fps) : DEFAULT_PERIOD_NS;
+                next += periodNs;
                 long sleepNs = next - System.nanoTime();
                 if (sleepNs > 0) {
                     Thread.sleep(sleepNs / 1_000_000L, (int) (sleepNs % 1_000_000L));
-                } else if (sleepNs < -PERIOD_NS) {
-                    // We lagged by more than one frame; resync.
+                } else if (sleepNs < -periodNs) {
                     next = System.nanoTime();
                 }
 
                 if (!running) break;
+
+                sendAudioIfReady();
 
                 boolean hasFrame = threaded.pollFrame(buf);
                 if (!hasFrame) continue;
@@ -70,7 +63,6 @@ public class FrameSenderThread extends Thread {
                 int needed = w * h;
                 if (buf.length != needed) {
                     buf = new int[needed];
-                    // Try one more poll so the new buf has pixels for this frame.
                     threaded.pollFrame(buf);
                 }
 
@@ -85,7 +77,7 @@ public class FrameSenderThread extends Thread {
                 for (ServerLevel level : server.getAllLevels()) {
                     for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
                         if (player.level() != level) continue;
-                        if (player.blockPosition().distSqr(consolePos) < viewDist * viewDist) {
+                        if (player.blockPosition().distSqr(consolePos) < (long) viewDist * viewDist) {
                             ServerTickHandler.sendFrameToPlayer(player, consolePos, out, w, h);
                         }
                     }
@@ -95,6 +87,34 @@ public class FrameSenderThread extends Thread {
             Thread.currentThread().interrupt();
         } catch (Throwable t) {
             LOGGER.error("FrameSenderThread crashed for {}", consolePos, t);
+        }
+    }
+
+    private void sendAudioIfReady() {
+        int n = core.readAudio(audioChunk);
+        if (n <= 0) return;
+
+        byte[] mono = new byte[n];
+        int mi = 0;
+        for (int i = 0; i < n; i += 2) {
+            int m = (audioChunk[i] + audioChunk[i + 1]) >> 1;
+            mono[mi++] = (byte) m;
+            mono[mi++] = (byte) (m >> 8);
+        }
+        int sr = (int) Math.round(core.getAudioSampleRate());
+        RetroAudioPayload packet = new RetroAudioPayload(consolePos, sr, mono);
+
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) return;
+
+        double radiusSq = AUDIO_RADIUS * AUDIO_RADIUS;
+        for (ServerLevel level : server.getAllLevels()) {
+            for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
+                if (player.level() != level) continue;
+                if (player.blockPosition().distSqr(consolePos) < radiusSq) {
+                    ServerTickHandler.sendAudioToPlayer(player, packet);
+                }
+            }
         }
     }
 

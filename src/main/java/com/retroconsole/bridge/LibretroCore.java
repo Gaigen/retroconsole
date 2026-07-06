@@ -37,6 +37,9 @@ public abstract class LibretroCore implements AutoCloseable {
         @Override public boolean unserialize(byte[] data) { return false; }
         @Override public byte[] getSaveRam() { return null; }
         @Override public void setSaveRam(byte[] sram) { }
+        @Override public int readAudio(short[] dst) { return 0; }
+        @Override public double getAudioSampleRate() { return 48000.0; }
+        @Override public double getTimingFps() { return 60.0; }
         @Override public void close() { }
     };
 
@@ -105,6 +108,15 @@ public abstract class LibretroCore implements AutoCloseable {
     public abstract byte[] getSaveRam();
 
     public abstract void setSaveRam(byte[] sram);
+
+    /** До dst.length сэмплов interleaved-стерео 16-bit; возвращает число short'ов. */
+    public int readAudio(short[] dst) { return 0; }
+
+    /** Частота PCM, Гц. */
+    public double getAudioSampleRate() { return 48000.0; }
+
+    /** Точный FPS ядра — для пейсинга FrameSender. */
+    public double getTimingFps() { return 60.0; }
 
     @Override
     public abstract void close() throws Exception;

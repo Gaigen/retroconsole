@@ -69,6 +69,12 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
         return core.pollFrame(dst);
     }
 
+    public int readAudio(short[] dst) { return core.readAudio(dst); }
+
+    public double getAudioSampleRate() { return core.getAudioSampleRate(); }
+
+    public double getTimingFps() { return core.getTimingFps(); }
+
     public LibretroCore getCore() { return core; }
 
     public Path getRomPath() { return romPath; }
