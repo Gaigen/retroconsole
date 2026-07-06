@@ -143,6 +143,8 @@ public class LibretroCoreLinux extends LibretroCore {
     private Memory persistentSaveDir;
     private Memory persistentLibretroPath;
     private boolean gameLoaded = false;
+    private volatile boolean pendingBatteryLoad;
+    private Path pendingBatteryRomPath;
 
     // Loaded game path (for save file naming)
     private String loadedGamePath;
@@ -195,6 +197,12 @@ public class LibretroCoreLinux extends LibretroCore {
 
         if (isPcsx2Core()) {
             seedPcsx2Defaults();
+        }
+        if (isFlycastCore()) {
+            seedFlycastDefaults();
+        }
+        if (isPcsxRearmedCore()) {
+            seedPcsxRearmedDefaults();
         }
 
         this.core.retro_init();
@@ -495,6 +503,11 @@ public class LibretroCoreLinux extends LibretroCore {
                 && corePath.getFileName().toString().toLowerCase().contains("flycast");
     }
 
+    private boolean isPcsxRearmedCore() {
+        return corePath != null
+                && corePath.getFileName().toString().toLowerCase().contains("pcsx_rearmed");
+    }
+
     private boolean isPpssppCore() {
         return corePath != null
                 && corePath.getFileName().toString().toLowerCase().contains("ppsspp");
@@ -571,6 +584,19 @@ public class LibretroCoreLinux extends LibretroCore {
         registerCoreOption("pcsx2_renderer", "OpenGL");
         registerCoreOption("pcsx2_analog_mode1", "enabled");
         registerCoreOption("pcsx2_fastcdvd", "enabled");
+    }
+
+    private void seedFlycastDefaults() {
+        registerCoreOption("flycast_per_content_vmus", "VMU A1");
+        registerCoreOption("reicast_per_content_vmus", "VMU A1");
+        registerCoreOption("flycast_device_port1_slot1", "VMU");
+        registerCoreOption("reicast_device_port1_slot1", "VMU");
+        registerCoreOption("reicast_threaded_rendering", "disabled");
+    }
+
+    private void seedPcsxRearmedDefaults() {
+        registerCoreOption("pcsx_rearmed_memcard1", "libretro");
+        registerCoreOption("pcsx_rearmed_memcard2", "shared");
     }
 
     /** Set directories that cores may query via environment callback. */
@@ -1009,8 +1035,18 @@ public class LibretroCoreLinux extends LibretroCore {
         };
     }
 
+    private static String applyPcsxRearmedDefault(String key, String defaultValue) {
+        return switch (key) {
+            case "pcsx_rearmed_memcard1" -> "libretro";
+            case "pcsx_rearmed_memcard2" -> "shared";
+            default -> defaultValue;
+        };
+    }
+
     private static String applyFlycastDefault(String key, String defaultValue) {
         return switch (key) {
+            case "flycast_per_content_vmus", "reicast_per_content_vmus" -> "VMU A1";
+            case "flycast_device_port1_slot1", "reicast_device_port1_slot1" -> "VMU";
             case "reicast_sh4clock" -> "200";
             case "reicast_auto_skip_frame", "reicast_frame_skipping",
                  "reicast_gdrom_fast_loading", "reicast_dc_32mb_mod",
@@ -1129,6 +1165,12 @@ public class LibretroCoreLinux extends LibretroCore {
             if (key.startsWith("pcsx2_")) {
                 val = applyPcsx2Default(key, val != null ? val : "");
             }
+            if (key.startsWith("pcsx_rearmed_")) {
+                val = applyPcsxRearmedDefault(key, val != null ? val : "");
+            }
+            if (key.startsWith("flycast_") || key.startsWith("reicast_")) {
+                val = applyFlycastDefault(key, val != null ? val : "");
+            }
             if ((val == null || val.isEmpty()) && "pcsx2_bios".equals(key)) {
                 val = findFirstPcsx2BiosFilename();
                 if (val != null) {
@@ -1207,9 +1249,7 @@ public class LibretroCoreLinux extends LibretroCore {
         if (ok) {
             LOGGER.info("Game loaded: {}", romPath.getFileName());
 
-            // Register controller — Flycast requires this to read input
-            core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
-            LOGGER.info("Controller registered: port 0 = JOYPAD");
+            registerControllerPorts();
 
             // Query AV info to know initial resolution
             var avInfo = new LibretroBridge.RetroSystemAVInfo();
@@ -1233,15 +1273,28 @@ public class LibretroCoreLinux extends LibretroCore {
                     LOGGER.warn("Failed to release EGL context: {}", t.getMessage());
                 }
             }
-            if (saveDir != null) {
-                com.retroconsole.platform.BatterySaveManager.loadIntoCore(
-                        this, romPath, java.nio.file.Path.of(saveDir));
+            if (saveDir != null && usesFrontendBatteryRam()) {
+                pendingBatteryRomPath = romPath;
+                pendingBatteryLoad = true;
             }
         } else {
             LOGGER.error("Core rejected game: {}", romPath.getFileName());
         }
 
         return ok;
+    }
+
+    private void registerControllerPorts() {
+        if (isFlycastCore()) {
+            core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+            for (int port = 1; port < 4; port++) {
+                core.retro_set_controller_port_device(port, LibretroBridge.RETRO_DEVICE_NONE);
+            }
+            LOGGER.info("Flycast: all controller ports registered (VMU slot A1 active)");
+        } else {
+            core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+            LOGGER.info("Controller registered: port 0 = JOYPAD");
+        }
     }
 
     /**
@@ -1287,7 +1340,15 @@ public class LibretroCoreLinux extends LibretroCore {
             if (dtMs > 2000 && hwRenderActive && isPcsx2Core()) {
                 LOGGER.warn("PCSX2 retro_run took {}ms (slow — loading or shader compile?)", dtMs);
             }
+            maybeLoadPendingBattery();
         }
+    }
+
+    private void maybeLoadPendingBattery() {
+        if (!pendingBatteryLoad || saveDir == null || pendingBatteryRomPath == null) return;
+        pendingBatteryLoad = false;
+        com.retroconsole.platform.BatterySaveManager.loadIntoCore(
+                this, pendingBatteryRomPath, java.nio.file.Path.of(saveDir));
     }
 
     /**

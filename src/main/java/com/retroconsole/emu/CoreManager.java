@@ -3,6 +3,7 @@ package com.retroconsole.emu;
 import com.retroconsole.bridge.LibretroCore;
 import com.retroconsole.platform.Pcsx2MemcardSync;
 import com.retroconsole.platform.PlayerPaths;
+import com.retroconsole.platform.SessionSaveSetup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -150,6 +151,7 @@ public class CoreManager {
         if (pcsx2) {
             Pcsx2MemcardSync.install(playerPaths);
         }
+        SessionSaveSetup.prepare(corePath, romPath, playerPaths);
         try {
             LibretroCore core = LibretroCore.load(
                     corePath,
