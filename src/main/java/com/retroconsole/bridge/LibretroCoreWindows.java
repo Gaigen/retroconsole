@@ -1102,6 +1102,10 @@ public class LibretroCoreWindows extends LibretroCore {
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
                 romPath.getFileName(), width, height,
                 avInfo.timing_fps, avInfo.timing_sample_rate);
+        if (saveDir != null) {
+            com.retroconsole.platform.BatterySaveManager.loadIntoCore(
+                    this, romPath, java.nio.file.Path.of(saveDir));
+        }
         return true;
     }
 
@@ -1287,10 +1291,69 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     @Override public void reset() { /* no-op */ }
-    @Override public byte[] serialize() { return null; }
-    @Override public boolean unserialize(byte[] data) { return false; }
-    @Override public byte[] getSaveRam() { return null; }
-    @Override public void setSaveRam(byte[] sram) { /* no-op */ }
+
+    @Override
+    public long getSerializeSize() {
+        return onCoreThread(() -> {
+            if (core == null || !gameLoaded) return 0L;
+            try {
+                return core.retro_serialize_size();
+            } catch (Throwable t) {
+                return 0L;
+            }
+        });
+    }
+
+    @Override
+    public byte[] serialize() {
+        return onCoreThread(() -> {
+            if (core == null || !gameLoaded) return null;
+            long size = core.retro_serialize_size();
+            if (size <= 0) return null;
+            var mem = new Memory(size);
+            if (core.retro_serialize(mem, size)) {
+                return mem.getByteArray(0, (int) size);
+            }
+            return null;
+        });
+    }
+
+    @Override
+    public boolean unserialize(byte[] data) {
+        if (data == null) return false;
+        return onCoreThread(() -> {
+            if (core == null || !gameLoaded) return false;
+            var mem = new Memory(data.length);
+            mem.write(0, data, 0, data.length);
+            return core.retro_unserialize(mem, data.length);
+        });
+    }
+
+    @Override
+    public byte[] getSaveRam() {
+        return onCoreThread(() -> {
+            if (core == null || !gameLoaded) return null;
+            Pointer data = core.retro_get_memory_data(LibretroBridge.RETRO_MEMORY_SAVE_RAM);
+            long size = core.retro_get_memory_size(LibretroBridge.RETRO_MEMORY_SAVE_RAM);
+            if (data == null || size <= 0) return null;
+            return data.getByteArray(0, (int) size);
+        });
+    }
+
+    @Override
+    public boolean setSaveRam(byte[] sram) {
+        if (sram == null) return false;
+        return onCoreThread(() -> setSaveRamImpl(sram));
+    }
+
+    private boolean setSaveRamImpl(byte[] sram) {
+        if (core == null || !gameLoaded) return false;
+        Pointer data = core.retro_get_memory_data(LibretroBridge.RETRO_MEMORY_SAVE_RAM);
+        long size = core.retro_get_memory_size(LibretroBridge.RETRO_MEMORY_SAVE_RAM);
+        if (data == null || size <= 0) return false;
+        data.write(0, sram, 0, (int) Math.min(sram.length, size));
+        return true;
+    }
 
     // ======================================================================
     // ===== closeImpl (на retro-core-thread) ===============================
