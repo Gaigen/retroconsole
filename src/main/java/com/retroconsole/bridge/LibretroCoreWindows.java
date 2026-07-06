@@ -144,9 +144,22 @@ public class LibretroCoreWindows extends LibretroCore {
     @Override
     public void close() throws Exception {
         try {
-            onCoreThread(() -> { closeImpl(); return null; });
+            java.util.concurrent.Future<?> f = coreThread.submit(() -> {
+                closeImpl();
+                return null;
+            });
+            f.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            LOGGER.warn("Core shutdown timed out after 10s — forcing GL teardown");
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable c = e.getCause();
+            LOGGER.warn("Core shutdown error: {}", c != null ? c.getMessage() : e);
         } finally {
-            coreThread.shutdown();
+            coreThread.shutdownNow();
+            if (headlessGlReady) {
+                try { headlessGl().hlg_destroy(); } catch (Throwable ignored) {}
+                headlessGlReady = false;
+            }
         }
     }
 
@@ -321,9 +334,15 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         try {
             headlessGl().hlg_make_current();
-            LOGGER.info("Calling context_destroy @ {}", hwContextDestroy);
-            com.sun.jna.Function.getFunction(hwContextDestroy).invokeVoid(new Object[0]);
-            LOGGER.info("context_destroy completed");
+            if (isPcsx2Core()) {
+                // LRPS2 context_destroy может зависнуть на MTGS — отпускаем GL и идём в retro_deinit.
+                LOGGER.info("PCSX2: skipping context_destroy (detach headless GL only)");
+                try { headlessGl().hlg_release(); } catch (Throwable ignored) {}
+            } else {
+                LOGGER.info("Calling context_destroy @ {}", hwContextDestroy);
+                com.sun.jna.Function.getFunction(hwContextDestroy).invokeVoid(new Object[0]);
+                LOGGER.info("context_destroy completed");
+            }
         } catch (Throwable t) {
             LOGGER.warn("context_destroy failed: {}", t.getMessage());
         } finally {
@@ -355,6 +374,15 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private boolean isFlycastCore() {
         return coreName().contains("flycast");
+    }
+
+    private boolean isPcsx2Core() {
+        return coreName().contains("pcsx2");
+    }
+
+    /** Flycast/PPSSPP синхронизируют FPS через audio-pacing; PCSX2 — нет (bulk batch в конце retro_run). */
+    private boolean usesAudioPacing() {
+        return isFlycastCore() || coreName().contains("ppsspp");
     }
 
     /** Оверрайды опций для текущего ядра (или пустая карта). */
@@ -502,7 +530,7 @@ public class LibretroCoreWindows extends LibretroCore {
                     appendAudio(data, samples);
                 }
             }
-            audioPacing.consumeSamples(frameCount);
+            if (usesAudioPacing()) audioPacing.consumeSamples(frameCount);
             return frames;
         };
         core.retro_set_audio_sample_batch(audioBatchCallback);
@@ -595,6 +623,11 @@ public class LibretroCoreWindows extends LibretroCore {
             return true;
         }
         if (cmd == 0x800004) return true; // приватная cmd Flycast
+        // GET_AUDIO_VIDEO_ENABLE (47|EXPERIMENTAL) — LRPS2 глушит SPU2 без явного «audio on».
+        if (cmd == 0x1002f) {
+            if (data != null) data.setInt(0, 3);
+            return true;
+        }
 
         int base = LibretroEnvironment.normalize(cmd);
         switch (base) {
@@ -710,6 +743,9 @@ public class LibretroCoreWindows extends LibretroCore {
             case LibretroEnvironment.SET_AUDIO_BUFFER_STATUS_CALLBACK:
                 audioBufferStatusRequested = true;
                 return true;
+            case LibretroEnvironment.GET_AUDIO_VIDEO_ENABLE:
+                if (data != null) data.setInt(0, 3);
+                return true;
             case LibretroEnvironment.SET_SUPPORT_NO_GAME:
                 if (data != null) data.setByte(0, (byte) 0);
                 return true;
@@ -747,7 +783,6 @@ public class LibretroCoreWindows extends LibretroCore {
                 return true;
             case 45:
             case 0x1002e:
-            case 0x1002f:
                 return false;
             case LibretroEnvironment.SET_KEYBOARD_CALLBACK:
                 return false;
@@ -1068,6 +1103,8 @@ public class LibretroCoreWindows extends LibretroCore {
     /** Точный FPS ядра (59.94 для PSP) — для пейсинга внешнего цикла FrameSender. */
     @Override public double getTimingFps() { return timingFps; }
 
+    @Override public boolean prefersAvLockstep() { return isPcsx2Core(); }
+
     @Override public double getAudioSampleRate() { return audioSampleRate; }
 
     private void appendAudio(com.sun.jna.Pointer data, int samples) {
@@ -1082,9 +1119,9 @@ public class LibretroCoreWindows extends LibretroCore {
 
     /** До dst.length сэмплов interleaved-стерео 16-bit; возвращает число short'ов. */
     @Override
-    public int readAudio(short[] dst) {
+    public int readAudio(short[] dst, int maxShorts) {
         synchronized (audioLock) {
-            int n = Math.min(audioCount, dst.length);
+            int n = Math.min(audioCount, Math.min(dst.length, Math.max(0, maxShorts)));
             if (n == 0) return 0;
             int readPos = (audioWrite - audioCount + AUDIO_RING_CAP) % AUDIO_RING_CAP;
             if (readPos + n <= AUDIO_RING_CAP) {

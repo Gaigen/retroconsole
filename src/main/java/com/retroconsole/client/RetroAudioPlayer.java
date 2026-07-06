@@ -6,7 +6,7 @@ import org.lwjgl.system.MemoryUtil;
 public class RetroAudioPlayer implements AutoCloseable {
     private static final int NUM_BUFFERS = 10;
     /** Не стартуем, пока не накопили 3 чанка (~150-200 мс джиттер-буфер). */
-    private static final int START_QUEUED = 3;
+    private static final int START_QUEUED = 2;
 
     private final int source;
     private final java.util.ArrayDeque<Integer> freeBuffers = new java.util.ArrayDeque<>();
@@ -15,7 +15,7 @@ public class RetroAudioPlayer implements AutoCloseable {
         source = AL10.alGenSources();
         AL10.alSource3f(source, AL10.AL_POSITION, (float) x, (float) y, (float) z);
         AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, 4.0f);
-        AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, 32.0f);
+        AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, 256.0f);
         AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, 1.5f);
         for (int i = 0; i < NUM_BUFFERS; i++) freeBuffers.add(AL10.alGenBuffers());
     }
@@ -35,6 +35,8 @@ public class RetroAudioPlayer implements AutoCloseable {
         int state = AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE);
         int queued = AL10.alGetSourcei(source, AL10.AL_BUFFERS_QUEUED);
         if (state != AL10.AL_PLAYING && queued >= START_QUEUED) {
+            AL10.alSourcePlay(source);
+        } else if (state == AL10.AL_STOPPED && queued > 0) {
             AL10.alSourcePlay(source);
         }
     }
