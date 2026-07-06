@@ -42,6 +42,7 @@
  #define HLG_GL_VERSION           0x1F02
  #define HLG_GL_VIEWPORT          0x0BA2
  #define HLG_GL_RGBA              0x1908
+ #define HLG_GL_BGRA              0x80E1
  #define HLG_GL_UNSIGNED_BYTE     0x1401
  #define HLG_GL_BACK              0x0405
  #define HLG_GL_PACK_ALIGNMENT    0x0D05
@@ -528,57 +529,69 @@
      fprintf(stderr, "[hlg-win] debug_fbo: drawFbo=%d lastFbo=%d\n", drawFbo, s_last_fbo);
  }
  
- __declspec(dllexport) void hlg_read_pixels(int *viewport_out, void *pixels_out,
-         int max_pixels, int req_w, int req_h) {
-     if (!viewport_out || !pixels_out) return;
-     if (!s_cs_ready) return;
-     EnterCriticalSection(&s_gl_cs);
-     if (!ensure_current()) {
-         LeaveCriticalSection(&s_gl_cs);
-         return;
-     }
-     typedef void (*glGetIntegerv_t)(unsigned int, int *);
-     typedef void (*glReadPixels_t)(int, int, int, int, unsigned int, unsigned int, void *);
-     typedef void (*glReadBuffer_t)(unsigned int);
-     typedef void (*glPixelStorei_t)(unsigned int, int);
-     typedef void (*glFinish_t)(void);
-     glGetIntegerv_t gi  = (glGetIntegerv_t)load_gl("glGetIntegerv");
-     glReadPixels_t  rp  = (glReadPixels_t)load_gl("glReadPixels");
-     glReadBuffer_t  rb  = (glReadBuffer_t)load_gl("glReadBuffer");
-     glPixelStorei_t ps  = (glPixelStorei_t)load_gl("glPixelStorei");
-     glFinish_t      fin = (glFinish_t)load_gl("glFinish");
-     if (!gi || !rp) {
-         LeaveCriticalSection(&s_gl_cs);
-         return;
-     }
- 
-     int vp[4] = {0};
-     gi(HLG_GL_VIEWPORT, vp);
- 
-     int read_w = req_w > 0 ? req_w : (vp[2] > 0 ? vp[2] : s_w);
-     int read_h = req_h > 0 ? req_h : (vp[3] > 0 ? vp[3] : s_h);
-     if (max_pixels > 0 && read_w > 0 && (long long)read_w * read_h > max_pixels)
-         read_h = max_pixels / read_w;
-     if (read_w <= 0 || read_h <= 0) {
-         LeaveCriticalSection(&s_gl_cs);
-         return;
-     }
- 
-     viewport_out[0] = vp[0];
-     viewport_out[1] = vp[1];
-     viewport_out[2] = vp[2];
-     viewport_out[3] = vp[3];
- 
-     /* We render into the default framebuffer's back buffer (get_current_framebuffer
-      * returns 0), so read from GL_BACK with tight 4-byte packing. */
-     if (rb) rb(HLG_GL_BACK);
-     if (ps) ps(HLG_GL_PACK_ALIGNMENT, 4);
-     if (fin && (s_read_count % 120) == 0) fin();
- 
-     rp(0, 0, read_w, read_h, HLG_GL_RGBA, HLG_GL_UNSIGNED_BYTE, pixels_out);
-     s_read_count++;
-     LeaveCriticalSection(&s_gl_cs);
- }
+__declspec(dllexport) void hlg_read_pixels(int *viewport_out, void *pixels_out,
+        int max_pixels, int req_w, int req_h) {
+    if (!viewport_out || !pixels_out) return;
+    if (!s_cs_ready) return;
+    EnterCriticalSection(&s_gl_cs);
+    if (!ensure_current()) { LeaveCriticalSection(&s_gl_cs); return; }
+
+    typedef void (*glGetIntegerv_t)(unsigned int, int *);
+    typedef void (*glReadPixels_t)(int, int, int, int, unsigned int, unsigned int, void *);
+    typedef void (*glReadBuffer_t)(unsigned int);
+    typedef void (*glPixelStorei_t)(unsigned int, int);
+    typedef void (*glFinish_t)(void);
+    glGetIntegerv_t gi  = (glGetIntegerv_t)load_gl("glGetIntegerv");
+    glReadPixels_t  rp  = (glReadPixels_t)load_gl("glReadPixels");
+    glReadBuffer_t  rb  = (glReadBuffer_t)load_gl("glReadBuffer");
+    glPixelStorei_t ps  = (glPixelStorei_t)load_gl("glPixelStorei");
+    glFinish_t      fin = (glFinish_t)load_gl("glFinish");
+    if (!gi || !rp) { LeaveCriticalSection(&s_gl_cs); return; }
+
+    int vp[4] = {0};
+    gi(HLG_GL_VIEWPORT, vp);
+
+    /* (3) истина о размере кадра — реальный viewport Flycast, а не хардкод.
+       Иначе Java грузит текстуру другой шириной -> диагональный сдвиг. */
+    int read_w = vp[2] > 0 ? vp[2] : (req_w > 0 ? req_w : s_w);
+    int read_h = vp[3] > 0 ? vp[3] : (req_h > 0 ? req_h : s_h);
+    if (max_pixels > 0 && read_w > 0 && (long long)read_w * read_h > max_pixels)
+        read_h = max_pixels / read_w;
+    if (read_w <= 0 || read_h <= 0) { LeaveCriticalSection(&s_gl_cs); return; }
+
+    viewport_out[0] = vp[0];
+    viewport_out[1] = vp[1];
+    viewport_out[2] = read_w;   /* отдаём Java точные размеры, что реально прочитали */
+    viewport_out[3] = read_h;
+
+    if (rb) rb(HLG_GL_BACK);
+    if (ps) ps(HLG_GL_PACK_ALIGNMENT, 4);
+    if (fin && (s_read_count % 120) == 0) fin();
+
+    /* (2) BGRA -> little-endian int = 0xAARRGGBB (ARGB), без свопа R/B в Java.
+       (3) читаем из vp[0],vp[1], а не из 0,0. */
+    rp(vp[0], vp[1], read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, pixels_out);
+
+    /* (1) GL origin = низ-лево, текстура хочет верх-лево -> переворот строк */
+    {
+        unsigned char *px = (unsigned char *)pixels_out;
+        size_t stride = (size_t)read_w * 4;
+        unsigned char *tmp = (unsigned char *)malloc(stride);
+        if (tmp) {
+            for (int y = 0; y < read_h / 2; ++y) {
+                unsigned char *a = px + (size_t)y * stride;
+                unsigned char *b = px + (size_t)(read_h - 1 - y) * stride;
+                memcpy(tmp, a, stride);
+                memcpy(a, b, stride);
+                memcpy(b, tmp, stride);
+            }
+            free(tmp);
+        }
+    }
+
+    s_read_count++;
+    LeaveCriticalSection(&s_gl_cs);
+}
  
  __declspec(dllexport) void hlg_dump_hw_render(const void *data, int size) {
      fprintf(stderr, "[hlg-win] HW RENDER DUMP (%d bytes)\n", size);
