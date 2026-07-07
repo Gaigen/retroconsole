@@ -12,27 +12,33 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-/** JNA interface to .libheadless_gl.dll — headless WGL context on Windows. */
+/** JNA interface to .libheadless_gl.dll — headless WGL contexts on Windows (multi-instance). */
 interface HeadlessGLWin extends com.sun.jna.Library {
-    int hlg_init_ex(int api, int major, int minor, int flags);
-    void hlg_destroy();
-    Pointer hlg_get_proc_address(String sym);
-    void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH);
-    void hlg_dump_hw_render(Pointer data, int size);
+    // --- инстансы ---
+    Pointer hlg_create();
+    void    hlg_free(Pointer h);
+
+    // --- контекстные функции (первый параметр — handle инстанса) ---
+    int     hlg_init_ex(Pointer h, int api, int major, int minor, int flags);
+    void    hlg_destroy(Pointer h);
+    int     hlg_make_current(Pointer h);
+    void    hlg_release(Pointer h);
+    int     hlg_resize(Pointer h, int w, int hgt);
+    void    hlg_read_pixels(Pointer h, int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH);
+    void    hlg_debug_fbo(Pointer h);
+    String  hlg_get_gpu_info(Pointer h);
+
+    // --- процессные (без handle) ---
+    void    hlg_dump_hw_render(Pointer data, int size);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
     Pointer hlg_get_log_cb_ptr();
-    int hlg_make_current();
-    void hlg_release();
-    void hlg_debug_fbo();
-    int hlg_resize(int w, int h);
-    String hlg_get_gpu_info();
     /** Capture HotSpot UEF before Flycast core loads (diagnostic, optional). */
-    void hlg_capture_jvm_filter();
+    void    hlg_capture_jvm_filter();
     /** Hook RtlAddVectoredExceptionHandler so Flycast VEH goes to tail. */
-    void hlg_hook_addveh();
+    void    hlg_hook_addveh();
     /** Reset isolated VEH state between core sessions (dispatcher + fly[]). */
-    void hlg_reset_veh_session();
+    void    hlg_reset_veh_session();
 }
 
 /**
@@ -41,11 +47,14 @@ interface HeadlessGLWin extends com.sun.jna.Library {
  * <p>ПОТОКИ: HW-render libretro-ядра требуют, чтобы ВСЯ работа с ядром и
  * GL-контекстом шла на ОДНОМ потоке (retro_init, retro_load_game,
  * context_reset, retro_run, retro_unload_game, retro_deinit, context_destroy).
- * Весь жизненный цикл ядра гоняется через один {@code retro-core-thread}.
+ * Весь жизненный цикл ядра гоняется через один retro-core-поток инстанса.
  *
- * <p>GL: нативная DLL — синглтон на процесс (одно скрытое окно + один HGLRC +
- * один FBO), поэтому одновременно может работать ТОЛЬКО ОДНА HW-render
- * консоль. Владение отслеживается через {@link #GL_OWNER}.
+ * <p>GL: нативная DLL мультиинстансная — hlg_create()/hlg_free() создают
+ * независимые инстансы (своё скрытое окно + HGLRC + offscreen FBO на каждый).
+ * Несколько HW-render консолей могут работать ОДНОВРЕМЕННО, каждая на своём
+ * retro-core-потоке. get_current_framebuffer/get_proc_address у libretro не
+ * имеют user-data, поэтому DLL диспетчеризует их через thread-local: 
+ * hlg_make_current(handle) привязывает инстанс к текущему потоку.
  */
 public class LibretroCoreWindows extends LibretroCore {
 
@@ -60,10 +69,6 @@ public class LibretroCoreWindows extends LibretroCore {
      * указывать в выгруженную память и уронят весь процесс.
      */
     private static volatile HeadlessGLWin HEADLESS_GL;
-
-    /** Единственный владелец глобального GL-контекста (синглтон в DLL). */
-    private static final java.util.concurrent.atomic.AtomicReference<LibretroCoreWindows> GL_OWNER =
-            new java.util.concurrent.atomic.AtomicReference<>();
 
     /**
      * Точечные переопределения опций по имени ядра (подстрока имени DLL).
@@ -94,16 +99,24 @@ public class LibretroCoreWindows extends LibretroCore {
     // ===== ЕДИНСТВЕННЫЙ ПОТОК, ВЛАДЕЮЩИЙ ЯДРОМ И GL-КОНТЕКСТОМ =============
     // ======================================================================
 
+    /**
+     * Идентификация по ССЫЛКЕ на поток, а не по имени: с несколькими
+     * консолями имя "retro-core-thread" было бы у всех одинаковым, и задача
+     * инстанса A могла бы выполниться инлайн на потоке инстанса B.
+     */
+    private volatile Thread coreThreadRef;
+
     private final java.util.concurrent.ExecutorService coreThread =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "retro-core-thread");
+                Thread t = new Thread(r, "retro-core-" + Integer.toHexString(System.identityHashCode(this)));
                 t.setDaemon(true);
+                coreThreadRef = t;
                 return t;
             });
 
     /** Выполнить задачу на потоке-владельце ядра и дождаться результата. */
     private <T> T onCoreThread(java.util.concurrent.Callable<T> task) {
-        if ("retro-core-thread".equals(Thread.currentThread().getName())) {
+        if (Thread.currentThread() == coreThreadRef) {
             try { return task.call(); }
             catch (RuntimeException re) { throw re; }
             catch (Exception e) { throw new RuntimeException(e); }
@@ -156,6 +169,10 @@ public class LibretroCoreWindows extends LibretroCore {
                 try { headlessGl().hlg_destroy(); } catch (Throwable ignored) {}
                 headlessGlReady = false;
             }
+            if (hlgHandle != null) {
+                try { rawHlg().hlg_free(hlgHandle); } catch (Throwable ignored) {}
+                hlgHandle = null;
+            }
         }
     }
 
@@ -190,7 +207,15 @@ public class LibretroCoreWindows extends LibretroCore {
     private int hwReqGlMajor = 3;
     private int hwReqGlMinor = 3;
 
-    private HeadlessGLWin headlessGl() {
+    // ======================================================================
+    // ===== Per-instance headless GL =======================================
+    // ======================================================================
+
+    /** Handle инстанса в мультиинстансной DLL (hlg_create/hlg_free). */
+    private Pointer hlgHandle;
+    private final Hlg hlgAdapter = new Hlg();
+
+    private static HeadlessGLWin rawHlg() {
         HeadlessGLWin gl = HEADLESS_GL;
         if (gl != null) return gl;
         synchronized (LibretroCoreWindows.class) {
@@ -203,18 +228,60 @@ public class LibretroCoreWindows extends LibretroCore {
         }
     }
 
-    private boolean acquireGlOwnership() {
-        LibretroCoreWindows prev = GL_OWNER.get();
-        if (prev == this) return true;
-        if (prev == null && GL_OWNER.compareAndSet(null, this)) return true;
-        LOGGER.error("HW render GL context is owned by another console instance — "
-                + "only ONE hardware-rendered console can run at a time. "
-                + "Close the other console first.");
-        return false;
+    private Pointer hlgHandle() {
+        if (hlgHandle == null) {
+            hlgHandle = rawHlg().hlg_create();
+            if (hlgHandle == null || Pointer.nativeValue(hlgHandle) == 0) {
+                hlgHandle = null;
+                throw new IllegalStateException("hlg_create() failed");
+            }
+        }
+        return hlgHandle;
     }
 
-    private void releaseGlOwnership() {
-        GL_OWNER.compareAndSet(this, null);
+    /**
+     * Адаптер со СТАРЫМИ именами методов поверх handle-API — остальной код
+     * файла зовёт headlessGl().hlg_xxx(...) как раньше.
+     */
+    private Hlg headlessGl() {
+        rawHlg(); // бросит исключение, если DLL недоступна (для supportsHwRender)
+        return hlgAdapter;
+    }
+
+    private final class Hlg {
+        int hlg_init_ex(int api, int major, int minor, int flags) {
+            return rawHlg().hlg_init_ex(hlgHandle(), api, major, minor, flags);
+        }
+        void hlg_destroy() {
+            if (hlgHandle != null) rawHlg().hlg_destroy(hlgHandle);
+        }
+        int hlg_make_current() {
+            return hlgHandle == null ? 0 : rawHlg().hlg_make_current(hlgHandle);
+        }
+        void hlg_release() {
+            if (hlgHandle != null) rawHlg().hlg_release(hlgHandle);
+        }
+        int hlg_resize(int w, int h) {
+            return rawHlg().hlg_resize(hlgHandle(), w, h);
+        }
+        void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH) {
+            rawHlg().hlg_read_pixels(hlgHandle(), viewport, pixels, maxPixels, reqW, reqH);
+        }
+        void hlg_debug_fbo() {
+            if (hlgHandle != null) rawHlg().hlg_debug_fbo(hlgHandle);
+        }
+        String hlg_get_gpu_info() {
+            return rawHlg().hlg_get_gpu_info(hlgHandle());
+        }
+        void hlg_dump_hw_render(Pointer data, int size) {
+            rawHlg().hlg_dump_hw_render(data, size);
+        }
+        Pointer hlg_get_framebuffer_ptr()  { return rawHlg().hlg_get_framebuffer_ptr(); }
+        Pointer hlg_get_proc_address_ptr() { return rawHlg().hlg_get_proc_address_ptr(); }
+        Pointer hlg_get_log_cb_ptr()       { return rawHlg().hlg_get_log_cb_ptr(); }
+        void hlg_capture_jvm_filter() { rawHlg().hlg_capture_jvm_filter(); }
+        void hlg_hook_addveh()        { rawHlg().hlg_hook_addveh(); }
+        void hlg_reset_veh_session()  { rawHlg().hlg_reset_veh_session(); }
     }
 
     private void captureJvmExceptionFilter() {
@@ -255,7 +322,6 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     private boolean ensureHeadlessGl(int ctxType, int reqMajor, int reqMinor) {
-        if (!acquireGlOwnership()) return false;
         boolean gles = (ctxType == 2 || ctxType == 4);
         int api = gles ? 1 : 0;
         // core-профиль только для OPENGL_CORE (3); для OPENGL (1) — compatibility.
@@ -268,8 +334,10 @@ public class LibretroCoreWindows extends LibretroCore {
             minor = 3;
         }
         if (gles) { major = (ctxType == 4) ? 3 : 2; minor = 0; }
+
         int profileKey = (api & 0xFF) | ((flags & 0xFF) << 8)
                 | ((minor & 0xFF) << 16) | ((major & 0xFF) << 24);
+
         // ВАЖНО: даже при совпадении profileKey проверяем, что контекст реально
         // доступен ЭТОМУ потоку — C-сторона могла быть пересоздана/захвачена.
         if (headlessGlReady && headlessGlApi == profileKey
@@ -399,7 +467,7 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     // ======================================================================
-    // ===== loadNativeImpl (на retro-core-thread) ==========================
+    // ===== loadNativeImpl (на retro-core-потоке) ==========================
     // ======================================================================
 
     private void loadNativeImpl() {
@@ -433,7 +501,6 @@ public class LibretroCoreWindows extends LibretroCore {
                 KEEP_LOADED.remove(this.core);
             }
             if (isFlycastCore() && supportsHwRender()) resetVehSession();
-            releaseGlOwnership();
             this.core = null;
             this.coreInitialized = false;
         }
@@ -465,7 +532,6 @@ public class LibretroCoreWindows extends LibretroCore {
                     hwFramePending = true;
                     return;
                 }
-
                 // >>> ФИКС: софт-рендер (например, PPSSPP-фоллбек без HW GL) может
                 // отдавать кадр другого размера, чем заявленная геометрия
                 // (480x272 вместо 960x540). HW-путь обновляет width/height в
@@ -534,6 +600,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
         this.audioSampleCallback = (left, right) -> { /* discard */ };
         core.retro_set_audio_sample(audioSampleCallback);
+
         this.audioBatchCallback = (data, frames) -> {
             int frameCount = (int) frames;
             if (frameCount > 0 && data != null) {
@@ -546,6 +613,7 @@ public class LibretroCoreWindows extends LibretroCore {
             return frames;
         };
         core.retro_set_audio_sample_batch(audioBatchCallback);
+
         this.inputPollCallback = () -> { /* nothing to poll */ };
         core.retro_set_input_poll(inputPollCallback);
 
@@ -598,20 +666,25 @@ public class LibretroCoreWindows extends LibretroCore {
     private LibretroBridge.RetroAudioSampleBatch audioBatchCallback;
     private LibretroBridge.RetroInputPoll inputPollCallback;
     private LibretroBridge.RetroInputState inputStateCallback;
+
     private volatile int[] frameBuffer = new int[0];
     private final Object frameLock = new Object();
     private volatile boolean newFrame = false;
+
     // Скретч-буферы для bulk-чтения software-кадра (без per-pixel JNI).
     private int[] swRowInts = new int[0];
     private short[] swRowShorts = new short[0];
+
     private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
             new java.util.concurrent.atomic.AtomicIntegerArray(16);
     private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
             new java.util.concurrent.atomic.AtomicIntegerArray(4);
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
+
     /** Flycast/PPSSPP синхронизируют время по потреблению audio samples. */
     private final AudioPacing audioPacing = new AudioPacing(44100);
+
     private static final int AUDIO_RING_CAP = 48000 * 2;
     private final short[] audioRing = new short[AUDIO_RING_CAP];
     private int audioWrite;
@@ -619,6 +692,7 @@ public class LibretroCoreWindows extends LibretroCore {
     private final Object audioLock = new Object();
     private short[] audioBulkScratch = new short[4096];
     private volatile double audioSampleRate = 48000.0;
+
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
     private final java.util.List<Memory> allocatedOptionMemory = new java.util.ArrayList<>();
     private int coreOptionsVersion = 2;
@@ -640,7 +714,6 @@ public class LibretroCoreWindows extends LibretroCore {
             if (data != null) data.setInt(0, 3);
             return true;
         }
-
         int base = LibretroEnvironment.normalize(cmd);
         switch (base) {
             case LibretroEnvironment.GET_OVERSCAN:
@@ -863,12 +936,14 @@ public class LibretroCoreWindows extends LibretroCore {
                 LOGGER.error("Failed to make WGL context current during SET_HW_RENDER");
                 return false;
             }
+
             headlessGl().hlg_dump_hw_render(data, 80);
 
             Pointer fbPtr   = headlessGl().hlg_get_framebuffer_ptr();
             Pointer procPtr = headlessGl().hlg_get_proc_address_ptr();
             pinForever(fbPtr);
             pinForever(procPtr);
+
             data.setPointer(0x10, fbPtr);
             data.setPointer(0x18, procPtr);
             data.setByte(0x22, (byte) 1);              // bottom_left_origin
@@ -1001,6 +1076,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
             String val = resolveCoreOption(key);
             if (val == null || val.isEmpty()) return false;
+
             data.setPointer(Native.POINTER_SIZE, allocCString(val));
             if (loggedOptionKeys.add(key)) {
                 LOGGER.info("Core option: {} = {}", key, val);
@@ -1051,7 +1127,7 @@ public class LibretroCoreWindows extends LibretroCore {
     public boolean isCoreLoaded() { return core != null; }
 
     // ======================================================================
-    // ===== loadGameImpl (на retro-core-thread) ============================
+    // ===== loadGameImpl (на retro-core-потоке) ============================
     // ======================================================================
 
     private volatile int width;
@@ -1067,6 +1143,7 @@ public class LibretroCoreWindows extends LibretroCore {
             return false;
         }
         LOGGER.info("loadGame({}) [{}]", romPath, isFlycastCore() ? "FLYCAST" : coreName());
+
         LibretroBridge.RetroGameInfo info;
         try {
             info = buildGameInfo(romPath);
@@ -1074,6 +1151,7 @@ public class LibretroCoreWindows extends LibretroCore {
             LOGGER.error("Failed to build game info for {}: {}", romPath, e.getMessage(), e);
             return false;
         }
+
         boolean ok;
         try {
             if (isFlycastCore() && supportsHwRender()) {
@@ -1139,6 +1217,7 @@ public class LibretroCoreWindows extends LibretroCore {
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
                 romPath.getFileName(), width, height,
                 avInfo.timing_fps, avInfo.timing_sample_rate);
+
         if (saveDir != null && usesFrontendBatteryRam()) {
             pendingBatteryRomPath = romPath;
             pendingBatteryLoad = true;
@@ -1293,7 +1372,7 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     // ======================================================================
-    // ===== runFrameImpl (на retro-core-thread) ============================
+    // ===== runFrameImpl (на retro-core-потоке) ============================
     // ======================================================================
 
     private void runFrameImpl() {
@@ -1324,6 +1403,7 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     // ----- pollFrame / input: с любого потока, GL не трогают --------------
+
     @Override
     public boolean pollFrame(int[] dst) {
         if (dst == null || dst.length == 0) return false;
@@ -1422,36 +1502,45 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     // ======================================================================
-    // ===== closeImpl (на retro-core-thread) ===============================
+    // ===== closeImpl (на retro-core-потоке) ===============================
     // ======================================================================
 
     private void closeImpl() {
         if (core == null) return;
         LOGGER.info("close(): shutting down libretro core {}", corePath);
+
         if (gameLoaded) {
             try { core.retro_unload_game(); } catch (Throwable t) {
                 LOGGER.warn("retro_unload_game failed: {}", t.getMessage());
             }
         }
+
         if (hwRenderActive && headlessGlReady) {
             try { headlessGl().hlg_make_current(); } catch (Throwable t) {
                 LOGGER.warn("Failed to make WGL current for shutdown: {}", t.getMessage());
             }
         }
+
         /* HW GL context must be destroyed before retro_deinit (state machine). */
         destroyHwGlContext();
+
         if (gameLoaded || coreInitialized) {
             try { core.retro_deinit(); } catch (Throwable t) {
                 LOGGER.warn("retro_deinit failed: {}", t.getMessage());
             }
         }
+
         if (isFlycastCore() && supportsHwRender()) resetVehSession();
+
         teardownHwRender();
         if (headlessGlReady) {
             try { headlessGl().hlg_destroy(); } catch (Throwable ignored) {}
             headlessGlReady = false;
         }
-        releaseGlOwnership();
+        if (hlgHandle != null) {
+            try { rawHlg().hlg_free(hlgHandle); } catch (Throwable ignored) {}
+            hlgHandle = null;
+        }
 
         LibretroBridge closed = this.core;
         KEEP_LOADED.remove(closed);
