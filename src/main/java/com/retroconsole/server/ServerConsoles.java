@@ -3,8 +3,11 @@ package com.retroconsole.server;
 import com.retroconsole.emu.CoreManager;
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
-import net.minecraft.core.BlockPos;
 import com.retroconsole.network.RetroStopConsolePacket;
+import com.retroconsole.platform.PlayerPaths;
+import com.retroconsole.platform.RetroConsolePaths;
+import com.retroconsole.platform.SaveStateManager;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -13,20 +16,31 @@ import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.retroconsole.platform.PlayerPaths;
-import com.retroconsole.platform.RetroConsolePaths;
-import com.retroconsole.platform.SaveStateManager;
-
 import java.nio.file.Path;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ServerConsoles {
-    private static final Logger LOGGER = LoggerFactory.getLogger("RetroConsole-Server");
-    private static final int VIEW_DISTANCE = 256;
 
-    private static final Map<BlockPos, Entry> ENTRIES = new HashMap<>();
-    private static final Map<BlockPos, Set<UUID>> VIEWERS = new HashMap<>();
-    private static final Map<BlockPos, FrameSenderThread> FRAME_SENDERS = new HashMap<>();
+    private static final Logger LOGGER = LoggerFactory.getLogger("RetroConsole-Server");
+
+    /** Радиус для служебных уведомлений (stop-пакет — дёшево, можно широко). */
+    private static final int NOTIFY_DISTANCE = 256;
+    /** Радиус, в котором игрок видит экран ТВ в мире и получает видеокадры. */
+    private static final int VIDEO_DISTANCE = 48;
+    /** Радиус слышимости консоли. */
+    private static final int AUDIO_DISTANCE = 32;
+
+    // ConcurrentHashMap: мутации идут с server thread, а читают их
+    // FrameSender-потоки — обычный HashMap здесь был бы гонкой.
+    private static final ConcurrentHashMap<BlockPos, Entry> ENTRIES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<BlockPos, Set<UUID>> VIEWERS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<BlockPos, FrameSenderThread> FRAME_SENDERS = new ConcurrentHashMap<>();
+
     private static CoreManager coreManager;
 
     /** Фоновый shutdown ядра — не блокирует server thread при ломании блока. */
@@ -49,15 +63,13 @@ public class ServerConsoles {
     public static void init() {
         // Directories are created lazily by RetroConsolePaths on first read;
         // we just resolve them through the same source of truth here.
-        Path cores = com.retroconsole.platform.RetroConsolePaths.coresDir();
-        Path system = com.retroconsole.platform.RetroConsolePaths.systemDir();
-        Path save = com.retroconsole.platform.RetroConsolePaths.saveDir();
+        Path cores = RetroConsolePaths.coresDir();
+        Path system = RetroConsolePaths.systemDir();
+        Path save = RetroConsolePaths.saveDir();
         coreManager = new CoreManager(cores, system, save);
         coreManager.discoverCores();
-        com.retroconsole.platform.RetroConsolePaths.logPathsSummary();
+        RetroConsolePaths.logPathsSummary();
         LOGGER.info("CoreManager initialized. discovered {} cores", coreManager.getCores().size());
-
-        // Help the player out: if there are no cores, tell them where to put them.
         if (coreManager.getCores().isEmpty()) {
             LOGGER.warn("No libretro cores found. Place .dll / .so / .dylib cores in: {}",
                     cores.toAbsolutePath().normalize());
@@ -75,8 +87,10 @@ public class ServerConsoles {
             stopEmulator(pos);
         }
         if (coreManager == null) init();
+
         var coreInfo = coreManager.findCore(coreName);
         if (coreInfo == null) { LOGGER.error("Core not found: {}", coreName); return; }
+
         Path romPath = RetroConsolePaths.romsDir().resolve(romId).normalize();
         if (!romPath.toFile().exists()) { LOGGER.error("ROM not found: {}", romPath); return; }
 
@@ -86,9 +100,11 @@ public class ServerConsoles {
 
         LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath, playerPaths);
         if (runtime == null) { LOGGER.error("Failed to load core {} with ROM {}", coreName, romId); return; }
+
         int w = Math.max(runtime.getWidth(), 1);
         int h = Math.max(runtime.getHeight(), 1);
         int[] buf = new int[w * h];
+
         ThreadedEmulatorRuntime threaded = new ThreadedEmulatorRuntime(runtime, w, h);
         threaded.start();
 
@@ -146,9 +162,8 @@ public class ServerConsoles {
     private static void notifyConsoleStopped(BlockPos pos) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null || !server.isRunning()) return;
-        int viewDist = viewDistance();
         RetroStopConsolePacket packet = new RetroStopConsolePacket(pos);
-        long radiusSq = (long) viewDist * viewDist;
+        long radiusSq = (long) NOTIFY_DISTANCE * NOTIFY_DISTANCE;
         for (ServerPlayer player : new ArrayList<>(server.getPlayerList().getPlayers())) {
             if (player.hasDisconnected()) continue;
             if (player.blockPosition().distSqr(pos) < radiusSq) {
@@ -181,13 +196,30 @@ public class ServerConsoles {
         LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, pos, ok);
     }
 
+    // ------------------------------------------------------------------
+    // Зрители
+    // ------------------------------------------------------------------
+
     public static void addViewer(BlockPos pos, UUID playerId) {
-        VIEWERS.computeIfAbsent(pos.immutable(), k -> new HashSet<>()).add(playerId);
+        VIEWERS.computeIfAbsent(pos.immutable(), k -> ConcurrentHashMap.newKeySet()).add(playerId);
     }
 
     public static void removeViewer(BlockPos pos, UUID playerId) {
         Set<UUID> viewers = VIEWERS.get(pos.immutable());
         if (viewers != null) viewers.remove(playerId);
+    }
+
+    /** Убрать игрока из зрителей ВСЕХ консолей (дисконнект/смена мира). */
+    public static void removeViewerEverywhere(UUID playerId) {
+        for (Set<UUID> viewers : VIEWERS.values()) {
+            viewers.remove(playerId);
+        }
+    }
+
+    /** Снимок зрителей консоли — читается FrameSender-потоком. */
+    public static Set<UUID> viewers(BlockPos pos) {
+        Set<UUID> v = VIEWERS.get(pos.immutable());
+        return v != null ? v : Set.of();
     }
 
     public static boolean hasEmulator(BlockPos pos) { return ENTRIES.containsKey(pos.immutable()); }
@@ -197,8 +229,11 @@ public class ServerConsoles {
         return coreManager.getCores().stream().map(CoreManager.CoreInfo::name).toList();
     }
 
-    /** Public accessor so {@link FrameSenderThread} can apply the same distance check. */
-    public static int viewDistance() { return VIEW_DISTANCE; }
+    /** Радиус видимости экрана ТВ в мире (видеокадры). */
+    public static int videoDistance() { return VIDEO_DISTANCE; }
+
+    /** Радиус слышимости консоли (аудиопакеты). */
+    public static int audioDistance() { return AUDIO_DISTANCE; }
 
     public static void stopAll() {
         LOGGER.info("stopAll(): shutting down {} emulator(s)", FRAME_SENDERS.size());

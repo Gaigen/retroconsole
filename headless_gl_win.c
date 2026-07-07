@@ -54,6 +54,9 @@
 #define HLG_GL_DEPTH24_STENCIL8         0x88F0
 #define HLG_GL_DEPTH_STENCIL_ATTACHMENT 0x821A
 #define HLG_GL_FRAMEBUFFER_COMPLETE     0x8CD5
+#define HLG_GL_PIXEL_PACK_BUFFER        0x88EB
+#define HLG_GL_STREAM_READ              0x88E8
+#define HLG_GL_READ_ONLY                0x88B8
 
 typedef HGLRC (WINAPI *PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC, HGLRC, const int *);
 
@@ -75,6 +78,10 @@ typedef struct hlg_ctx {
     int   read_count;
     unsigned int fbo, color_rb, depth_rb;
     int   fbo_ready;
+    unsigned int pbo[2];
+    int   pbo_idx;
+    int   pbo_w[2], pbo_h[2];
+    int   pbo_cap_w, pbo_cap_h;
 } hlg_ctx;
 
 /* Инстанс, привязанный к ТЕКУЩЕМУ потоку (см. шапку файла). */
@@ -126,6 +133,21 @@ static PFN_CHECKFB   p_CheckFB;
 static int s_fbo_funcs_ready = 0;
 static void (*real_glBindFramebuffer)(unsigned int, unsigned int);
 
+typedef void  (APIENTRY *PFN_GENBUF)(GLsizei, GLuint *);
+typedef void  (APIENTRY *PFN_BINDBUF)(GLenum, GLuint);
+typedef void  (APIENTRY *PFN_BUFDATA)(GLenum, ptrdiff_t, const void *, GLenum);
+typedef void  (APIENTRY *PFN_DELBUF)(GLsizei, const GLuint *);
+typedef void *(APIENTRY *PFN_MAPBUF)(GLenum, GLenum);
+typedef GLboolean (APIENTRY *PFN_UNMAPBUF)(GLenum);
+
+static PFN_GENBUF   p_GenBuf;
+static PFN_BINDBUF  p_BindBuf;
+static PFN_BUFDATA  p_BufData;
+static PFN_DELBUF   p_DelBuf;
+static PFN_MAPBUF   p_MapBuf;
+static PFN_UNMAPBUF p_UnmapBuf;
+static int s_pbo_funcs_ready = 0;
+
 static int ensure_fbo_funcs(void) {
     if (s_fbo_funcs_ready) return 1;
     EnterCriticalSection(&s_global_cs);
@@ -146,6 +168,25 @@ static int ensure_fbo_funcs(void) {
     }
     LeaveCriticalSection(&s_global_cs);
     return s_fbo_funcs_ready;
+}
+
+static int ensure_pbo_funcs(void) {
+    if (s_pbo_funcs_ready) return 1;
+    EnterCriticalSection(&s_global_cs);
+    if (!s_pbo_funcs_ready) {
+        p_GenBuf   = (PFN_GENBUF)  load_gl("glGenBuffers");
+        p_BindBuf  = (PFN_BINDBUF) load_gl("glBindBuffer");
+        p_BufData  = (PFN_BUFDATA) load_gl("glBufferData");
+        p_DelBuf   = (PFN_DELBUF)  load_gl("glDeleteBuffers");
+        p_MapBuf   = (PFN_MAPBUF)  load_gl("glMapBuffer");
+        p_UnmapBuf = (PFN_UNMAPBUF)load_gl("glUnmapBuffer");
+        s_pbo_funcs_ready = (p_GenBuf && p_BindBuf && p_BufData && p_DelBuf &&
+                             p_MapBuf && p_UnmapBuf) ? 1 : 0;
+        if (!s_pbo_funcs_ready)
+            fprintf(stderr, "[hlg-win] PBO functions unavailable — sync readback\n");
+    }
+    LeaveCriticalSection(&s_global_cs);
+    return s_pbo_funcs_ready;
 }
 
 /* =========================================================================
@@ -194,6 +235,70 @@ static void destroy_offscreen_fbo(hlg_ctx *c) {
     if (c->fbo)      p_DelFB(1, &c->fbo);
     c->fbo = c->color_rb = c->depth_rb = 0;
     c->fbo_ready = 0;
+}
+
+static void destroy_pbos(hlg_ctx *c) {
+    if (!s_pbo_funcs_ready || !c->pbo[0]) {
+        c->pbo[0] = c->pbo[1] = 0;
+        c->pbo_w[0] = c->pbo_w[1] = 0;
+        c->pbo_h[0] = c->pbo_h[1] = 0;
+        c->pbo_cap_w = c->pbo_cap_h = 0;
+        c->pbo_idx = 0;
+        return;
+    }
+    p_DelBuf(2, c->pbo);
+    c->pbo[0] = c->pbo[1] = 0;
+    c->pbo_w[0] = c->pbo_w[1] = 0;
+    c->pbo_h[0] = c->pbo_h[1] = 0;
+    c->pbo_cap_w = c->pbo_cap_h = 0;
+    c->pbo_idx = 0;
+}
+
+static int ensure_pbo_buffers(hlg_ctx *c, int w, int h) {
+    if (!ensure_pbo_funcs() || w <= 0 || h <= 0) return 0;
+    if (!c->pbo[0]) {
+        p_GenBuf(2, c->pbo);
+        c->pbo_idx = 0;
+        c->pbo_w[0] = c->pbo_w[1] = 0;
+        c->pbo_h[0] = c->pbo_h[1] = 0;
+        c->pbo_cap_w = c->pbo_cap_h = 0;
+    }
+    if (w > c->pbo_cap_w || h > c->pbo_cap_h) {
+        size_t bytes = (size_t)w * (size_t)h * 4;
+        for (int i = 0; i < 2; ++i) {
+            p_BindBuf(HLG_GL_PIXEL_PACK_BUFFER, c->pbo[i]);
+            p_BufData(HLG_GL_PIXEL_PACK_BUFFER, (ptrdiff_t)bytes, NULL, HLG_GL_STREAM_READ);
+        }
+        p_BindBuf(HLG_GL_PIXEL_PACK_BUFFER, 0);
+        c->pbo_cap_w = w;
+        c->pbo_cap_h = h;
+        c->pbo_w[0] = c->pbo_w[1] = 0;
+        c->pbo_h[0] = c->pbo_h[1] = 0;
+        c->pbo_idx = 0;
+    }
+    return 1;
+}
+
+static void copy_flipped_bgra(void *dst, const void *src, int w, int h) {
+    const unsigned char *s = (const unsigned char *)src;
+    unsigned char *d = (unsigned char *)dst;
+    size_t stride = (size_t)w * 4;
+    for (int y = 0; y < h; ++y)
+        memcpy(d + (size_t)y * stride, s + (size_t)(h - 1 - y) * stride, stride);
+}
+
+static void flip_rows_inplace(unsigned char *px, int w, int h) {
+    size_t stride = (size_t)w * 4;
+    unsigned char *tmp = (unsigned char *)malloc(stride);
+    if (!tmp) return;
+    for (int y = 0; y < h / 2; ++y) {
+        unsigned char *a = px + (size_t)y * stride;
+        unsigned char *b = px + (size_t)(h - 1 - y) * stride;
+        memcpy(tmp, a, stride);
+        memcpy(a, b, stride);
+        memcpy(b, tmp, stride);
+    }
+    free(tmp);
 }
 
 /* =========================================================================
@@ -633,6 +738,7 @@ __declspec(dllexport) int hlg_init_ex(void *h, int api, int major, int minor, in
 static void hlg_destroy_internal(hlg_ctx *c) {
     if (c->hglrc) {
         if (wglMakeCurrent(c->hdc, c->hglrc)) {
+            destroy_pbos(c);
             destroy_offscreen_fbo(c);
             wglMakeCurrent(NULL, NULL);
             if (!wglDeleteContext(c->hglrc))
@@ -648,6 +754,11 @@ static void hlg_destroy_internal(hlg_ctx *c) {
     if (c->hwnd) { DestroyWindow(c->hwnd); c->hwnd = NULL; }
     c->fbo = c->color_rb = c->depth_rb = 0;
     c->fbo_ready = 0;
+    c->pbo[0] = c->pbo[1] = 0;
+    c->pbo_w[0] = c->pbo_w[1] = 0;
+    c->pbo_h[0] = c->pbo_h[1] = 0;
+    c->pbo_cap_w = c->pbo_cap_h = 0;
+    c->pbo_idx = 0;
     c->initialized = 0;
     c->gpu_info[0] = '\0';
     c->last_fbo = 0;
@@ -737,7 +848,7 @@ __declspec(dllexport) void *hlg_get_framebuffer_ptr(void)  { return (void *)hlg_
 __declspec(dllexport) void *hlg_get_proc_address_ptr(void) { return (void *)hlg_get_proc_address; }
 
 /* =========================================================================
- *  Readback (per-instance)
+ *  Readback (per-instance, double PBO)
  * ========================================================================= */
 __declspec(dllexport) void hlg_read_pixels(void *h, int *viewport_out, void *pixels_out,
                                            int max_pixels, int req_w, int req_h) {
@@ -768,7 +879,6 @@ __declspec(dllexport) void hlg_read_pixels(void *h, int *viewport_out, void *pix
     int gl_w = vp[2] > 0 ? vp[2] : c->w;
     int gl_h = vp[3] > 0 ? vp[3] : c->h;
     if (gl_w <= 0 || gl_h <= 0) { gl_w = c->w; gl_h = c->h; }
-    /* Читаем game frame size из video_cb (req_w/req_h), не только viewport. */
     int read_w = (req_w > 0) ? req_w : gl_w;
     int read_h = (req_h > 0) ? req_h : gl_h;
     if (c->fbo_ready) {
@@ -777,28 +887,58 @@ __declspec(dllexport) void hlg_read_pixels(void *h, int *viewport_out, void *pix
     }
     if (max_pixels > 0 && read_w > 0 && (long long)read_w * read_h > max_pixels)
         read_h = max_pixels / read_w;
-    if (read_w <= 0 || read_h <= 0) { LeaveCriticalSection(&c->cs); return; }
-    viewport_out[0] = 0;
-    viewport_out[1] = 0;
-    viewport_out[2] = read_w;
-    viewport_out[3] = read_h;
-    if (ps) ps(HLG_GL_PACK_ALIGNMENT, 4);
-    rp(0, 0, read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, pixels_out);
-
-    { /* GL origin = низ-лево -> переворот строк */
-        unsigned char *px = (unsigned char *)pixels_out;
-        size_t stride = (size_t)read_w * 4;
-        unsigned char *tmp = (unsigned char *)malloc(stride);
-        if (tmp) {
-            for (int y = 0; y < read_h / 2; ++y) {
-                unsigned char *a = px + (size_t)y * stride;
-                unsigned char *b = px + (size_t)(read_h - 1 - y) * stride;
-                memcpy(tmp, a, stride);
-                memcpy(a, b, stride);
-                memcpy(b, tmp, stride);
-            }
-            free(tmp);
+    if (read_w <= 0 || read_h <= 0) {
+        if (c->fbo_ready && s_fbo_funcs_ready && prev_read >= 0) {
+            unsigned int restore = prev_read != 0 ? (unsigned int)prev_read : c->fbo;
+            p_BindFB(HLG_GL_READ_FRAMEBUFFER, restore);
         }
+        LeaveCriticalSection(&c->cs);
+        return;
+    }
+    if (ps) ps(HLG_GL_PACK_ALIGNMENT, 4);
+
+    int use_pbo = ensure_pbo_buffers(c, read_w, read_h);
+    if (use_pbo) {
+        int idx = c->pbo_idx;
+        int prev = idx ^ 1;
+        int out_w = read_w;
+        int out_h = read_h;
+
+        /* кадр N: асинхронное чтение в pbo[idx] */
+        p_BindBuf(HLG_GL_PIXEL_PACK_BUFFER, c->pbo[idx]);
+        rp(0, 0, read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, 0);
+        c->pbo_w[idx] = read_w;
+        c->pbo_h[idx] = read_h;
+
+        /* кадр N-1 из другого PBO */
+        if (c->pbo_w[prev] > 0 && c->pbo_h[prev] > 0) {
+            out_w = c->pbo_w[prev];
+            out_h = c->pbo_h[prev];
+            p_BindBuf(HLG_GL_PIXEL_PACK_BUFFER, c->pbo[prev]);
+            void *src = p_MapBuf(HLG_GL_PIXEL_PACK_BUFFER, HLG_GL_READ_ONLY);
+            if (src) {
+                copy_flipped_bgra(pixels_out, src, out_w, out_h);
+                p_UnmapBuf(HLG_GL_PIXEL_PACK_BUFFER);
+            }
+        } else {
+            memset(pixels_out, 0, (size_t)out_w * (size_t)out_h * 4);
+        }
+
+        p_BindBuf(HLG_GL_PIXEL_PACK_BUFFER, 0);
+        c->pbo_idx = prev;
+
+        viewport_out[0] = 0;
+        viewport_out[1] = 0;
+        viewport_out[2] = out_w;
+        viewport_out[3] = out_h;
+    } else {
+        /* fallback: синхронный readback */
+        viewport_out[0] = 0;
+        viewport_out[1] = 0;
+        viewport_out[2] = read_w;
+        viewport_out[3] = read_h;
+        rp(0, 0, read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, pixels_out);
+        flip_rows_inplace((unsigned char *)pixels_out, read_w, read_h);
     }
 
     if (c->fbo_ready && s_fbo_funcs_ready && prev_read >= 0) {

@@ -1322,6 +1322,9 @@ public class LibretroCoreWindows extends LibretroCore {
     private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
 
     private void drainHwFrame() {
+        synchronized (frameLock) {
+            if (newFrame) return; // предыдущий кадр не забрали — readback не нужен
+        }
         boolean pending; int w, h;
         synchronized (frameLock) {
             pending = hwFramePending;

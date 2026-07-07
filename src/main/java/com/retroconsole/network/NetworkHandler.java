@@ -45,14 +45,14 @@ public class NetworkHandler {
 
     // --- Client-bound ---
 
-    private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> {
-            int[] frame = pkt.decompressFrame();
-            if (frame != null) {
-                ClientConsoles.updateFrame(pkt.pos(), frame, pkt.width(), pkt.height());
-            }
-        });
+private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
+    // Всё на сетевом потоке: распаковка + submitFrame (внутри конвертация в ABGR).
+    // enqueueWork для кадров больше НЕ используется — очередь рендера не растёт.
+    int[] frame = pkt.decompressFrame();
+    if (frame != null) {
+        ClientConsoles.submitFrame(pkt.pos(), frame, pkt.width(), pkt.height());
     }
+}
 
     private static void handleStopConsole(RetroStopConsolePacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {

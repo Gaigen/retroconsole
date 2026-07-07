@@ -1,73 +1,173 @@
 package com.retroconsole.client;
 
+import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.retroconsole.block.ScreenBlockEntity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.system.MemoryUtil;
 
-import java.util.*;
+import java.nio.IntBuffer;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class ClientConsoles {
+/**
+ * Клиентские экраны консолей.
+ *
+ * Архитектура "последний кадр побеждает":
+ *  - submitFrame()  — вызывается с СЕТЕВОГО потока. Кадр конвертируется в ABGR
+ *    и кладётся в PENDING-слот. Если рендер не успел забрать предыдущий кадр,
+ *    тот молча затирается — очередь задач не растёт никогда.
+ *  - uploadPendingFrame() — только рендер-поток (вызывается изнутри getScreen()).
+ *    Забирает кадр из слота и заливает его в существующую текстуру одним
+ *    bulk-копированием + glTexSubImage2D. Без аллокаций и попиксельных циклов.
+ *
+ * Потребители (TvScreen, ScreenBlockEntityRenderer) продолжают просто вызывать
+ * getScreen(pos) — заливка происходит внутри него, их менять не нужно.
+ */
+public final class ClientConsoles {
 
-    public record ScreenEntry(DynamicTexture tex, ResourceLocation id,
-                               int[] frame, int width, int height) {}
+    private ClientConsoles() {}
 
-    private static final Map<BlockPos, ScreenEntry> SCREENS = new HashMap<>();
+    /** Кадр, ожидающий заливки. Пиксели уже в формате ABGR (GL RGBA little-endian). */
+    private record PendingFrame(int[] abgr, int width, int height) {}
+
+    /** Экран консоли: текстура + персистентный staging-буфер. Живёт до dispose() или смены разрешения. */
+    public static final class ScreenEntry {
+        private final DynamicTexture tex;
+        private final ResourceLocation id;
+        private final int width;
+        private final int height;
+        private final IntBuffer staging; // direct-память, переиспользуется каждый кадр
+
+        private ScreenEntry(BlockPos pos, int width, int height) {
+            this.width = width;
+            this.height = height;
+            this.tex = new DynamicTexture(width, height, true);
+            this.id = Minecraft.getInstance().getTextureManager()
+                    .register("retro_screen_" + pos.asLong(), tex);
+            this.staging = MemoryUtil.memAllocInt(width * height);
+        }
+
+        private void close() {
+            Minecraft.getInstance().getTextureManager().release(id);
+            MemoryUtil.memFree(staging);
+        }
+
+        public DynamicTexture tex() { return tex; }
+        public ResourceLocation id() { return id; }
+        public int width() { return width; }
+        public int height() { return height; }
+    }
+
+    /** PENDING пишется с сетевого потока, читается с рендера — обязательно concurrent. */
+    private static final Map<BlockPos, PendingFrame> PENDING = new ConcurrentHashMap<>();
+    /** SCREENS трогается только с рендер-потока; concurrent — дешёвая страховка. */
+    private static final Map<BlockPos, ScreenEntry> SCREENS = new ConcurrentHashMap<>();
+
     private static final Map<BlockPos, int[]> GRID_CACHE = new HashMap<>();
     private static int frameCounter = 0;
 
-    public static void updateFrame(BlockPos pos, int[] frame, int width, int height) {
-        pos = pos.immutable();
-        ScreenEntry entry = SCREENS.get(pos);
+    // ------------------------------------------------------------------
+    // Сетевой поток
+    // ------------------------------------------------------------------
 
-        if (entry != null && (entry.width() != width || entry.height() != height)) {
-            Minecraft.getInstance().getTextureManager().release(entry.id());
+    /**
+     * Принять кадр с сетевого потока. ARGB -> ABGR конвертируется здесь же,
+     * in-place (массив пришёл из decompressFrame и больше никому не нужен).
+     * Старый непоказанный кадр молча затирается.
+     */
+    public static void submitFrame(BlockPos pos, int[] argb, int width, int height) {
+        if (argb == null || width <= 0 || height <= 0) return;
+        int n = width * height;
+        if (argb.length < n) return;
+
+        for (int i = 0; i < n; i++) {
+            int p = argb[i];
+            // A и G остаются на месте, R <-> B меняются местами
+            argb[i] = (p & 0xFF00FF00) | ((p & 0xFF) << 16) | ((p >> 16) & 0xFF);
+        }
+        PENDING.put(pos.immutable(), new PendingFrame(argb, width, height));
+    }
+
+    /** Совместимость со старым путём (ClientPacketHandler). Удали вместе с ним. */
+    @Deprecated
+    public static void updateFrame(BlockPos pos, int[] frame, int width, int height) {
+        submitFrame(pos, frame, width, height);
+    }
+
+    // ------------------------------------------------------------------
+    // Рендер-поток
+    // ------------------------------------------------------------------
+
+    /**
+     * Получить экран консоли. Перед возвратом заливает свежий кадр, если он есть.
+     * Повторные вызовы в том же кадре рендера бесплатны (PENDING уже пуст).
+     */
+    public static ScreenEntry getScreen(BlockPos consolePos) {
+        if (consolePos == null) return null;
+        BlockPos pos = consolePos.immutable();
+        uploadPendingFrame(pos);
+        return SCREENS.get(pos);
+    }
+
+    /** Только рендер-поток. Забирает последний кадр из слота и заливает в текстуру. */
+    private static void uploadPendingFrame(BlockPos pos) {
+        if (!RenderSystem.isOnRenderThread()) return;
+
+        PendingFrame f = PENDING.remove(pos);
+        if (f == null) return;
+
+        ScreenEntry entry = SCREENS.get(pos);
+        if (entry != null && (entry.width != f.width() || entry.height != f.height())) {
+            entry.close();
+            SCREENS.remove(pos);
             entry = null;
         }
-
         if (entry == null) {
-            DynamicTexture tex = new DynamicTexture(width, height, true);
-            ResourceLocation id = Minecraft.getInstance().getTextureManager()
-                    .register("retro_screen_" + pos.asLong(), tex);
-            entry = new ScreenEntry(tex, id, new int[width * height], width, height);
+            entry = new ScreenEntry(pos, f.width(), f.height());
             SCREENS.put(pos, entry);
         }
 
-        System.arraycopy(frame, 0, entry.frame(), 0,
-                Math.min(frame.length, entry.frame().length));
+        int n = f.width() * f.height();
+        entry.staging.clear();
+        entry.staging.put(f.abgr(), 0, n);
+        entry.staging.flip();
 
-        var img = entry.tex().getPixels();
-        if (img != null) {
-            int w = entry.width();
-            int h = entry.height();
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    int argb = entry.frame()[y * w + x];
-                    int a = (argb >>> 24) & 0xFF;
-                    int r = (argb >> 16) & 0xFF;
-                    int g = (argb >> 8) & 0xFF;
-                    int b = argb & 0xFF;
-                    img.setPixelRGBA(x, y, (a << 24) | (b << 16) | (g << 8) | r);
-                }
-            }
-            entry.tex().upload();
-        }
+        GlStateManager._bindTexture(entry.tex.getId());
+        GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0);
+        GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, 4);
+        GlStateManager._texSubImage2D(
+                GL11.GL_TEXTURE_2D, 0, 0, 0,
+                f.width(), f.height(),
+                GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE,
+                MemoryUtil.memAddress(entry.staging));
     }
 
-    public static ScreenEntry getScreen(BlockPos consolePos) {
-        if (consolePos == null) return null;
-        return SCREENS.get(consolePos.immutable());
-    }
-
+    /** Вызывать с рендер-потока (через enqueueWork из обработчика stop-пакета). */
     public static void dispose(BlockPos pos) {
         pos = pos.immutable();
+        PENDING.remove(pos);
         ScreenEntry entry = SCREENS.remove(pos);
         if (entry != null) {
-            Minecraft.getInstance().getTextureManager().release(entry.id());
+            entry.close();
         }
         GRID_CACHE.clear();
     }
+
+    // ------------------------------------------------------------------
+    // Multi-block TV grid (без изменений)
+    // ------------------------------------------------------------------
 
     public static int[] getGridInfo(ScreenBlockEntity be) {
         BlockPos pos = be.getBlockPos().immutable();
