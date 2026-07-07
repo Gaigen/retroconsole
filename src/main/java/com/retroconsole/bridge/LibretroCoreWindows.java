@@ -1,5 +1,7 @@
 package com.retroconsole.bridge;
 
+import com.retroconsole.platform.Pcsx2BiosResolver;
+import com.retroconsole.platform.VideoQualityPresets;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -69,34 +71,20 @@ public class LibretroCoreWindows extends LibretroCore {
      * "Core queried option (no override): ..." — имена меняются между сборками.
      */
     private static final java.util.Map<String, java.util.Map<String, String>> CORE_OVERRIDES =
-            java.util.Map.of(
-                    "flycast", java.util.Map.of(
-                            "reicast_threaded_rendering", "disabled",
-                            // VMU per game → player save dir (not shared system/dc/)
-                            "flycast_per_content_vmus", "VMU A1",
-                            "reicast_per_content_vmus", "VMU A1",
-                            "flycast_device_port1_slot1", "VMU",
-                            "reicast_device_port1_slot1", "VMU"),
-                    "pcsx_rearmed", java.util.Map.of(
-                            // r26+: libretro|serial|shared — NOT enabled/disabled
-                            "pcsx_rearmed_memcard1", "libretro",
-                            "pcsx_rearmed_memcard2", "shared"),
-                    "ppsspp", java.util.Map.of(
-                            // JIT — основной источник скорости PPSSPP
-                            "ppsspp_cpu_core", "JIT",
-                            // в этом окружении PPSSPP НЕ может установить свой
-                            // exception handler (см. лог) — fast memory смертельно опасен
-                            "ppsspp_fast_memory", "disabled",
-                            "ppsspp_frameskip", "0",
-                            "ppsspp_auto_frameskip", "disabled",
-                            // 2x (960x544); GTX 1080 потянет и 3x-4x
-                            "ppsspp_internal_resolution", "960x544"),
-                    "pcsx2", java.util.Map.of(
-                            // ВАЖНО: имя файла ровно как в system/pcsx2/bios —
-                            // ядро логирует найденные BIOS строкой "Bios Found: ..."
-                            "pcsx2_bios", "SCPH-70000 JP 200-040614.BIN",
-                            // пропустить анимацию загрузки PS2 BIOS
-                            "pcsx2_fastboot", "enabled"));
+            buildCoreOverrides();
+
+    private static java.util.Map<String, java.util.Map<String, String>> buildCoreOverrides() {
+        java.util.Map<String, java.util.Map<String, String>> all = new java.util.LinkedHashMap<>();
+        all.put("flycast", VideoQualityPresets.flycastOverrides());
+        all.put("pcsx_rearmed", java.util.Map.of(
+                "pcsx_rearmed_memcard1", "libretro",
+                "pcsx_rearmed_memcard2", "shared",
+                "pcsx_rearmed_neon_enhancement_enable", "enabled",
+                "pcsx_rearmed_gpu_unai_scale_hires", "enabled"));
+        all.put("ppsspp", VideoQualityPresets.ppssppOverrides());
+        all.put("pcsx2", VideoQualityPresets.pcsx2Overrides());
+        return java.util.Map.copyOf(all);
+    }
 
     /** Диагностика: печатаем каждый уникальный запрошенный ключ опции один раз. */
     private final java.util.Set<String> loggedOptionKeys =
@@ -1021,43 +1009,29 @@ public class LibretroCoreWindows extends LibretroCore {
         if (key.startsWith("pcsx_rearmed_")) return applyPcsxRearmedDefault(key);
         if (key.startsWith("flycast_") || key.startsWith("reicast_")) return applyFlycastDefault(key);
         if (key.startsWith("ppsspp_")) return applyPpssppDefault(key);
+        if ("pcsx2_bios".equals(key) && systemDir != null) {
+            String bios = Pcsx2BiosResolver.findFirstBiosFilenameFromSystemDir(
+                    java.nio.file.Path.of(systemDir));
+            if (bios != null) return bios;
+        }
         if (key.startsWith("pcsx2_")) return applyPcsx2Default(key);
         return null;
     }
 
     private static String applyPcsxRearmedDefault(String key) {
-        return switch (key) {
-            case "pcsx_rearmed_memcard1" -> "libretro";
-            case "pcsx_rearmed_memcard2" -> "shared";
-            default -> null;
-        };
+        return VideoQualityPresets.pcsxRearmedDefault(key);
     }
 
     private static String applyFlycastDefault(String key) {
-        return switch (key) {
-            case "flycast_per_content_vmus", "reicast_per_content_vmus" -> "VMU A1";
-            case "flycast_device_port1_slot1", "reicast_device_port1_slot1" -> "VMU";
-            case "reicast_threaded_rendering" -> "disabled";
-            default -> null;
-        };
+        return VideoQualityPresets.flycastDefault(key);
     }
 
     private static String applyPpssppDefault(String key) {
-        return switch (key) {
-            case "ppsspp_cpu_core" -> "JIT";
-            case "ppsspp_fast_memory" -> "disabled";
-            case "ppsspp_frameskip" -> "0";
-            case "ppsspp_auto_frameskip" -> "disabled";
-            case "ppsspp_internal_resolution" -> "960x544";
-            default -> null;
-        };
+        return VideoQualityPresets.ppssppDefault(key);
     }
 
     private static String applyPcsx2Default(String key) {
-        return switch (key) {
-            case "pcsx2_fastboot" -> "enabled";
-            default -> null;
-        };
+        return VideoQualityPresets.pcsx2Default(key);
     }
 
     public boolean isCoreLoaded() { return core != null; }
@@ -1210,6 +1184,13 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             audioCount -= n;
             return n;
+        }
+    }
+
+    @Override
+    public int getAudioAvailable() {
+        synchronized (audioLock) {
+            return audioCount;
         }
     }
 

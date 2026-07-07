@@ -75,7 +75,7 @@ public final class RetroConsolePaths {
     }
 
     /** PCSX2 needs its BIOS under {@code system/pcsx2/bios} — see
-     *  {@code LibretroCoreLinux.findFirstPcsx2BiosFilename()}.
+     *  {@link Pcsx2BiosResolver}.
      *  <p>Note: this key is intentionally NOT prefixed with the system path —
      *  it resolves under {@link #systemDir()} so we end up with
      *  {@code <gameDir>/system/pcsx2/bios}. */

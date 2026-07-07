@@ -1,5 +1,7 @@
 package com.retroconsole.bridge;
 
+import com.retroconsole.platform.Pcsx2BiosResolver;
+import com.retroconsole.platform.VideoQualityPresets;
 import com.sun.jna.*;
 import com.sun.jna.ptr.*;
 import org.slf4j.Logger;
@@ -558,45 +560,29 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    /** PPSSPP perf defaults; desktop GL compat for GLEW on Linux. */
+    /** PPSSPP — ~1920×1088, xBRZ texture scaling. */
     private void seedPpssppDefaults() {
-        registerCoreOption("ppsspp_backend", "opengl");
-        registerCoreOption("ppsspp_internal_resolution", "480x272");
-        registerCoreOption("ppsspp_cpu_core", "JIT");
-        registerCoreOption("ppsspp_fast_memory", "enabled");
-        registerCoreOption("ppsspp_frameskip", "1");
-        registerCoreOption("ppsspp_auto_frameskip", "enabled");
-        registerCoreOption("ppsspp_mulitsample_level", "Disabled");
-        registerCoreOption("ppsspp_texture_scaling_level", "disabled");
-        registerCoreOption("ppsspp_texture_shader", "disabled");
-        registerCoreOption("ppsspp_skip_buffer_effects", "disabled");
-        registerCoreOption("ppsspp_skip_gpu_readbacks", "disabled");
-        registerCoreOption("ppsspp_lazy_texture_caching", "enabled");
+        VideoQualityPresets.seedPpsspp(this::registerCoreOption);
         registerCoreOption("ppsspp_lower_resolution_for_effects", "Balanced");
-        registerCoreOption("ppsspp_gpu_hardware_transform", "enabled");
-        registerCoreOption("ppsspp_inflight_frames", "Up to 1");
-        LOGGER.info("PPSSPP defaults: performance tuning (desktop GL)");
+        LOGGER.info("PPSSPP defaults: 960x544 (2x native, headless-friendly)");
     }
 
-    /** PCSX2 tuning for headless EGL — GL renderer, analog pad, fast DVD. */
+    /** PCSX2 — OpenGL 3× upscale (~1920×1344) for headless EGL readback. */
     private void seedPcsx2Defaults() {
-        registerCoreOption("pcsx2_fastboot", "enabled");
-        registerCoreOption("pcsx2_renderer", "OpenGL");
-        registerCoreOption("pcsx2_analog_mode1", "enabled");
-        registerCoreOption("pcsx2_fastcdvd", "enabled");
+        VideoQualityPresets.seedPcsx2(this::registerCoreOption);
+        LOGGER.info("PCSX2 defaults: OpenGL 3x upscale");
     }
 
     private void seedFlycastDefaults() {
-        registerCoreOption("flycast_per_content_vmus", "VMU A1");
-        registerCoreOption("reicast_per_content_vmus", "VMU A1");
-        registerCoreOption("flycast_device_port1_slot1", "VMU");
-        registerCoreOption("reicast_device_port1_slot1", "VMU");
-        registerCoreOption("reicast_threaded_rendering", "disabled");
+        VideoQualityPresets.seedFlycast(this::registerCoreOption);
+        LOGGER.info("Flycast defaults: 1920x1440 + tex upscale 4x");
     }
 
     private void seedPcsxRearmedDefaults() {
         registerCoreOption("pcsx_rearmed_memcard1", "libretro");
         registerCoreOption("pcsx_rearmed_memcard2", "shared");
+        registerCoreOption("pcsx_rearmed_neon_enhancement_enable", "enabled");
+        registerCoreOption("pcsx_rearmed_gpu_unai_scale_hires", "enabled");
     }
 
     /** Set directories that cores may query via environment callback. */
@@ -1023,36 +1009,23 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private static String applyPcsx2Default(String key, String defaultValue) {
-        return switch (key) {
-            case "pcsx2_fastboot" -> "enabled";
-            case "pcsx2_renderer" -> "OpenGL";
-            case "pcsx2_analog_mode1" -> "enabled";
-            case "pcsx2_fastcdvd" -> "enabled";
-            case "pcsx2_enable_hw_hacks" -> "disabled";
-            case "pcsx2_hw_download_mode" -> "Unsynchronized";
-            case "pcsx2_blending_accuracy" -> "Minimum";
-            default -> defaultValue;
-        };
+        String preset = VideoQualityPresets.pcsx2Default(key);
+        return preset != null ? preset : defaultValue;
     }
 
     private static String applyPcsxRearmedDefault(String key, String defaultValue) {
-        return switch (key) {
-            case "pcsx_rearmed_memcard1" -> "libretro";
-            case "pcsx_rearmed_memcard2" -> "shared";
-            default -> defaultValue;
-        };
+        String preset = VideoQualityPresets.pcsxRearmedDefault(key);
+        return preset != null ? preset : defaultValue;
     }
 
     private static String applyFlycastDefault(String key, String defaultValue) {
+        String preset = VideoQualityPresets.flycastDefault(key);
+        if (preset != null) return preset;
         return switch (key) {
-            case "flycast_per_content_vmus", "reicast_per_content_vmus" -> "VMU A1";
-            case "flycast_device_port1_slot1", "reicast_device_port1_slot1" -> "VMU";
             case "reicast_sh4clock" -> "200";
             case "reicast_auto_skip_frame", "reicast_frame_skipping",
                  "reicast_gdrom_fast_loading", "reicast_dc_32mb_mod",
                  "reicast_widescreen_cheats", "reicast_widescreen_hack" -> "disabled";
-            case "reicast_internal_resolution" -> "640x480";
-            case "reicast_texupscale" -> "1";
             case "reicast_oit_abuffer_size" -> "512MB";
             case "reicast_oit_layers" -> "32";
             default -> defaultValue;
@@ -1124,15 +1097,11 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private static String applyPpssppDefault(String key, String defaultValue) {
+        String preset = VideoQualityPresets.ppssppDefault(key);
+        if (preset != null) return preset;
         return switch (key) {
             case "ppsspp_backend" -> "opengl";
-            case "ppsspp_internal_resolution" -> "480x272";
-            case "ppsspp_cpu_core" -> "JIT";
-            case "ppsspp_fast_memory" -> "enabled";
-            case "ppsspp_frameskip" -> "1";
-            case "ppsspp_auto_frameskip" -> "enabled";
             case "ppsspp_mulitsample_level" -> "Disabled";
-            case "ppsspp_texture_scaling_level", "ppsspp_texture_shader" -> "disabled";
             case "ppsspp_skip_buffer_effects", "ppsspp_skip_gpu_readbacks" -> "disabled";
             case "ppsspp_lazy_texture_caching" -> "enabled";
             case "ppsspp_lower_resolution_for_effects" -> "Balanced";
@@ -1411,6 +1380,13 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
+    @Override
+    public int getAudioAvailable() {
+        synchronized (audioLock) {
+            return audioCount;
+        }
+    }
+
     /**
      * Set joypad button state (0 = released, 1 = pressed).
      */
@@ -1508,32 +1484,8 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private String findFirstPcsx2BiosFilename() {
-        if (systemDir == null) return null;
-        Path biosDir = Path.of(systemDir, "pcsx2", "bios");
-        Path preferred = biosDir.resolve("scph70000.bin");
-        if (Files.isRegularFile(preferred)) {
-            return preferred.getFileName().toString();
-        }
-        if (!Files.isDirectory(biosDir)) return null;
-        try (var stream = Files.list(biosDir)) {
-            return stream
-                    .filter(p -> Files.isRegularFile(p) || Files.isSymbolicLink(p))
-                    .filter(p -> {
-                        try {
-                            long size = Files.size(p);
-                            return size >= 4L * 1024 * 1024 && size <= 8L * 1024 * 1024;
-                        } catch (IOException e) {
-                            return false;
-                        }
-                    })
-                    .map(p -> p.getFileName().toString())
-                    .sorted()
-                    .findFirst()
-                    .orElse(null);
-        } catch (IOException e) {
-            LOGGER.warn("Failed to scan PCSX2 bios dir {}", biosDir, e);
-            return null;
-        }
+        return Pcsx2BiosResolver.findFirstBiosFilenameFromSystemDir(
+                systemDir != null ? Path.of(systemDir) : null);
     }
 
     private void logPcsx2BiosDirIfNeeded() {
