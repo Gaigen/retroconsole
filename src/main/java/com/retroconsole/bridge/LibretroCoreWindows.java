@@ -465,6 +465,20 @@ public class LibretroCoreWindows extends LibretroCore {
                     hwFramePending = true;
                     return;
                 }
+
+                // >>> ФИКС: софт-рендер (например, PPSSPP-фоллбек без HW GL) может
+                // отдавать кадр другого размера, чем заявленная геометрия
+                // (480x272 вместо 960x540). HW-путь обновляет width/height в
+                // drainHwFrame(), а софт-путь этого не делал — клиент
+                // интерпретировал буфер 480x272 как 960x540 -> "двойная" картинка.
+                if (this.width != w || this.height != h) {
+                    LOGGER.info("Software frame size changed: {}x{} -> {}x{}",
+                            this.width, this.height, w, h);
+                    this.width = w;
+                    this.height = h;
+                }
+                // <<< конец фикса
+
                 // === SOFTWARE-путь: bulk-чтение построчно (одно JNI на строку, не на пиксель) ===
                 switch (pixelFormat) {
                     case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888: {
