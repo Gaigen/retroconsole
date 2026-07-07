@@ -86,6 +86,8 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
 
     public int readAudio(short[] dst, int maxShorts) { return core.readAudio(dst, maxShorts); }
 
+    public int getAudioAvailable() { return core.getAudioAvailable(); }
+
     public double getAudioSampleRate() { return core.getAudioSampleRate(); }
 
     public LibretroCore getCore() { return core; }

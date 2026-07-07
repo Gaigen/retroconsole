@@ -125,6 +125,9 @@ public abstract class LibretroCore implements AutoCloseable {
     /** То же, но не более maxShorts сэмплов за вызов (для lockstep A/V). */
     public int readAudio(short[] dst, int maxShorts) { return 0; }
 
+    /** Сэмплов interleaved-стерео 16-bit в буфере (для lockstep A/V). */
+    public int getAudioAvailable() { return 0; }
+
     /** Частота PCM, Гц. */
     public double getAudioSampleRate() { return 48000.0; }
 
