@@ -78,6 +78,16 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         }
     }
 
+    /**
+     * «Выкл» из TvScreen: очистить romId → setRomId("") сам вызовет
+     * stopEmulator() (автосейв внутри) и разошлёт block update. После этого
+     * ПКМ по блоку снова открывает CoreSelectScreen.
+     */
+    public void powerOff() {
+        if (level == null || level.isClientSide()) return;
+        setRomId("");
+    }
+
     private void startEmulator() {
         if (level instanceof ServerLevel && !coreName.isEmpty() && !romId.isEmpty()) {
             ServerConsoles.startEmulator(worldPosition, coreName, romId, ownerId, pendingLoadAuto);
