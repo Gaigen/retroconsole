@@ -1,9 +1,9 @@
 package com.retroconsole.server;
 
 import com.retroconsole.RetroConsole;
+import com.retroconsole.block.ConsoleRegistry;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
-import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -25,6 +25,7 @@ public class ServerTickHandler {
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
         ServerConsoles.stopAll();
+        ConsoleRegistry.clear();
     }
 
     @SubscribeEvent
@@ -33,11 +34,11 @@ public class ServerTickHandler {
     }
 
     /**
-     * Send a frame to a specific player.
+     * ОПТИМИЗАЦИЯ: раньше метод принимал сырой кадр и вызывал
+     * RetroFramePacket.create (конвертация + deflate) на КАЖДОГО игрока.
+     * Теперь пакет собирается один раз в FrameSenderThread.sendVideoFrame.
      */
-    public static void sendFrameToPlayer(ServerPlayer player, BlockPos pos,
-                                          int[] frame, int width, int height) {
-        RetroFramePacket packet = RetroFramePacket.create(pos, frame, width, height);
+    public static void sendFrameToPlayer(ServerPlayer player, RetroFramePacket packet) {
         PacketDistributor.sendToPlayer(player, packet);
     }
 

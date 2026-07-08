@@ -71,7 +71,7 @@ public class TvScreen extends Screen {
         this.displayName = prettyName(this.romId);
     }
 
-    /** «nes/Super_Game.nes» → «Super_Game». Пока romId — единственный источник имени. */
+    /** «nes/Super_Game.nes» → «Super Game». Пока romId — единственный источник имени. */
     private static String prettyName(String romId) {
         if (romId == null || romId.isEmpty()) return "";
         String name = romId.replace('\\', '/');
@@ -143,6 +143,13 @@ public class TvScreen extends Screen {
         if (showHints) renderHintsOverlay(guiGraphics);
     }
 
+    @Override
+    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        // ОПТИМИЗАЦИЯ: ванильный renderBackground рисует мир + блюр каждый кадр.
+        // За кадром ТВ этого всё равно не видно — просто чёрная заливка.
+        guiGraphics.fill(0, 0, this.width, this.height, 0xFF000000);
+    }
+
     private void renderTvFrame(GuiGraphics guiGraphics) {
         ClientConsoles.ScreenEntry entry = ClientConsoles.getScreen(consolePos);
         int screenH = this.height - BAR_HEIGHT;
@@ -158,7 +165,9 @@ public class TvScreen extends Screen {
             int drawY = (screenH - drawH) / 2;
 
             guiGraphics.blit(entry.id(), drawX, drawY, 0, 0, drawW, drawH, drawW, drawH);
-            snapshotThumb(entry);
+            // ОПТИМИЗАЦИЯ: snapshotThumb здесь больше НЕ вызывается —
+            // раньше это был abgr.clone() (~11 МБ) на КАЖДЫЙ render().
+            // Миниатюра снимается один раз в removed().
         } else {
             String noSignal = "No Signal";
             guiGraphics.drawCenteredString(this.font, noSignal, this.width / 2, screenH / 2, 0xFFFFFF);
@@ -306,6 +315,12 @@ public class TvScreen extends Screen {
         if (!romId.isEmpty()) {
             PlayStats.addPlaytime(romId, (Util.getMillis() - lastFlush) / 1000);
             lastFlush = Util.getMillis();
+            // Миниатюра снимается ОДИН раз здесь, а не каждый кадр.
+            // removed() выполняется синхронно внутри setScreen — до того, как
+            // придёт stop-пакет и dispose() удалит ScreenEntry, так что
+            // peekScreen ещё видит последний кадр.
+            ClientConsoles.ScreenEntry entry = ClientConsoles.peekScreen(consolePos);
+            if (entry != null) snapshotThumb(entry);
             saveThumbnail();
         }
         super.removed();
@@ -465,7 +480,7 @@ public class TvScreen extends Screen {
         if (w <= 0 || h <= 0 || abgr.length < w * h) return;
         thumbW = w;
         thumbH = h;
-        thumbPixels = abgr.clone();
+        thumbPixels = abgr.clone(); // один раз при закрытии — не горячий путь
     }
 
     private void saveThumbnail() {

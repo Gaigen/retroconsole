@@ -3,6 +3,7 @@ package com.retroconsole.server;
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
 import com.retroconsole.network.RetroAudioPayload;
+import com.retroconsole.network.RetroFramePacket;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,17 +25,32 @@ import java.util.UUID;
  * игрокам рядом с блоком ТВ. Если получателей нет — кадр не поллится
  * вообще (эмулятор продолжает тикать, но мы не тратим ни readback, ни
  * сеть, ни аллокации на клиенте).
+ *
+ * <p>ОПТИМИЗАЦИЯ: кадр сжимается ОДИН раз и один пакет шлётся всем
+ * (как уже было сделано с RetroAudioPayload). Игрокам в мире (не в TvScreen)
+ * уходит уменьшенная копия — блоку ТВ в мире полное разрешение не нужно.
  */
 public class FrameSenderThread extends Thread {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("FrameSender-Thread");
     private static final long BATTERY_AUTOSAVE_NS = 30L * 1_000_000_000L;
 
+    /**
+     * Ширина кадра для игроков, которые видят экран в мире, но НЕ открыли
+     * TvScreen. Полное разрешение (например 1920x1440 у PSP/PS2 на HW-рендере)
+     * им не нужно: экономит трафик, deflate на сервере и аллокации на клиенте,
+     * а заодно уводит пакет подальше от лимита custom payload (~1 МиБ).
+     * Побочка: при входе/выходе из TvScreen разрешение меняется и текстура
+     * на клиенте пересоздаётся — это штатный путь ресайза в ClientConsoles.
+     */
+    private static final int WORLD_MAX_WIDTH = 480;
+
     private final BlockPos consolePos;
     private final ThreadedEmulatorRuntime threaded;
     private final LibretroRuntime runtime;
 
     private int[] buf;
+    private int[] scaledBuf = new int[0];
     private short[] audioChunk = new short[4096];
     private volatile boolean running = true;
     private long lastBatterySaveNs = System.nanoTime();
@@ -80,7 +96,7 @@ public class FrameSenderThread extends Thread {
                 // --- АУДИО: ринг сливаем каждый тик (иначе переполнится),
                 // но отправляем только тем, кто может слышать.
                 int n = runtime.readAudio(audioChunk);
-                List<ServerPlayer> audioTo = audioRecipients(players);
+                List<ServerPlayer> audioTo = recipients(players, ServerConsoles.audioDistance());
                 if (n > 0 && !audioTo.isEmpty()) {
                     dispatchAudio(server, n, audioTo);
                 }
@@ -88,7 +104,7 @@ public class FrameSenderThread extends Thread {
                 // --- ВИДЕО: нет получателей — кадр даже не поллим.
                 // newFrame остаётся true, и drainHwFrame перестаёт делать
                 // readback (см. скип в LibretroCoreWindows.drainHwFrame).
-                List<ServerPlayer> videoTo = videoRecipients(players);
+                List<ServerPlayer> videoTo = recipients(players, ServerConsoles.videoDistance());
                 if (videoTo.isEmpty()) continue;
 
                 if (!pollFrameResized()) continue;
@@ -125,8 +141,8 @@ public class FrameSenderThread extends Thread {
         }
 
         List<ServerPlayer> players = snapshotPlayers(server);
-        List<ServerPlayer> videoTo = videoRecipients(players);
-        List<ServerPlayer> audioTo = audioRecipients(players);
+        List<ServerPlayer> videoTo = recipients(players, ServerConsoles.videoDistance());
+        List<ServerPlayer> audioTo = recipients(players, ServerConsoles.audioDistance());
 
         // Аудио этого retro_run сливаем всегда (ринг не резиновый).
         int avail = runtime.getAudioAvailable();
@@ -173,25 +189,13 @@ public class FrameSenderThread extends Thread {
     // Получатели
     // ------------------------------------------------------------------
 
-    /** Игроки, которым нужен кадр: смотрят экран или стоят возле ТВ. */
-    private List<ServerPlayer> videoRecipients(List<ServerPlayer> players) {
+    /**
+     * Игроки, которым нужен поток: смотрят TvScreen или стоят в радиусе.
+     * Раньше это были две копипаст-функции videoRecipients/audioRecipients.
+     */
+    private List<ServerPlayer> recipients(List<ServerPlayer> players, int distance) {
         Set<UUID> viewers = ServerConsoles.viewers(consolePos);
-        long rSq = (long) ServerConsoles.videoDistance() * ServerConsoles.videoDistance();
-        List<ServerPlayer> out = new ArrayList<>(2);
-        for (ServerPlayer p : players) {
-            if (p.hasDisconnected()) continue;
-            if (viewers.contains(p.getUUID())
-                    || p.blockPosition().distSqr(consolePos) < rSq) {
-                out.add(p);
-            }
-        }
-        return out;
-    }
-
-    /** Игроки, которым нужен звук: смотрят экран или стоят в радиусе слышимости. */
-    private List<ServerPlayer> audioRecipients(List<ServerPlayer> players) {
-        Set<UUID> viewers = ServerConsoles.viewers(consolePos);
-        long rSq = (long) ServerConsoles.audioDistance() * ServerConsoles.audioDistance();
+        long rSq = (long) distance * distance;
         List<ServerPlayer> out = new ArrayList<>(2);
         for (ServerPlayer p : players) {
             if (p.hasDisconnected()) continue;
@@ -226,18 +230,70 @@ public class FrameSenderThread extends Thread {
         }
     }
 
+    /**
+     * ОПТИМИЗАЦИЯ (был TODO(perf)): пакет собирается и сжимается ОДИН раз
+     * на всех получателей. Раньше RetroFramePacket.create (конвертация RGB +
+     * deflate полного кадра) вызывался в цикле на КАЖДОГО игрока.
+     *
+     * Зрители TvScreen получают полное разрешение, остальные (видят блок
+     * ТВ в мире) — даунскейл до WORLD_MAX_WIDTH.
+     */
     private void sendVideoFrame(MinecraftServer server, int w, int h, List<ServerPlayer> recipients) {
         if (!canSendToServer(server)) return;
-        // Альфа-проход убран: оба продюсера кадра (drainHwFrame и софт-путь
-        // videoCb) уже пишут 0xFF в альфу.
-        //
-        // TODO(perf): если ServerTickHandler.sendFrameToPlayer сжимает кадр
-        // внутри — вынести компрессию сюда и собирать пакет ОДИН раз на всех
-        // получателей (как сделано с RetroAudioPayload выше).
-        for (ServerPlayer player : recipients) {
-            if (!canSendToServer(server)) return;
-            if (player.hasDisconnected()) continue;
-            ServerTickHandler.sendFrameToPlayer(player, consolePos, buf, w, h);
+
+        Set<UUID> viewers = ServerConsoles.viewers(consolePos);
+        List<ServerPlayer> fullRes = new ArrayList<>(recipients.size());
+        List<ServerPlayer> worldRes = new ArrayList<>(recipients.size());
+        for (ServerPlayer p : recipients) {
+            if (p.hasDisconnected()) continue;
+            if (viewers.contains(p.getUUID())) {
+                fullRes.add(p);
+            } else {
+                worldRes.add(p);
+            }
+        }
+
+        RetroFramePacket fullPacket = null;
+        if (!fullRes.isEmpty()) {
+            fullPacket = RetroFramePacket.create(consolePos, buf, w, h);
+            for (ServerPlayer player : fullRes) {
+                if (!canSendToServer(server)) return;
+                ServerTickHandler.sendFrameToPlayer(player, fullPacket);
+            }
+        }
+
+        if (!worldRes.isEmpty()) {
+            RetroFramePacket worldPacket;
+            if (w > WORLD_MAX_WIDTH) {
+                int sw = WORLD_MAX_WIDTH;
+                int sh = Math.max(1, Math.round((float) h * sw / w));
+                downscale(buf, w, h, sw, sh);
+                worldPacket = RetroFramePacket.create(consolePos, scaledBuf, sw, sh);
+            } else {
+                // Кадр и так маленький — шарим уже собранный пакет.
+                worldPacket = fullPacket != null
+                        ? fullPacket
+                        : RetroFramePacket.create(consolePos, buf, w, h);
+            }
+            for (ServerPlayer player : worldRes) {
+                if (!canSendToServer(server)) return;
+                ServerTickHandler.sendFrameToPlayer(player, worldPacket);
+            }
+        }
+    }
+
+    /** Nearest neighbor — дёшево и достаточно для экрана-блока в мире. */
+    private void downscale(int[] src, int w, int h, int sw, int sh) {
+        if (scaledBuf.length < sw * sh) {
+            scaledBuf = new int[sw * sh];
+        }
+        for (int y = 0; y < sh; y++) {
+            int sy = (int) ((long) y * h / sh);
+            int rowSrc = sy * w;
+            int rowDst = y * sw;
+            for (int x = 0; x < sw; x++) {
+                scaledBuf[rowDst + x] = src[rowSrc + (int) ((long) x * w / sw)];
+            }
         }
     }
 

@@ -257,34 +257,65 @@ public class ServerConsoles {
     /** Радиус слышимости консоли (аудиопакеты). */
     public static int audioDistance() { return AUDIO_DISTANCE; }
 
+    /**
+     * ОПТИМИЗАЦИЯ: раньше stopAll ждал до 15 с ПОСЛЕДОВАТЕЛЬНО на КАЖДОЕ
+     * ядро (4 консоли = до минуты на выходе из мира). Теперь:
+     * 1) всем сендерам сначала сигнал, потом join'ы (идут параллельно);
+     * 2) автосейв КАЖДОЙ игры (раньше stopAll не сейвил вообще —
+     *    сейвил только stopEmulator);
+     * 3) ядра закрываются параллельно с ОБЩИМ дедлайном 20 с.
+     */
     public static void stopAll() {
-        LOGGER.info("stopAll(): shutting down {} emulator(s)", FRAME_SENDERS.size());
-        for (FrameSenderThread sender : new ArrayList<>(FRAME_SENDERS.values())) {
-            sender.stopAndJoin();
-        }
+        LOGGER.info("stopAll(): shutting down {} emulator(s)", ENTRIES.size());
+
+        // 1. Сендеры: сигнал всем сразу, потом ожидание.
+        List<FrameSenderThread> senders = new ArrayList<>(FRAME_SENDERS.values());
         FRAME_SENDERS.clear();
-        List<LibretroRuntime> runtimes = new ArrayList<>();
-        for (Entry e : new ArrayList<>(ENTRIES.values())) {
-            e.threaded().stop();
-            runtimes.add(e.runtime());
-        }
+        for (FrameSenderThread sender : senders) sender.stopSender();
+        for (FrameSenderThread sender : senders) sender.stopAndJoin();
+
+        // 2. Остановка эмуляторов + автосейв.
+        List<Entry> entries = new ArrayList<>(ENTRIES.values());
         ENTRIES.clear();
         VIEWERS.clear();
+        List<LibretroRuntime> runtimes = new ArrayList<>(entries.size());
+        for (Entry e : entries) {
+            e.threaded().stop();
+            boolean saved = SaveStateManager.saveAuto(
+                    e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
+            LOGGER.info("Auto save on stopAll {} -> {}", e.romId(), saved);
+            runtimes.add(e.runtime());
+        }
+        if (runtimes.isEmpty()) {
+            awaitShutdown(2);
+            LOGGER.info("All emulators stopped.");
+            return;
+        }
+
+        // 3. Параллельное закрытие ядер с общим дедлайном.
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newFixedThreadPool(
+                        Math.min(runtimes.size(), 4), r2 -> {
+                            Thread t = new Thread(r2, "retro-console-stopall");
+                            t.setDaemon(true);
+                            return t;
+                        });
         for (LibretroRuntime runtime : runtimes) {
-            try {
-                SHUTDOWN_EXECUTOR.submit(() -> {
-                    try {
-                        runtime.close();
-                    } catch (Exception ex) {
-                        LOGGER.warn("Core shutdown failed: {}", ex.getMessage());
-                    }
-                    return null;
-                }).get(15, java.util.concurrent.TimeUnit.SECONDS);
-            } catch (java.util.concurrent.TimeoutException e) {
-                LOGGER.warn("Core shutdown timed out during world stop");
-            } catch (Exception e) {
-                LOGGER.warn("Core shutdown error: {}", e.getMessage());
+            pool.submit(() -> {
+                try {
+                    runtime.close();
+                } catch (Exception ex) {
+                    LOGGER.warn("Core shutdown failed: {}", ex.getMessage());
+                }
+            });
+        }
+        pool.shutdown();
+        try {
+            if (!pool.awaitTermination(20, java.util.concurrent.TimeUnit.SECONDS)) {
+                LOGGER.warn("Some cores did not shut down within 20s");
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
         awaitShutdown(2);
         LOGGER.info("All emulators stopped.");

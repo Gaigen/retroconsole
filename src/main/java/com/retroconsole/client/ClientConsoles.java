@@ -23,18 +23,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * Клиентские экраны консолей.
  *
  * Архитектура "последний кадр побеждает":
- *  - submitFrame()  — вызывается с СЕТЕВОГО потока. Кадр конвертируется в ABGR
- *    и кладётся в PENDING-слот. Если рендер не успел забрать предыдущий кадр,
- *    тот молча затирается — очередь задач не растёт никогда.
- *  - uploadPendingFrame() — только рендер-поток (вызывается изнутри getScreen()).
- *    Забирает кадр из слота и заливает его в существующую текстуру одним
- *    bulk-копированием + glTexSubImage2D. Без аллокаций и попиксельных циклов.
  *
- * Потребители (TvScreen, ScreenBlockEntityRenderer) продолжают просто вызывать
- * getScreen(pos) — заливка происходит внутри него, их менять не нужно.
+ * - submitFrame() — вызывается с СЕТЕВОГО потока. Кадр приходит УЖЕ в ABGR
+ *   (RetroFramePacket.decompressFrameAbgr) и кладётся в PENDING-слот.
+ *   Если рендер не успел забрать предыдущий кадр, тот молча затирается.
+ *
+ * - uploadPendingFrame() — только рендер-поток (изнутри getScreen()).
+ *   Забирает кадр из слота и заливает в текстуру одним bulk-копированием
+ *   + glTexSubImage2D. Массив кадра переходит во владение entry (lastAbgr)
+ *   БЕЗ копирования: submitFrame каждый раз приносит новый массив,
+ *   никто его после этого не мутирует.
  */
 public final class ClientConsoles {
-
     private ClientConsoles() {}
 
     /** Кадр, ожидающий заливки. Пиксели уже в формате ABGR (GL RGBA little-endian). */
@@ -76,34 +76,27 @@ public final class ClientConsoles {
     private static final Map<BlockPos, ScreenEntry> SCREENS = new ConcurrentHashMap<>();
 
     private static final Map<BlockPos, int[]> GRID_CACHE = new HashMap<>();
-    private static int frameCounter = 0;
+    /**
+     * БАГФИКС: раньше кэш чистился по ++frameCounter % 60 — это счётчик ВЫЗОВОВ,
+     * а не кадров: N блоков экрана = N инкрементов за кадр, кэш сбрасывался
+     * в N раз чаще. Теперь по времени.
+     */
+    private static final long GRID_CACHE_TTL_NS = 2_000_000_000L;
+    private static long gridCacheClearedNs = System.nanoTime();
 
     // ------------------------------------------------------------------
     // Сетевой поток
     // ------------------------------------------------------------------
 
     /**
-     * Принять кадр с сетевого потока. ARGB -> ABGR конвертируется здесь же,
-     * in-place (массив пришёл из decompressFrame и больше никому не нужен).
+     * Принять кадр с сетевого потока. Массив уже в ABGR и переходит
+     * во владение ClientConsoles — вызывающий его больше не трогает.
      * Старый непоказанный кадр молча затирается.
      */
-    public static void submitFrame(BlockPos pos, int[] argb, int width, int height) {
-        if (argb == null || width <= 0 || height <= 0) return;
-        int n = width * height;
-        if (argb.length < n) return;
-
-        for (int i = 0; i < n; i++) {
-            int p = argb[i];
-            // A и G остаются на месте, R <-> B меняются местами
-            argb[i] = (p & 0xFF00FF00) | ((p & 0xFF) << 16) | ((p >> 16) & 0xFF);
-        }
-        PENDING.put(pos.immutable(), new PendingFrame(argb, width, height));
-    }
-
-    /** Совместимость со старым путём (ClientPacketHandler). Удали вместе с ним. */
-    @Deprecated
-    public static void updateFrame(BlockPos pos, int[] frame, int width, int height) {
-        submitFrame(pos, frame, width, height);
+    public static void submitFrame(BlockPos pos, int[] abgr, int width, int height) {
+        if (abgr == null || width <= 0 || height <= 0) return;
+        if (abgr.length < width * height) return;
+        PENDING.put(pos.immutable(), new PendingFrame(abgr, width, height));
     }
 
     // ------------------------------------------------------------------
@@ -149,7 +142,10 @@ public final class ClientConsoles {
         entry.staging.clear();
         entry.staging.put(f.abgr(), 0, n);
         entry.staging.flip();
-        entry.lastAbgr = java.util.Arrays.copyOf(f.abgr(), n);
+        // ОПТИМИЗАЦИЯ: раньше здесь был Arrays.copyOf(f.abgr(), n) — ~11 МБ
+        // лишних аллокаций на КАЖДЫЙ кадр при 1920x1440. Массив принадлежит
+        // исключительно PendingFrame, его никто не мутирует — забираем как есть.
+        entry.lastAbgr = f.abgr();
 
         GlStateManager._bindTexture(entry.tex.getId());
         GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
@@ -175,12 +171,16 @@ public final class ClientConsoles {
     }
 
     // ------------------------------------------------------------------
-    // Multi-block TV grid (без изменений)
+    // Multi-block TV grid
     // ------------------------------------------------------------------
 
     public static int[] getGridInfo(ScreenBlockEntity be) {
         BlockPos pos = be.getBlockPos().immutable();
-        if (++frameCounter % 60 == 0) GRID_CACHE.clear();
+        long now = System.nanoTime();
+        if (now - gridCacheClearedNs >= GRID_CACHE_TTL_NS) {
+            GRID_CACHE.clear();
+            gridCacheClearedNs = now;
+        }
         int[] cached = GRID_CACHE.get(pos);
         if (cached != null) return cached;
 
