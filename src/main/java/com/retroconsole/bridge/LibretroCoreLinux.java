@@ -3,37 +3,41 @@ package com.retroconsole.bridge;
 import com.retroconsole.platform.Pcsx2BiosResolver;
 import com.retroconsole.platform.VideoQualityPresets;
 import com.sun.jna.*;
-import com.sun.jna.ptr.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.nio.file.*;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.Arrays;
 import java.util.List;
 
-/** JNA interface to .libheadless_gl.so — provides headless EGL/Mesa GL context. */
+/** JNA-интерфейс к .libheadless_gl.so — multi-instance headless EGL/Mesa GL. */
 interface HeadlessGL extends Library {
     HeadlessGL INSTANCE = Native.load(
             Paths.get("config/retroconsole/cores/.libheadless_gl.so").toAbsolutePath().toString(),
             HeadlessGL.class);
-    int hlg_init(int major, int minor);
-    int hlg_init_ex(int api, int major, int minor, int flags);
-    void hlg_destroy();
+
+    /* Жизненный цикл инстанса — handle первым параметром. */
+    Pointer hlg_create();
+    void    hlg_free(Pointer h);
+    int     hlg_init(Pointer h, int major, int minor);
+    int     hlg_init_ex(Pointer h, int api, int major, int minor, int flags);
+    void    hlg_destroy(Pointer h);
+    void    hlg_release(Pointer h);
+    int     hlg_make_current(Pointer h);
+    int     hlg_resize(Pointer h, int w, int height);
+    void    hlg_read_pixels(Pointer h, int[] viewport, Pointer pixels,
+                            int maxPixels, int reqW, int reqH);
+    void    hlg_debug_fbo(Pointer h);
+    String  hlg_get_gpu_info(Pointer h);
+    void    hlg_log_gpu_identity(Pointer h);
+
+    /* Процессные (без handle): libretro-коллбеки + лог/диагностика. */
     Pointer hlg_get_proc_address(String sym);
-    void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH);
-    void hlg_dump_hw_render(Pointer data, int size);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
     Pointer hlg_get_log_cb_ptr();
-    int hlg_make_current();
-    void hlg_release();
-    void hlg_debug_fbo();
-    void hlg_track_fbo(int fbo);
-    int hlg_resize(int w, int h);
-    String hlg_get_gpu_info();
-    void hlg_log_gpu_identity();
+    void    hlg_dump_hw_render(Pointer data, int size);
 }
 
 /** Callback: unsigned long hlg_get_framebuffer(void) */
@@ -44,20 +48,17 @@ interface GetProcAddressCb extends Callback { Pointer invoke(String sym); }
 
 /** JNA Structure matching struct retro_hw_render_callback (libretro, x86_64). */
 class RetroHwRenderCallback extends Structure {
-    public int context_type;              // offset  0, enum
-    // 4 bytes padding
-    public Pointer context_reset;         // offset  8, function pointer
-    public GetFramebufferCb get_current_framebuffer; // offset 16, callback
-    public GetProcAddressCb get_proc_address;        // offset 24, callback
+    public int context_type;              // offset  0
+    public Pointer context_reset;         // offset  8
+    public GetFramebufferCb get_current_framebuffer; // offset 16
+    public GetProcAddressCb get_proc_address;        // offset 24
     public byte depth;                    // offset 32
     public byte stencil;                  // offset 33
     public byte bottom_left_origin;       // offset 34
-    // 1 byte padding
-    public int version_major;             // offset 36, unsigned
-    public int version_minor;             // offset 40, unsigned
+    public int version_major;             // offset 36
+    public int version_minor;             // offset 40
     public byte cache_context;            // offset 44
-    // 3 bytes padding
-    public Pointer context_destroy;       // offset 48, function pointer
+    public Pointer context_destroy;       // offset 48
 
     @Override
     protected List<String> getFieldOrder() {
@@ -70,20 +71,19 @@ class RetroHwRenderCallback extends Structure {
 }
 
 /**
- * High-level wrapper around a libretro core.
- * Handles callback registration, game loading, frame execution,
- * and exposes a clean int[] ARGB framebuffer.
+ * Высокоуровневая обёртка над libretro-ядром: регистрация коллбеков,
+ * загрузка игры, прогон кадров и чистый int[] ARGB-фреймбуфер.
  */
 public class LibretroCoreLinux extends LibretroCore {
 
-    /** Factory used by {@link LibretroCore#load(Path, String, String)}. */
     public static LibretroCoreLinux create(Path corePath, String systemDir, String saveDir) {
         return new LibretroCoreLinux(corePath, systemDir, saveDir);
     }
+
     private static final Logger LOGGER = LoggerFactory.getLogger("LibretroCore");
 
     private LibretroBridge core;
-    private java.nio.file.Path corePath;
+    private final java.nio.file.Path corePath;
     private LibretroBridge.RetroEnvironment envCallback;
     private LibretroBridge.RetroVideoRefresh videoCallback;
     private LibretroBridge.RetroAudioSample audioCallback;
@@ -91,16 +91,16 @@ public class LibretroCoreLinux extends LibretroCore {
     private LibretroBridge.RetroInputPoll inputPollCallback;
     private LibretroBridge.RetroInputState inputStateCallback;
 
-    // Frame buffer — written by video callback, read by pollFrame()
+    // Фреймбуфер — пишет video-коллбек, читает pollFrame()
     private final Object frameLock = new Object();
     private int[] frameBuffer;
     private int frameWidth;
     private int frameHeight;
     private volatile boolean newFrame = false;
-    
+
     private int pixelFormat = LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888;
 
-    // HW render state for Flycast
+    // Состояние HW-рендера
     private boolean hwRenderActive = false;
     private boolean hwGpuLoggedOnEmulatorThread = false;
     private boolean hwBottomLeftOrigin = true;
@@ -110,14 +110,15 @@ public class LibretroCoreLinux extends LibretroCore {
     private int hwPbufH = 0;
     private Pointer hwContextReset = null;
     private boolean hwContextResetDone = false;
-    // Keep callbacks alive so JNA trampolines aren't GC'd
-    private GetFramebufferCb hwGetFramebuffer;
-    private GetProcAddressCb hwGetProcAddress;
-    private LibretroBridge.RetroLogCallback logCallback; // for RETRO_ENVIRONMENT_GET_LOG_INTERFACE (PPSSPP needs this)
+
+    /** Хэндл нашего GL-инстанса в .libheadless_gl.so (свой на каждое ядро). */
+    private Pointer glCtx = null;
+
+    private LibretroBridge.RetroLogCallback logCallback;
     private LibretroBridge.RetroLogCallbackStruct logCallbackStruct;
     private static final Pointer RETRO_HW_FRAME_BUFFER_VALID = Pointer.createConstant(-1);
 
-    // Audio-based frame pacing — Flycast uses audio consumption rate for timing
+    // Аудио-пейсинг (Flycast использует потребление аудио как тайминг)
     private final AudioPacing audioPacing = new AudioPacing(44100);
     private static final int AUDIO_RING_CAP = 48000 * 2;
     private final short[] audioRing = new short[AUDIO_RING_CAP];
@@ -128,17 +129,15 @@ public class LibretroCoreLinux extends LibretroCore {
     private volatile double audioSampleRate = 48000.0;
     private volatile double timingFps = 60.0;
 
-    // Input state — written by server thread, read by emulator thread
-    // AtomicIntegerArray for lock-free inter-thread visibility
+    // Ввод — пишет server-поток, читает emulator-поток (lock-free)
     private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(16); // 16 buttons
+            new java.util.concurrent.atomic.AtomicIntegerArray(16);
     private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(4); // LX, LY, RX, RY
-    // Analog trigger state (L2, R2) — separate from joypad digital buttons
+            new java.util.concurrent.atomic.AtomicIntegerArray(4);
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(2); // L2, R2 (0 or 32767)
+            new java.util.concurrent.atomic.AtomicIntegerArray(2);
 
-    // System paths (persistent native memory for env callbacks)
+    // Системные пути (persistent native memory для env-коллбеков)
     private String systemDir;
     private String saveDir;
     private Memory persistentSystemDir;
@@ -148,29 +147,17 @@ public class LibretroCoreLinux extends LibretroCore {
     private volatile boolean pendingBatteryLoad;
     private Path pendingBatteryRomPath;
 
-    // Loaded game path (for save file naming)
     private String loadedGamePath;
 
-    /**
-     * Load a libretro core from a native library file.
-     *
-     * @param corePath Path to .dll or .so file
-     */
-    /**
-     * Load a libretro core from a native library file.
-     *
-     * @param corePath Path to .dll or .so file
-     */
     private LibretroCoreLinux(Path corePath, String systemDir, String saveDir) {
         super(corePath);
+        this.corePath = corePath;              // FIX: раньше не присваивалось → NPE в isXxxCore()
         LOGGER.info("Loading libretro core: {}", corePath);
 
-        if (systemDir != null) {
+        if (systemDir != null)
             systemDir = Path.of(systemDir).toAbsolutePath().normalize().toString();
-        }
-        if (saveDir != null) {
+        if (saveDir != null)
             saveDir = Path.of(saveDir).toAbsolutePath().normalize().toString();
-        }
         this.systemDir = systemDir;
         this.saveDir = saveDir;
         updatePersistentDirMemory();
@@ -178,177 +165,73 @@ public class LibretroCoreLinux extends LibretroCore {
         this.core = Native.load(corePath.toAbsolutePath().toString(), LibretroBridge.class);
         LOGGER.info("Core loaded. API version: {}", this.core.retro_api_version());
 
-        // Set up callbacks BEFORE retro_init()
-        setupCallbacks();
+        setupCallbacks(); // ДО retro_init()
 
-        // CRITICAL for Flycast: NOP-out the log callback CALL inside
-        // LogManager::LogWithFullPath BEFORE retro_init runs.
-        // Flycast logs "[BOOT]: retro_init" from inside retro_init itself, and
-        // its log_cb pointer is junk (0x4) because JNA can't deliver a real
-        // function pointer via the environment callback. Patching BSS log_cb
-        // (the old approach) was wrong \u2014 the real pointer lives at this+0x250
-        // and is dereferenced as `call rcx`. NOPping the call site removes the
-        // dereference entirely.
-        if (isFlycastCore()) {
-            disableFlycastLogCall();
-        }
-
-        if (isPpssppCore()) {
-            seedPpssppDefaults();
-        }
-
-        if (isPcsx2Core()) {
-            seedPcsx2Defaults();
-        }
-        if (isFlycastCore()) {
-            seedFlycastDefaults();
-        }
-        if (isPcsxRearmedCore()) {
-            seedPcsxRearmedDefaults();
-        }
+        if (isFlycastCore()) disableFlycastLogCall();
+        if (isPpssppCore()) seedPpssppDefaults();
+        if (isPcsx2Core()) seedPcsx2Defaults();
+        if (isFlycastCore()) seedFlycastDefaults();
+        if (isPcsxRearmedCore()) seedPcsxRearmedDefaults();
 
         this.core.retro_init();
         LOGGER.info("Core initialized.");
 
-        // Query system info
         var sysInfo = new LibretroBridge.RetroSystemInfo();
         this.core.retro_get_system_info(sysInfo);
         LOGGER.info("Core: {} v{}", sysInfo.library_name, sysInfo.library_version);
     }
 
     private void setupCallbacks() {
-        // Environment callback — handles core queries
+        // Environment — запросы ядра
         envCallback = (cmd, data) -> handleEnvironment(cmd, data);
         core.retro_set_environment(envCallback);
 
-        // Video callback — receives frames from the core
+        // Video — кадры от ядра
         videoCallback = (data, width, height, pitch) -> {
             if (width <= 0 || height <= 0) {
                 if (hwRenderActive) newFrame = true;
                 return;
             }
-
             synchronized (frameLock) {
                 long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
                 boolean hwFb = hwRenderActive && (data == null || dataAddr == -1 || dataAddr == 0);
-                // GET_CAN_DUPE: NULL data means "repeat last frame", not a pixel buffer.
+                // GET_CAN_DUPE: NULL data = «повтори прошлый кадр», а не буфер пикселей.
                 if (!hwFb && (data == null || dataAddr == 0)) {
                     newFrame = true;
                     return;
                 }
-
                 if (frameBuffer == null || frameWidth != width || frameHeight != height) {
                     frameBuffer = new int[width * height];
                     frameWidth = width;
                     frameHeight = height;
                 }
-
                 int[] fb = frameBuffer;
-                // HW rendering: data is RETRO_HW_FRAME_BUFFER_VALID or null.
                 if (hwFb) {
-                    // PPSSPP/PCSX2: skip readback until context_reset on emulator thread
+                    // PPSSPP/PCSX2: не читаем до context_reset на emulator-потоке
                     if ((isPpssppCore() || isPcsx2Core()) && !hwContextResetDone) {
                         newFrame = true;
                         return;
                     }
-                    try {
-                        // GL surface must fit the core's viewport; readback uses video_cb size.
-                        int surfW = Math.max(width, hwPbufW);
-                        int surfH = Math.max(height, hwPbufH);
-                        if (surfW != hwPbufW || surfH != hwPbufH) {
-                            HeadlessGL.INSTANCE.hlg_resize(surfW, surfH);
-                            hwPbufW = surfW;
-                            hwPbufH = surfH;
-                        }
-                        HeadlessGL.INSTANCE.hlg_debug_fbo();
-                        int[] vp = new int[4];
-                        int maxPixels = width * height;
-                        Memory nativePixels = new Memory((long) maxPixels * 4L);
-                        HeadlessGL.INSTANCE.hlg_read_pixels(vp, nativePixels, maxPixels, width, height);
-                        // Grow GL backing store if core uses a larger viewport (e.g. PCSX2/Flycast).
-                        int vpW = vp[2] > 0 ? vp[2] : width;
-                        int vpH = vp[3] > 0 ? vp[3] : height;
-                        if (vpW > hwPbufW || vpH > hwPbufH) {
-                            hwPbufW = Math.max(hwPbufW, vpW);
-                            hwPbufH = Math.max(hwPbufH, vpH);
-                            HeadlessGL.INSTANCE.hlg_resize(hwPbufW, hwPbufH);
-                        }
-                        int readW = width;
-                        int readH = height;
-                        for (int y = 0; y < readH; y++) {
-                            int srcY = hwBottomLeftOrigin ? (readH - 1 - y) : y;
-                            for (int x = 0; x < readW; x++) {
-                                long off = ((long) srcY * readW + x) * 4;
-                                int r = nativePixels.getByte(off)     & 0xFF;
-                                int g = nativePixels.getByte(off + 1) & 0xFF;
-                                int b = nativePixels.getByte(off + 2) & 0xFF;
-                                fb[y * width + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
-                            }
-                        }
-                    } catch (Throwable t) {
-                        // GL readback failed — fill with dark gray so we know rendering attempted
-                        java.util.Arrays.fill(fb, 0xFF202020);
-                    }
+                    readbackHwFrame(fb, width, height);
                     newFrame = true;
                     return;
                 }
-
                 if (data == null) return;
-
-                switch (pixelFormat) {
-                    case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888 -> {
-                        int stride = (int) (pitch / 4);
-                        for (int y = 0; y < height; y++) {
-                            for (int x = 0; x < width; x++) {
-                                int srcOffset = y * stride + x;
-                                int pixel = data.getInt((long) srcOffset * 4);
-                                fb[y * width + x] = 0xFF000000 | (pixel & 0x00FFFFFF);
-                            }
-                        }
-                    }
-                    case LibretroBridge.RETRO_PIXEL_FORMAT_RGB565 -> {
-                        // Input is RGB565 (2 bytes per pixel)
-                        int stride = (int) (pitch / 2);
-                        for (int y = 0; y < height; y++) {
-                            for (int x = 0; x < width; x++) {
-                                short pixel = data.getShort((long) (y * stride + x) * 2);
-                                int r = ((pixel >> 11) & 0x1F) << 3;
-                                int g = ((pixel >> 5) & 0x3F) << 2;
-                                int b = (pixel & 0x1F) << 3;
-                                fb[y * width + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
-                            }
-                        }
-                    }
-                    case LibretroBridge.RETRO_PIXEL_FORMAT_0RGB1555 -> {
-                        // Input is 0RGB1555 (2 bytes per pixel)
-                        int stride = (int) (pitch / 2);
-                        for (int y = 0; y < height; y++) {
-                            for (int x = 0; x < width; x++) {
-                                short pixel = data.getShort((long) (y * stride + x) * 2);
-                                int r = ((pixel >> 10) & 0x1F) << 3;
-                                int g = ((pixel >> 5) & 0x1F) << 3;
-                                int b = (pixel & 0x1F) << 3;
-                                fb[y * width + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
-                            }
-                        }
-                    }
-                }
+                convertSoftwareFrame(fb, data, width, height, pitch);
                 newFrame = true;
             }
         };
         core.retro_set_video_refresh(videoCallback);
 
-        // Audio callbacks — use audio production rate for frame pacing.
-        // Flycast relies on audio consumption as its timing signal.
+        // Audio — производство аудио = сигнал тайминга (Flycast)
         audioCallback = (left, right) -> { /* discard */ };
         core.retro_set_audio_sample(audioCallback);
 
         audioBatchCallback = (data, frames) -> {
             int frameCount = (int) frames;
             if (frameCount > 0 && data != null) {
-                int samples = frameCount * 2;
                 synchronized (audioLock) {
-                    appendAudio(data, samples);
+                    appendAudio(data, frameCount * 2);
                 }
             }
             audioPacing.consumeSamples(frameCount);
@@ -356,42 +239,31 @@ public class LibretroCoreLinux extends LibretroCore {
         };
         core.retro_set_audio_sample_batch(audioBatchCallback);
 
-        // Input poll callback
-        inputPollCallback = () -> { /* nothing to poll, state is already set */ };
+        inputPollCallback = () -> { /* состояние уже выставлено server-потоком */ };
         core.retro_set_input_poll(inputPollCallback);
 
-        // Input state callback — returns button/analog state
         inputStateCallback = (port, device, index, id) -> {
             if (port != 0) return 0;
-
-            // Joypad buttons: device=1 (JOYPAD), index=0, id=0..15 or MASK=256
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
                     int mask = 0;
-                    for (int i = 0; i < 16; i++) {
+                    for (int i = 0; i < 16; i++)
                         if (joypadState.get(i) != 0) mask |= (1 << i);
-                    }
                     return (short) mask;
                 }
-                if (index == 0 && id >= 0 && id < 16) {
+                if (index == 0 && id >= 0 && id < 16)
                     return (short) joypadState.get(id);
-                }
             }
-            // Analog sticks & triggers: device=5 (ANALOG)
             if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
-                // Left stick
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
                     if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(0);
                     if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(1);
                 }
-                // Right stick
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
                     if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(2);
                     if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(3);
                 }
-                // Analog triggers (L/R or L2/R2) — index=2
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_BUTTON) {
-                    // Flycast may use L(10)/R(11) or L2(12)/R2(13) for Dreamcast triggers
                     if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L ||
                         id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) return (short) triggerState.get(0);
                     if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R ||
@@ -403,25 +275,94 @@ public class LibretroCoreLinux extends LibretroCore {
         core.retro_set_input_state(inputStateCallback);
     }
 
-    // Flycast patches — Dreamcast core's libretro callbacks are broken under JNA
-    // (function pointers come through as 0x4 garbage). We work around this by
-    // NOPping the call sites in flycast_libretro.so that dereference Flycast's
-    // internal log_cb slot (BSS at 0x26d82e0) and its LogManager::LogWithFullPath
-    // call site. This makes Flycast skip its printf-style logging entirely, which
-    // is fine for our purposes (we don't display Flycast's log output anywhere).
-    //
-    // All offsets below are valid for the build of flycast_libretro.so in this
-    // workspace (md5 209786943fee54e07b4c0849d84907ad). If Flycast is updated,
-    // these may shift — see asm in /tmp/flycast.S to re-derive.
-    private static final int FLYCAST_LOG_CALL_OFFSET = 0x39abad;  // `call rcx` in LogManager::LogWithFullPath (2 bytes)
-    private static final int FLYCAST_BSS_CALL_1     = 0x397b08;  // `call [0x26d82e0]` in retro_load_game (6 bytes)
-    private static final int FLYCAST_BSS_CALL_2     = 0x3985c7;  // `call [0x26d82e0]` in retro_load_game (6 bytes)
-    private static final int FLYCAST_BSS_CALL_3     = 0x399f28;  // `call [0x26d82e0]` in retro_init/other (6 bytes)
-    private static final byte[] NOP2 = new byte[] { (byte) 0x90, (byte) 0x90 };
-    private static final byte[] NOP6 = new byte[] { (byte) 0x90, (byte) 0x90, (byte) 0x90,
-                                                    (byte) 0x90, (byte) 0x90, (byte) 0x90 };
+    /** Читает HW-кадр из headless GL в fb (RGBA→ARGB, Y-flip по origin). */
+    private void readbackHwFrame(int[] fb, int width, int height) {
+        try {
+            // GL-поверхность должна вмещать вьюпорт ядра
+            int surfW = Math.max(width, hwPbufW);
+            int surfH = Math.max(height, hwPbufH);
+            if (surfW != hwPbufW || surfH != hwPbufH) {
+                HeadlessGL.INSTANCE.hlg_resize(glCtx, surfW, surfH);
+                hwPbufW = surfW;
+                hwPbufH = surfH;
+            }
+            HeadlessGL.INSTANCE.hlg_debug_fbo(glCtx);
+            int[] vp = new int[4];
+            int maxPixels = width * height;
+            Memory nativePixels = new Memory((long) maxPixels * 4L);
+            HeadlessGL.INSTANCE.hlg_read_pixels(glCtx, vp, nativePixels, maxPixels, width, height);
 
-    // C library symbols we call via JNA to make a page writable before patching.
+            // Растим GL-хранилище, если ядро рисует в больший вьюпорт (PCSX2/Flycast)
+            int vpW = vp[2] > 0 ? vp[2] : width;
+            int vpH = vp[3] > 0 ? vp[3] : height;
+            if (vpW > hwPbufW || vpH > hwPbufH) {
+                hwPbufW = Math.max(hwPbufW, vpW);
+                hwPbufH = Math.max(hwPbufH, vpH);
+                HeadlessGL.INSTANCE.hlg_resize(glCtx, hwPbufW, hwPbufH);
+            }
+            for (int y = 0; y < height; y++) {
+                int srcY = hwBottomLeftOrigin ? (height - 1 - y) : y;
+                int dstRow = y * width;
+                long srcRow = (long) srcY * width * 4;
+                for (int x = 0; x < width; x++) {
+                    long off = srcRow + (long) x * 4;
+                    int r = nativePixels.getByte(off)     & 0xFF;
+                    int g = nativePixels.getByte(off + 1) & 0xFF;
+                    int b = nativePixels.getByte(off + 2) & 0xFF;
+                    fb[dstRow + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                }
+            }
+        } catch (Throwable t) {
+            Arrays.fill(fb, 0xFF202020); // тёмно-серый — видно, что readback упал
+        }
+    }
+
+    /** Конвертирует software-кадр в ARGB по текущему pixelFormat. */
+    private void convertSoftwareFrame(int[] fb, Pointer data, int width, int height, long pitch) {
+        switch (pixelFormat) {
+            case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888 -> {
+                int stride = (int) (pitch / 4);
+                for (int y = 0; y < height; y++)
+                    for (int x = 0; x < width; x++)
+                        fb[y * width + x] = 0xFF000000 | (data.getInt((long) (y * stride + x) * 4) & 0x00FFFFFF);
+            }
+            case LibretroBridge.RETRO_PIXEL_FORMAT_RGB565 -> {
+                int stride = (int) (pitch / 2);
+                for (int y = 0; y < height; y++)
+                    for (int x = 0; x < width; x++) {
+                        short px = data.getShort((long) (y * stride + x) * 2);
+                        int r = ((px >> 11) & 0x1F) << 3;
+                        int g = ((px >> 5)  & 0x3F) << 2;
+                        int b =  (px        & 0x1F) << 3;
+                        fb[y * width + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                    }
+            }
+            case LibretroBridge.RETRO_PIXEL_FORMAT_0RGB1555 -> {
+                int stride = (int) (pitch / 2);
+                for (int y = 0; y < height; y++)
+                    for (int x = 0; x < width; x++) {
+                        short px = data.getShort((long) (y * stride + x) * 2);
+                        int r = ((px >> 10) & 0x1F) << 3;
+                        int g = ((px >> 5)  & 0x1F) << 3;
+                        int b =  (px        & 0x1F) << 3;
+                        fb[y * width + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                    }
+            }
+        }
+    }
+
+    // ---- Flycast: патчи сломанных под JNA лог-коллбеков ----
+    // NOP-им call-сайты в flycast_libretro.so, которые разыменовывают внутренний
+    // log_cb (JNA отдаёт 0x4-мусор вместо указателя → SIGSEGV). Оффсеты валидны
+    // для сборки flycast_libretro.so в этом workspace (md5 209786943fee54e07b4c0849d84907ad).
+    private static final int FLYCAST_LOG_CALL_OFFSET = 0x39abad;  // call rcx в LogManager::LogWithFullPath (2 б)
+    private static final int FLYCAST_BSS_CALL_1      = 0x397b08;  // call [0x26d82e0] в retro_load_game (6 б)
+    private static final int FLYCAST_BSS_CALL_2      = 0x3985c7;  // call [0x26d82e0] в retro_load_game (6 б)
+    private static final int FLYCAST_BSS_CALL_3      = 0x399f28;  // call [0x26d82e0] в retro_init/other (6 б)
+    private static final byte[] NOP2 = { (byte) 0x90, (byte) 0x90 };
+    private static final byte[] NOP6 = { (byte) 0x90, (byte) 0x90, (byte) 0x90,
+                                         (byte) 0x90, (byte) 0x90, (byte) 0x90 };
+
     private interface LibC extends com.sun.jna.Library {
         LibC INSTANCE = com.sun.jna.Native.load("c", LibC.class);
         int mprotect(Pointer addr, long len, int prot);
@@ -430,26 +371,14 @@ public class LibretroCoreLinux extends LibretroCore {
         int PROT_EXEC  = 0x4;
     }
 
-    /**
-     * Patch Flycast's broken log callback machinery so it never tries to invoke
-     * a function pointer that came in through JNA (which delivers 0x4 garbage
-     * for C function pointers, causing SIGSEGV). We NOP the call sites in code
-     * rather than fixing the BSS slot — this way Flycast skips its internal
-     * logging entirely without us having to provide a valid C function.
-     *
-     * Safe no-op for cores that are not flycast_libretro.so.
-     *
-     * Must be called BEFORE retro_init().
-     */
+    /** Отключает сломанный лог-механизм Flycast. Вызывать ДО retro_init(). */
     private void disableFlycastLogCall() {
-        long baseAddr;
+        long baseAddr = 0;
         try {
-            baseAddr = 0;
             String mapsPath = "/proc/" + ProcessHandle.current().pid() + "/maps";
-            for (String line : java.nio.file.Files.readAllLines(java.nio.file.Paths.get(mapsPath))) {
+            for (String line : Files.readAllLines(Paths.get(mapsPath))) {
                 if (line.contains("flycast_libretro.so") && line.contains("r-xp")) {
-                    String addr = line.split("-")[0];
-                    baseAddr = Long.parseLong(addr, 16);
+                    baseAddr = Long.parseLong(line.split("-")[0], 16);
                     break;
                 }
             }
@@ -461,22 +390,18 @@ public class LibretroCoreLinux extends LibretroCore {
             LOGGER.debug("flycast_libretro.so not loaded — skipping Flycast patches");
             return;
         }
-
-        long pageSize = 4096;
         nopFlycastCallSite(baseAddr, FLYCAST_LOG_CALL_OFFSET, NOP2);
-        nopFlycastCallSite(baseAddr, FLYCAST_BSS_CALL_1,     NOP6);
-        nopFlycastCallSite(baseAddr, FLYCAST_BSS_CALL_2,     NOP6);
-        nopFlycastCallSite(baseAddr, FLYCAST_BSS_CALL_3,     NOP6);
+        nopFlycastCallSite(baseAddr, FLYCAST_BSS_CALL_1, NOP6);
+        nopFlycastCallSite(baseAddr, FLYCAST_BSS_CALL_2, NOP6);
+        nopFlycastCallSite(baseAddr, FLYCAST_BSS_CALL_3, NOP6);
     }
 
-    /** NOP a range of bytes inside flycast_libretro.so (handles mprotect). */
     private void nopFlycastCallSite(long baseAddr, int offset, byte[] nopBytes) {
         long pageSize = 4096;
         long targetAddr = baseAddr + offset;
         long pageStart = targetAddr & ~(pageSize - 1);
         long pageEnd   = (targetAddr + nopBytes.length + pageSize - 1) & ~(pageSize - 1);
-        long pageLen   = pageEnd - pageStart;
-        int rc = LibC.INSTANCE.mprotect(new Pointer(pageStart), pageLen,
+        int rc = LibC.INSTANCE.mprotect(new Pointer(pageStart), pageEnd - pageStart,
                 LibC.PROT_READ | LibC.PROT_WRITE | LibC.PROT_EXEC);
         if (rc != 0) {
             LOGGER.error("mprotect failed for Flycast patch at base+0x{} (rc={})",
@@ -490,8 +415,7 @@ public class LibretroCoreLinux extends LibretroCore {
         boolean ok = true;
         for (byte b : verify) if (b != (byte) 0x90) { ok = false; break; }
         LOGGER.info("Flycast patch at base+0x{} ({} bytes): original={} verified={}",
-                Long.toHexString(offset), nopBytes.length,
-                bytesToHex(original), ok);
+                Long.toHexString(offset), nopBytes.length, bytesToHex(original), ok);
     }
 
     private static String bytesToHex(byte[] b) {
@@ -500,36 +424,26 @@ public class LibretroCoreLinux extends LibretroCore {
         return sb.toString().trim();
     }
 
-    private boolean isFlycastCore() {
+    // ---- Определение ядра по имени файла ----
+    private boolean coreNameContains(String needle) {
         return corePath != null
-                && corePath.getFileName().toString().toLowerCase().contains("flycast");
+                && corePath.getFileName().toString().toLowerCase().contains(needle);
     }
+    private boolean isFlycastCore()     { return coreNameContains("flycast"); }
+    private boolean isPcsxRearmedCore() { return coreNameContains("pcsx_rearmed"); }
+    private boolean isPpssppCore()      { return coreNameContains("ppsspp"); }
 
-    private boolean isPcsxRearmedCore() {
-        return corePath != null
-                && corePath.getFileName().toString().toLowerCase().contains("pcsx_rearmed");
-    }
+    /** Headless EGL (Mesa) для HW-render ядер. */
+    private boolean supportsHwRender() { return true; }
 
-    private boolean isPpssppCore() {
-        return corePath != null
-                && corePath.getFileName().toString().toLowerCase().contains("ppsspp");
-    }
-
-    /** Headless EGL (Mesa llvmpipe) for HW-render cores. */
-    private boolean supportsHwRender() {
-        return true;
-    }
-
-    /** PPSSPP on Linux uses GLEW — needs desktop GL compat, not EGL GLES. */
+    /** PPSSPP на Linux использует GLEW — нужен desktop GL compat, не EGL GLES. */
     private static final int HLG_FLAG_COMPAT_PROFILE = 1;
 
+    /** Лениво создаёт/переинициализирует свой GL-инстанс под тип контекста ядра. */
     private boolean ensureHeadlessGl(int ctxType) {
         int api, major, minor, flags;
         if (isPpssppCore()) {
-            api = 0;
-            major = 3;
-            minor = 3;
-            flags = HLG_FLAG_COMPAT_PROFILE;
+            api = 0; major = 3; minor = 3; flags = HLG_FLAG_COMPAT_PROFILE;
         } else {
             api = (ctxType == 1 || ctxType == 2 || ctxType == 4) ? 1 : 0;
             major = 3;
@@ -538,21 +452,29 @@ public class LibretroCoreLinux extends LibretroCore {
         }
         int profileKey = (api & 0xFF) | ((flags & 0xFF) << 8) | ((minor & 0xFF) << 16);
         if (headlessGlReady && headlessGlApi == profileKey) return true;
+
+        if (glCtx == null) {
+            glCtx = HeadlessGL.INSTANCE.hlg_create();
+            if (glCtx == null || Pointer.nativeValue(glCtx) == 0) {
+                LOGGER.error("hlg_create() failed — no headless GL instance");
+                glCtx = null;
+                return false;
+            }
+        }
         if (headlessGlReady) {
-            try { HeadlessGL.INSTANCE.hlg_destroy(); } catch (Throwable ignored) {}
+            try { HeadlessGL.INSTANCE.hlg_destroy(glCtx); } catch (Throwable ignored) {}
             headlessGlReady = false;
             headlessGlApi = -1;
         }
         try {
-            int glOk = HeadlessGL.INSTANCE.hlg_init_ex(api, major, minor, flags);
+            int glOk = HeadlessGL.INSTANCE.hlg_init_ex(glCtx, api, major, minor, flags);
             headlessGlReady = glOk != 0;
             if (headlessGlReady) headlessGlApi = profileKey;
             String apiName = isPpssppCore() ? "GL 3.3 Compat"
                     : (api == 1 ? "GLES" + major : "GL " + major + "." + minor);
             LOGGER.info("Headless GL context ({}): {}", apiName, headlessGlReady ? "OK" : "FAILED");
-            if (headlessGlReady) {
-                LOGGER.info("Headless GL GPU: {}", HeadlessGL.INSTANCE.hlg_get_gpu_info());
-            }
+            if (headlessGlReady)
+                LOGGER.info("Headless GL GPU: {}", HeadlessGL.INSTANCE.hlg_get_gpu_info(glCtx));
             return headlessGlReady;
         } catch (Throwable t) {
             LOGGER.warn("Headless GL init failed: {}", t.getMessage());
@@ -560,14 +482,12 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    /** PPSSPP — ~1920×1088, xBRZ texture scaling. */
     private void seedPpssppDefaults() {
         VideoQualityPresets.seedPpsspp(this::registerCoreOption);
         registerCoreOption("ppsspp_lower_resolution_for_effects", "Balanced");
         LOGGER.info("PPSSPP defaults: 960x544 (2x native, headless-friendly)");
     }
 
-    /** PCSX2 — OpenGL 3× upscale (~1920×1344) for headless EGL readback. */
     private void seedPcsx2Defaults() {
         VideoQualityPresets.seedPcsx2(this::registerCoreOption);
         LOGGER.info("PCSX2 defaults: OpenGL 3x upscale");
@@ -585,7 +505,7 @@ public class LibretroCoreLinux extends LibretroCore {
         registerCoreOption("pcsx_rearmed_gpu_unai_scale_hires", "enabled");
     }
 
-    /** Set directories that cores may query via environment callback. */
+    /** Задаёт каталоги, которые ядра запрашивают через env-коллбек. */
     public void setDirectories(String systemDir, String saveDir) {
         this.systemDir = systemDir;
         this.saveDir = saveDir;
@@ -602,14 +522,18 @@ public class LibretroCoreLinux extends LibretroCore {
             persistentSaveDir.setString(0, saveDir);
         }
         if (corePath != null) {
-            String libretroPath = corePath.toAbsolutePath().normalize().toString();
-            persistentLibretroPath = new Memory(libretroPath.length() + 1);
-            persistentLibretroPath.setString(0, libretroPath);
+            String p = corePath.toAbsolutePath().normalize().toString();
+            persistentLibretroPath = new Memory(p.length() + 1);
+            persistentLibretroPath.setString(0, p);
         }
     }
 
+    // =====================================================================
+    //  Environment-коллбек
+    // =====================================================================
+
     private boolean handleEnvironment(int cmd, Pointer data) {
-        if (cmd == 0x1002f) {
+        if (cmd == 0x1002f) { // GET_SAVESTATE_CONTEXT и пр. «сырые» запросы
             if (data != null) data.setInt(0, 3);
             return true;
         }
@@ -649,97 +573,19 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             case LibretroEnvironment.SET_PIXEL_FORMAT -> {
                 if (data == null) return false;
-                int fmt = data.getInt(0);
-                pixelFormat = fmt;
-                LOGGER.info("Core set pixel format: {}", switch (fmt) {
+                pixelFormat = data.getInt(0);
+                LOGGER.info("Core set pixel format: {}", switch (pixelFormat) {
                     case LibretroBridge.RETRO_PIXEL_FORMAT_0RGB1555 -> "0RGB1555";
                     case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888 -> "XRGB8888";
                     case LibretroBridge.RETRO_PIXEL_FORMAT_RGB565 -> "RGB565";
-                    default -> "UNKNOWN(" + fmt + ")";
+                    default -> "UNKNOWN(" + pixelFormat + ")";
                 });
                 return true;
             }
             case LibretroEnvironment.SET_HW_RENDER -> {
                 if (data == null) return false;
                 try {
-                    int ctxType = data.getInt(0);
-                    String ctxName = switch (ctxType) {
-                        case 0 -> "NONE";
-                        case 1 -> "OPENGL";
-                        case 2 -> "OPENGLES2";
-                        case 3 -> "OPENGL_CORE";
-                        case 4 -> "OPENGLES3";
-                        case 5 -> "OPENGLES_VERSION";
-                        case 6 -> "VULKAN";
-                        default -> "UNKNOWN(" + ctxType + ")";
-                    };
-                    LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
-
-                    if (ctxType == 0) {
-                        LOGGER.info("HW render NONE accepted (software renderer)");
-                        hwRenderActive = false;
-                        return true;
-                    }
-
-                    if (!supportsHwRender()) {
-                        LOGGER.info("Rejecting {} — no HW render bridge", ctxName);
-                        return false;
-                    }
-                    if (!ensureHeadlessGl(ctxType)) {
-                        LOGGER.info("Rejecting {} — headless EGL init failed", ctxName);
-                        return false;
-                    }
-
-                    String coreName = corePath != null ? corePath.getFileName().toString() : "core";
-                    LOGGER.info("Accepting hw render for {} ({})", coreName, ctxName);
-
-                    // Mesa llvmpipe: OpenGL / OpenGL Core / GLES3 only (no Vulkan).
-                    if (ctxType != 1 && ctxType != 3 && ctxType != 4) {
-                        LOGGER.info("Rejecting {} — only OpenGL contexts supported", ctxName);
-                        return false;
-                    }
-
-                    int glMajor = 3;
-                    int glMinor = switch (ctxType) {
-                        case 3 -> 3; // OPENGL_CORE — PCSX2 expects 3.3+
-                        default -> isPpssppCore() ? 3 : 0;
-                    };
-
-                    HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
-
-                    Pointer fbPtr = HeadlessGL.INSTANCE.hlg_get_framebuffer_ptr();
-                    Pointer procPtr = HeadlessGL.INSTANCE.hlg_get_proc_address_ptr();
-                    LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
-                    data.setPointer(16, fbPtr);
-                    data.setPointer(24, procPtr);
-                    data.setInt(36, glMajor);
-                    data.setInt(40, glMinor);
-                    data.setByte(44, (byte) 1);    // cache_context
-
-                    // Verify writes persisted
-                    LOGGER.info("  VERIFIED: fb@16={}, proc@24={}, cache@44={}",
-                            data.getPointer(16), data.getPointer(24), data.getByte(44));
-
-                    hwContextReset = data.getPointer(8);
-                    hwContextResetDone = false;
-                    hwBottomLeftOrigin = data.getByte(34) != 0;
-
-                    // Flycast: context_reset on init thread. PPSSPP: emulator thread (needs current GL).
-                    if (isFlycastCore()) {
-                        Pointer contextResetPtr = data.getPointer(8);
-                        if (contextResetPtr != null && Pointer.nativeValue(contextResetPtr) != 0) {
-                            LOGGER.info("  Calling context_reset @ {} to init GL function table", contextResetPtr);
-                            var contextReset = com.sun.jna.Function.getFunction(contextResetPtr);
-                            contextReset.invokeVoid(new Object[0]);
-                            LOGGER.info("  context_reset completed");
-                        } else {
-                            LOGGER.warn("  context_reset is NULL!");
-                        }
-                    }
-
-                    hwRenderActive = true;
-                    LOGGER.info("HW render context provided for {} (headless EGL)", ctxName);
-                    return true;
+                    return handleSetHwRender(data);
                 } catch (Throwable t) {
                     LOGGER.error("Failed to handle SET_HW_RENDER", t);
                     return false;
@@ -764,8 +610,7 @@ public class LibretroCoreLinux extends LibretroCore {
                 return true;
             }
             case LibretroEnvironment.GET_VARIABLE -> {
-                if (data != null && handleGetVariable(data)) return true;
-                return false;
+                return data != null && handleGetVariable(data);
             }
             case LibretroEnvironment.GET_VARIABLE_UPDATE -> {
                 if (data != null) data.setByte(0, (byte) 0);
@@ -779,22 +624,15 @@ public class LibretroCoreLinux extends LibretroCore {
                 return false;
             }
             case LibretroEnvironment.GET_LOG_INTERFACE -> {
-                if (isFlycastCore()) {
-                    return false;
-                }
+                if (isFlycastCore()) return false; // Flycast: лог-механизм отключён NOP-патчами
                 if (data == null) return false;
-                /* Use the native variadic log callback from headless_gl.so —
-                 * JNA can't bind retro_log_printf_t (variadic), so we write
-                 * the C function pointer directly. This shows real core logs
-                 * (shader compile errors, GL failures, etc) instead of raw
-                 * "%s %s" format strings. */
+                /* Нативный variadic лог-коллбек из headless_gl.so: JNA не умеет
+                 * биндить retro_log_printf_t (variadic), поэтому пишем C-указатель
+                 * напрямую — видны реальные логи ядра, а не "%s %s". */
                 try {
                     Pointer nativeLogCb = HeadlessGL.INSTANCE.hlg_get_log_cb_ptr();
                     if (nativeLogCb != null && Pointer.nativeValue(nativeLogCb) != 0) {
                         data.setPointer(0, nativeLogCb);
-                        if (logCallback == null) {
-                            logCallback = (level, fmt) -> {}; // placeholder, unused now
-                        }
                         return true;
                     }
                 } catch (Throwable t) {
@@ -807,7 +645,6 @@ public class LibretroCoreLinux extends LibretroCore {
                             case 0 -> LOGGER.error("[core] {}", msg);
                             case 1 -> LOGGER.warn("[core] {}", msg);
                             case 2 -> LOGGER.info("[core] {}", msg);
-                            case 3 -> LOGGER.debug("[core] {}", msg);
                             default -> LOGGER.debug("[core] {}", msg);
                         }
                     };
@@ -815,7 +652,8 @@ public class LibretroCoreLinux extends LibretroCore {
                     logCallbackStruct.log = logCallback;
                     logCallbackStruct.write();
                 }
-                data.write(0, logCallbackStruct.getPointer().getByteArray(0, Native.POINTER_SIZE), 0, Native.POINTER_SIZE);
+                data.write(0, logCallbackStruct.getPointer().getByteArray(0, Native.POINTER_SIZE),
+                        0, Native.POINTER_SIZE);
                 return true;
             }
             case LibretroEnvironment.SET_SYSTEM_AV_INFO -> {
@@ -852,9 +690,8 @@ public class LibretroCoreLinux extends LibretroCore {
                             frameWidth = baseW;
                             frameHeight = baseH;
                             int needed = baseW * baseH;
-                            if (frameBuffer == null || frameBuffer.length != needed) {
+                            if (frameBuffer == null || frameBuffer.length != needed)
                                 frameBuffer = new int[needed];
-                            }
                         }
                     }
                 }
@@ -886,10 +723,10 @@ public class LibretroCoreLinux extends LibretroCore {
                 }
                 return false;
             }
-            case 51 -> { // GET_INPUT_BITMASKS — we implement JOYPAD_MASK in input_state
+            case 51 -> { // GET_INPUT_BITMASKS — JOYPAD_MASK реализован в input_state
                 return true;
             }
-            case 87 -> { // SET_HW_SHARED_CONTEXT (experimental flag stripped)
+            case 87 -> { // SET_HW_SHARED_CONTEXT (без experimental-флага)
                 if (supportsHwRender()) {
                     LOGGER.info("Core requested SET_HW_SHARED_CONTEXT — accepting");
                     return true;
@@ -965,9 +802,8 @@ public class LibretroCoreLinux extends LibretroCore {
                 if (key == null || key.isEmpty()) return false;
                 Pointer valPtr = data.getPointer(Native.POINTER_SIZE);
                 String val = valPtr != null ? valPtr.getString(0) : "";
-                if (key.startsWith("ppsspp_")) {
+                if (key.startsWith("ppsspp_"))
                     val = applyPpssppDefault(key, val != null ? val : "");
-                }
                 coreOptions.put(key, val != null ? val : "");
                 LOGGER.debug("Core SET_VARIABLE: {} = {}", key, val);
                 return true;
@@ -984,9 +820,87 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    /** Stores core-declared variable keys so we can respond to GET_VARIABLE. */
+    /** SET_HW_RENDER: наш GL-инстанс + заполнение retro_hw_render_callback. */
+    private boolean handleSetHwRender(Pointer data) {
+        int ctxType = data.getInt(0);
+        String ctxName = switch (ctxType) {
+            case 0 -> "NONE";
+            case 1 -> "OPENGL";
+            case 2 -> "OPENGLES2";
+            case 3 -> "OPENGL_CORE";
+            case 4 -> "OPENGLES3";
+            case 5 -> "OPENGLES_VERSION";
+            case 6 -> "VULKAN";
+            default -> "UNKNOWN(" + ctxType + ")";
+        };
+        LOGGER.info("Core requests HW render: context_type={} ({})", ctxType, ctxName);
+
+        if (ctxType == 0) {
+            LOGGER.info("HW render NONE accepted (software renderer)");
+            hwRenderActive = false;
+            return true;
+        }
+        if (!supportsHwRender()) {
+            LOGGER.info("Rejecting {} — no HW render bridge", ctxName);
+            return false;
+        }
+        // Mesa: OpenGL / OpenGL Core / GLES3 (Vulkan нет). Проверяем ДО init —
+        // не создаём контекст, который сразу отвергнем.
+        if (ctxType != 1 && ctxType != 3 && ctxType != 4) {
+            LOGGER.info("Rejecting {} — only OpenGL contexts supported", ctxName);
+            return false;
+        }
+        if (!ensureHeadlessGl(ctxType)) {
+            LOGGER.info("Rejecting {} — headless EGL init failed", ctxName);
+            return false;
+        }
+
+        int glMajor = 3;
+        int glMinor = switch (ctxType) {
+            case 3 -> 3; // OPENGL_CORE — PCSX2 ждёт 3.3+
+            default -> isPpssppCore() ? 3 : 0;
+        };
+
+        HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
+
+        /* Коллбеки без user-data: пишем нативные указатели из .so —
+         * диспетчеризация на наш инстанс идёт внутри .so через TLS/fallback. */
+        Pointer fbPtr = HeadlessGL.INSTANCE.hlg_get_framebuffer_ptr();
+        Pointer procPtr = HeadlessGL.INSTANCE.hlg_get_proc_address_ptr();
+        LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
+        data.setPointer(16, fbPtr);            // get_current_framebuffer
+        data.setPointer(24, procPtr);          // get_proc_address
+        data.setInt(36, glMajor);              // version_major
+        data.setInt(40, glMinor);              // version_minor
+        data.setByte(44, (byte) 1);            // cache_context
+
+        hwContextReset = data.getPointer(8);
+        hwContextResetDone = false;
+        hwBottomLeftOrigin = data.getByte(34) != 0;
+
+        // Flycast: context_reset на init-потоке. PPSSPP/PCSX2 — на emulator-потоке (см. runFrame).
+        if (isFlycastCore()) {
+            if (hwContextReset != null && Pointer.nativeValue(hwContextReset) != 0) {
+                LOGGER.info("  Calling context_reset @ {} to init GL function table", hwContextReset);
+                com.sun.jna.Function.getFunction(hwContextReset).invokeVoid(new Object[0]);
+                LOGGER.info("  context_reset completed");
+            } else {
+                LOGGER.warn("  context_reset is NULL!");
+            }
+        }
+
+        hwRenderActive = true;
+        LOGGER.info("HW render context provided for {} (headless EGL, ctx={})", ctxName, glCtx);
+        return true;
+    }
+
+    // =====================================================================
+    //  Core options
+    // =====================================================================
+
+    /** Ключи/значения переменных ядра — ответы на GET_VARIABLE. */
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
-    /** Keep allocated Memory alive so GC doesn't free strings before core reads them. */
+    /** Держим Memory живыми: GC не должен освободить строки до чтения ядром. */
     private final java.util.List<Memory> allocatedVarMemory = new java.util.ArrayList<>();
 
     private static final int CORE_OPT_VALUE_SIZE = Native.POINTER_SIZE * 2;
@@ -997,12 +911,8 @@ public class LibretroCoreLinux extends LibretroCore {
 
     private void registerCoreOption(String key, String defaultValue) {
         if (key == null || key.isEmpty()) return;
-        if (key.startsWith("ppsspp_")) {
-            defaultValue = applyPpssppDefault(key, defaultValue);
-        }
-        if (key.startsWith("pcsx2_")) {
-            defaultValue = applyPcsx2Default(key, defaultValue);
-        }
+        if (key.startsWith("ppsspp_")) defaultValue = applyPpssppDefault(key, defaultValue);
+        if (key.startsWith("pcsx2_"))  defaultValue = applyPcsx2Default(key, defaultValue);
         defaultValue = applyFlycastDefault(key, defaultValue);
         coreOptions.put(key, defaultValue);
         LOGGER.info("  core opt: {} = {}", key, defaultValue);
@@ -1032,6 +942,21 @@ public class LibretroCoreLinux extends LibretroCore {
         };
     }
 
+    private static String applyPpssppDefault(String key, String defaultValue) {
+        String preset = VideoQualityPresets.ppssppDefault(key);
+        if (preset != null) return preset;
+        return switch (key) {
+            case "ppsspp_backend" -> "opengl";
+            case "ppsspp_mulitsample_level" -> "Disabled";
+            case "ppsspp_skip_buffer_effects", "ppsspp_skip_gpu_readbacks" -> "disabled";
+            case "ppsspp_lazy_texture_caching" -> "enabled";
+            case "ppsspp_lower_resolution_for_effects" -> "Balanced";
+            case "ppsspp_gpu_hardware_transform" -> "enabled";
+            case "ppsspp_inflight_frames" -> "Up to 1";
+            default -> defaultValue;
+        };
+    }
+
     private void walkCoreOptionDefinitions(Pointer arrayBase, int structSize) {
         long offset = 0;
         while (true) {
@@ -1053,28 +978,24 @@ public class LibretroCoreLinux extends LibretroCore {
 
     private void handleSetCoreOptionsV2(Pointer data) {
         Pointer definitions = data.getPointer(Native.POINTER_SIZE);
-        if (definitions != null) {
-            walkCoreOptionDefinitions(definitions, CORE_OPT_DEF_V2_SIZE);
-        }
+        if (definitions != null) walkCoreOptionDefinitions(definitions, CORE_OPT_DEF_V2_SIZE);
     }
 
-    /** {@code retro_core_options_v2_intl} → parse {@code us->definitions}. */
+    /** {@code retro_core_options_v2_intl} → парсим {@code us->definitions}. */
     private void handleSetCoreOptionsV2Intl(Pointer data) {
         Pointer usPtr = data.getPointer(0);
         if (usPtr == null) return;
         Pointer definitions = usPtr.getPointer(Native.POINTER_SIZE);
-        if (definitions != null) {
-            walkCoreOptionDefinitions(definitions, CORE_OPT_DEF_V2_SIZE);
-        }
+        if (definitions != null) walkCoreOptionDefinitions(definitions, CORE_OPT_DEF_V2_SIZE);
     }
 
     private void handleSetVariables(Pointer data) {
-        // Each retro_variable is { const char *key; const char *value; }
-        // value contains "desc; option1|option2|..."  — key\0value\0 ... null terminator
+        // retro_variable: { const char* key; const char* value; }, null-key = конец.
+        // value = "описание; opt1|opt2|..." — дефолт берём как последний вариант.
         long offset = 0;
         while (true) {
             Pointer keyPtr = data.getPointer(offset);
-            if (keyPtr == null) break; // null key terminates the array
+            if (keyPtr == null) break;
             String key = keyPtr.getString(0);
             offset += Native.POINTER_SIZE;
 
@@ -1082,42 +1003,21 @@ public class LibretroCoreLinux extends LibretroCore {
             String value = valPtr != null ? valPtr.getString(0) : "";
             offset += Native.POINTER_SIZE;
 
-            // Parse default value from "description; option1|option2|default|..."
             String defaultValue = "";
             if (value.contains(";")) {
                 String opts = value.substring(value.indexOf(';') + 1).trim();
                 String[] parts = opts.split("\\|");
-                if (parts.length > 0) {
-                    defaultValue = parts[parts.length - 1].trim();
-                }
+                if (parts.length > 0) defaultValue = parts[parts.length - 1].trim();
             }
-
             registerCoreOption(key, defaultValue);
         }
     }
 
-    private static String applyPpssppDefault(String key, String defaultValue) {
-        String preset = VideoQualityPresets.ppssppDefault(key);
-        if (preset != null) return preset;
-        return switch (key) {
-            case "ppsspp_backend" -> "opengl";
-            case "ppsspp_mulitsample_level" -> "Disabled";
-            case "ppsspp_skip_buffer_effects", "ppsspp_skip_gpu_readbacks" -> "disabled";
-            case "ppsspp_lazy_texture_caching" -> "enabled";
-            case "ppsspp_lower_resolution_for_effects" -> "Balanced";
-            case "ppsspp_gpu_hardware_transform" -> "enabled";
-            case "ppsspp_inflight_frames" -> "Up to 1";
-            default -> defaultValue;
-        };
-    }
-
     private boolean handleGetVariable(Pointer data) {
-        // Wrap ENTIRE function — Flycast passes junk pointers during retro_run
+        // Вся функция под try: Flycast передаёт мусорные указатели во время retro_run
         try {
-            // retro_variable struct: { const char *key; const char *value; }
             if (data == null) return false;
-            long dataAddr = Pointer.nativeValue(data);
-            if (dataAddr == 0) return false;
+            if (Pointer.nativeValue(data) == 0) return false;
 
             Pointer keyPtr = data.getPointer(0);
             if (keyPtr == null) return false;
@@ -1128,23 +1028,17 @@ public class LibretroCoreLinux extends LibretroCore {
             if (key == null || key.isEmpty()) return false;
 
             String val = coreOptions.get(key);
-            if ((val == null || val.isEmpty()) && key.startsWith("ppsspp_")) {
+            if ((val == null || val.isEmpty()) && key.startsWith("ppsspp_"))
                 val = applyPpssppDefault(key, "");
-            }
-            if (key.startsWith("pcsx2_")) {
+            if (key.startsWith("pcsx2_"))
                 val = applyPcsx2Default(key, val != null ? val : "");
-            }
-            if (key.startsWith("pcsx_rearmed_")) {
+            if (key.startsWith("pcsx_rearmed_"))
                 val = applyPcsxRearmedDefault(key, val != null ? val : "");
-            }
-            if (key.startsWith("flycast_") || key.startsWith("reicast_")) {
+            if (key.startsWith("flycast_") || key.startsWith("reicast_"))
                 val = applyFlycastDefault(key, val != null ? val : "");
-            }
             if ((val == null || val.isEmpty()) && "pcsx2_bios".equals(key)) {
                 val = findFirstPcsx2BiosFilename();
-                if (val != null) {
-                    LOGGER.info("PCSX2 bios auto-selected: {}", val);
-                }
+                if (val != null) LOGGER.info("PCSX2 bios auto-selected: {}", val);
             }
             if (val != null && !val.isEmpty()) {
                 Memory valMem = new Memory(val.length() + 1);
@@ -1155,11 +1049,15 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             return false;
         } catch (Throwable t) {
-            return false; // ANY crash → use default
+            return false; // любой краш → дефолт ядра
         }
     }
 
-    /** Max ROM size to load fully into memory (cartridge-scale; above → path only). */
+    // =====================================================================
+    //  Загрузка игры и прогон кадров
+    // =====================================================================
+
+    /** Максимальный размер ROM для загрузки в память (картриджи; больше → только путь). */
     private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
 
     private static boolean isPathOnlyRom(String lowerPath, Path romPath) {
@@ -1177,10 +1075,10 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     /**
-     * Load a game ROM.
+     * Загрузка игры.
      *
-     * @param romPath Path to ROM file
-     * @return true if game loaded successfully
+     * @param romPath путь к ROM-файлу
+     * @return true, если ядро приняло игру
      */
     public boolean loadGame(Path romPath) {
         loadedGamePath = romPath.toString();
@@ -1188,14 +1086,12 @@ public class LibretroCoreLinux extends LibretroCore {
         var info = new LibretroBridge.RetroGameInfo();
         info.path = romPath.toAbsolutePath().toString();
 
-        // Disc images and large files must NOT be loaded into memory — cores
-        // (PCSX2, PPSSPP, Flycast) open tracks from disk via path.  Loading a
-        // multi-GB ISO into a byte[] hits Java's array size limit (~2 GB).
+        // Диски и большие файлы НЕ читаем в память: ядра (PCSX2/PPSSPP/Flycast)
+        // открывают треки с диска по пути, а multi-GB ISO не влезает в byte[].
         String lower = romPath.toString().toLowerCase();
         boolean pathOnly = isPathOnlyRom(lower, romPath);
 
         if (!pathOnly) {
-            // Small single-file ROMs — load into memory for cores without disk I/O.
             try {
                 byte[] romBytes = Files.readAllBytes(romPath);
                 info.data = new Memory(romBytes.length);
@@ -1217,10 +1113,8 @@ public class LibretroCoreLinux extends LibretroCore {
         gameLoaded = ok;
         if (ok) {
             LOGGER.info("Game loaded: {}", romPath.getFileName());
-
             registerControllerPorts();
 
-            // Query AV info to know initial resolution
             var avInfo = new LibretroBridge.RetroSystemAVInfo();
             core.retro_get_system_av_info(avInfo);
             LOGGER.info("Resolution: {}x{}, FPS: {}, Sample rate: {}",
@@ -1233,10 +1127,10 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             audioPacing.reset();
 
-            // Release EGL from load thread so the core's render thread can take it.
-            if (hwRenderActive) {
+            // Отпускаем НАШ инстанс с потока загрузки — render-поток ядра заберёт его.
+            if (hwRenderActive && glCtx != null) {
                 try {
-                    HeadlessGL.INSTANCE.hlg_release();
+                    HeadlessGL.INSTANCE.hlg_release(glCtx);
                     LOGGER.info("EGL context released from init thread");
                 } catch (Throwable t) {
                     LOGGER.warn("Failed to release EGL context: {}", t.getMessage());
@@ -1249,16 +1143,14 @@ public class LibretroCoreLinux extends LibretroCore {
         } else {
             LOGGER.error("Core rejected game: {}", romPath.getFileName());
         }
-
         return ok;
     }
 
     private void registerControllerPorts() {
         if (isFlycastCore()) {
             core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
-            for (int port = 1; port < 4; port++) {
+            for (int port = 1; port < 4; port++)
                 core.retro_set_controller_port_device(port, LibretroBridge.RETRO_DEVICE_NONE);
-            }
             LOGGER.info("Flycast: all controller ports registered (VMU slot A1 active)");
         } else {
             core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
@@ -1266,91 +1158,71 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    /**
-     * Execute one frame. Called from ThreadedEmulatorRuntime.
-     */
+    /** Прогон одного кадра (вызывается из ThreadedEmulatorRuntime). */
     public void runFrame() {
-        if (core != null) {
-            // Ensure EGL context is current on this thread (emulator thread != server thread)
-            if (hwRenderActive) {
+        if (core == null) return;
+        if (hwRenderActive && glCtx != null) {
+            // Наш GL-инстанс должен быть current на emulator-потоке
+            try {
+                if (HeadlessGL.INSTANCE.hlg_make_current(glCtx) != 0 && !hwGpuLoggedOnEmulatorThread) {
+                    hwGpuLoggedOnEmulatorThread = true;
+                    LOGGER.info("Emulator thread GPU: {}", HeadlessGL.INSTANCE.hlg_get_gpu_info(glCtx));
+                }
+            } catch (Throwable ignored) {}
+            // PPSSPP/PCSX2: context_reset строго на emulator-потоке (нужен current GL)
+            if ((isPpssppCore() || isPcsx2Core()) && !hwContextResetDone
+                    && hwContextReset != null && Pointer.nativeValue(hwContextReset) != 0) {
                 try {
-                    if (HeadlessGL.INSTANCE.hlg_make_current() != 0 && !hwGpuLoggedOnEmulatorThread) {
-                        hwGpuLoggedOnEmulatorThread = true;
-                        LOGGER.info("Emulator thread GPU: {}", HeadlessGL.INSTANCE.hlg_get_gpu_info());
-                    }
-                } catch (Throwable ignored) {}
-                if (isPpssppCore() && !hwContextResetDone && hwContextReset != null
-                        && Pointer.nativeValue(hwContextReset) != 0) {
-                    try {
-                        LOGGER.info("PPSSPP context_reset on emulator thread @ {}", hwContextReset);
-                        com.sun.jna.Function.getFunction(hwContextReset).invokeVoid(new Object[0]);
-                        hwContextResetDone = true;
-                    } catch (Throwable t) {
-                        LOGGER.warn("PPSSPP context_reset failed: {}", t.getMessage());
-                    }
-                }
-                if (isPcsx2Core() && !hwContextResetDone && hwContextReset != null
-                        && Pointer.nativeValue(hwContextReset) != 0) {
-                    try {
-                        LOGGER.info("PCSX2 context_reset on emulator thread @ {}", hwContextReset);
-                        com.sun.jna.Function.getFunction(hwContextReset).invokeVoid(new Object[0]);
-                        hwContextResetDone = true;
-                    } catch (Throwable t) {
-                        LOGGER.warn("PCSX2 context_reset failed: {}", t.getMessage());
-                    }
+                    LOGGER.info("context_reset on emulator thread @ {}", hwContextReset);
+                    com.sun.jna.Function.getFunction(hwContextReset).invokeVoid(new Object[0]);
+                    hwContextResetDone = true;
+                } catch (Throwable t) {
+                    LOGGER.warn("context_reset failed: {}", t.getMessage());
                 }
             }
-            long t0 = System.nanoTime();
-            core.retro_run();
-            long dtMs = (System.nanoTime() - t0) / 1_000_000;
-            if (dtMs > 100 && hwRenderActive && isPpssppCore()) {
-                LOGGER.warn("retro_run took {}ms (possible ThreadFrame stall)", dtMs);
-            }
-            if (dtMs > 2000 && hwRenderActive && isPcsx2Core()) {
-                LOGGER.warn("PCSX2 retro_run took {}ms (slow — loading or shader compile?)", dtMs);
-            }
-            maybeLoadPendingBattery();
         }
+        long t0 = System.nanoTime();
+        core.retro_run();
+        long dtMs = (System.nanoTime() - t0) / 1_000_000;
+        if (dtMs > 100 && hwRenderActive && isPpssppCore())
+            LOGGER.warn("retro_run took {}ms (possible ThreadFrame stall)", dtMs);
+        if (dtMs > 2000 && hwRenderActive && isPcsx2Core())
+            LOGGER.warn("PCSX2 retro_run took {}ms (slow — loading or shader compile?)", dtMs);
+        maybeLoadPendingBattery();
     }
 
     private void maybeLoadPendingBattery() {
         if (!pendingBatteryLoad || saveDir == null || pendingBatteryRomPath == null) return;
         pendingBatteryLoad = false;
         com.retroconsole.platform.BatterySaveManager.loadIntoCore(
-                this, pendingBatteryRomPath, java.nio.file.Path.of(saveDir));
+                this, pendingBatteryRomPath, Path.of(saveDir));
     }
 
     /**
-     * Non-blocking frame poll. Copies latest frame into dst buffer.
+     * Неблокирующий поллинг кадра: копирует последний кадр в dst.
      *
-     * @param dst Destination buffer (int[width * height])
-     * @return true if a new frame was available
+     * @return true, если был новый кадр
      */
     public boolean pollFrame(int[] dst) {
         if (!newFrame) return false;
-
         synchronized (frameLock) {
             if (frameBuffer == null) return false;
-            int copyLen = Math.min(frameBuffer.length, dst.length);
-            System.arraycopy(frameBuffer, 0, dst, 0, copyLen);
+            System.arraycopy(frameBuffer, 0, dst, 0, Math.min(frameBuffer.length, dst.length));
             newFrame = false;
             return true;
         }
     }
 
-    public int getWidth() {
-        synchronized (frameLock) { return frameWidth; }
-    }
-
-    public int getHeight() {
-        synchronized (frameLock) { return frameHeight; }
-    }
+    public int getWidth()  { synchronized (frameLock) { return frameWidth; } }
+    public int getHeight() { synchronized (frameLock) { return frameHeight; } }
 
     @Override public double getTimingFps() { return timingFps; }
-
     @Override public boolean prefersAvLockstep() { return isPcsx2Core(); }
-
     @Override public double getAudioSampleRate() { return audioSampleRate; }
+
+    // =====================================================================
+    //  Аудио
+    // =====================================================================
 
     private void appendAudio(Pointer data, int samples) {
         if (audioBulkScratch.length < samples) audioBulkScratch = new short[samples];
@@ -1382,20 +1254,19 @@ public class LibretroCoreLinux extends LibretroCore {
 
     @Override
     public int getAudioAvailable() {
-        synchronized (audioLock) {
-            return audioCount;
-        }
+        synchronized (audioLock) { return audioCount; }
     }
 
-    /**
-     * Set joypad button state (0 = released, 1 = pressed).
-     */
+    // =====================================================================
+    //  Ввод
+    // =====================================================================
+
+    /** Кнопка джойпада (0 = отпущена, 1 = нажата). */
     public void setButton(int buttonId, boolean pressed) {
-        if (buttonId >= 0 && buttonId < 16) {
+        if (buttonId >= 0 && buttonId < 16)
             joypadState.set(buttonId, pressed ? 1 : 0);
-        }
-        // Dreamcast triggers: L/R → also set L2/R2 digital + analog trigger
-        // Flycast may query either L(10) or L2(12) for the same physical trigger
+        // Dreamcast-триггеры: L/R дублируем в L2/R2 (цифровые) + аналоговые —
+        // Flycast может запрашивать любой из вариантов для одного физического триггера
         if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L) {
             joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2, pressed ? 1 : 0);
             triggerState.set(0, pressed ? 32767 : 0);
@@ -1404,39 +1275,30 @@ public class LibretroCoreLinux extends LibretroCore {
             joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2, pressed ? 1 : 0);
             triggerState.set(1, pressed ? 32767 : 0);
         }
-        // Also handle direct L2/R2 presses (future gamepads)
-        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) {
-            triggerState.set(0, pressed ? 32767 : 0);
-        }
-        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) {
-            triggerState.set(1, pressed ? 32767 : 0);
-        }
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) triggerState.set(0, pressed ? 32767 : 0);
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) triggerState.set(1, pressed ? 32767 : 0);
     }
 
     /**
-     * Set analog stick state.
+     * Аналоговый стик.
      *
-     * @param stick 0=left, 1=right
-     * @param axis  0=X, 1=Y
-     * @param value -32768 to 32767
+     * @param stick 0 = левый, 1 = правый
+     * @param axis  0 = X, 1 = Y
+     * @param value -32768..32767
      */
     public void setAnalog(int stick, int axis, short value) {
         int idx = stick * 2 + axis;
-        if (idx >= 0 && idx < 4) {
-            analogState.set(idx, value);
-        }
+        if (idx >= 0 && idx < 4) analogState.set(idx, value);
     }
 
-    /**
-     * Reset the console.
-     */
+    /** Reset консоли. */
     public void reset() {
-        if (core != null) {
-            core.retro_reset();
-        }
+        if (core != null) core.retro_reset();
     }
 
-    // --- Save states ---
+    // =====================================================================
+    //  Save states / SRAM
+    // =====================================================================
 
     @Override
     public long getSerializeSize() {
@@ -1452,9 +1314,7 @@ public class LibretroCoreLinux extends LibretroCore {
         long size = core.retro_serialize_size();
         if (size <= 0) return null;
         var mem = new Memory(size);
-        if (core.retro_serialize(mem, size)) {
-            return mem.getByteArray(0, (int) size);
-        }
+        if (core.retro_serialize(mem, size)) return mem.getByteArray(0, (int) size);
         return null;
     }
 
@@ -1464,8 +1324,6 @@ public class LibretroCoreLinux extends LibretroCore {
         mem.write(0, data, 0, data.length);
         return core.retro_unserialize(mem, data.length);
     }
-
-    // --- SRAM (battery saves) ---
 
     public byte[] getSaveRam() {
         Pointer data = core.retro_get_memory_data(LibretroBridge.RETRO_MEMORY_SAVE_RAM);
@@ -1496,13 +1354,23 @@ public class LibretroCoreLinux extends LibretroCore {
             return;
         }
         try (var stream = Files.list(biosDir)) {
-            var names = stream.filter(Files::isRegularFile).map(p -> p.getFileName().toString()).toList();
+            var names = stream.filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString()).toList();
             LOGGER.info("PCSX2 bios dir {}: {}", biosDir, names);
         } catch (IOException e) {
             LOGGER.warn("Failed to list PCSX2 bios dir {}", biosDir, e);
         }
     }
 
+    // =====================================================================
+    //  Завершение
+    // =====================================================================
+
+    /**
+     * Контракт multi-instance .so: hlg_free() зовём только после полной
+     * остановки потоков ядра (close() вызывается после остановки
+     * ThreadedEmulatorRuntime — условие выполняется).
+     */
     @Override
     public void close() throws Exception {
         if (core != null) {
@@ -1522,12 +1390,23 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             core = null;
         }
+        // Полностью освобождаем СВОЙ GL-инстанс (раньше синглтон-контекст тёк)
+        if (glCtx != null) {
+            try {
+                HeadlessGL.INSTANCE.hlg_free(glCtx);
+            } catch (Throwable t) {
+                LOGGER.warn("hlg_free failed: {}", t.getMessage());
+            }
+            glCtx = null;
+        }
+        headlessGlReady = false;
+        headlessGlApi = -1;
         hwRenderActive = false;
         hwGpuLoggedOnEmulatorThread = false;
         hwBottomLeftOrigin = true;
+        hwContextReset = null;
+        hwContextResetDone = false;
         hwPbufW = 0;
         hwPbufH = 0;
-        hwGetFramebuffer = null;
-        hwGetProcAddress = null;
     }
 }

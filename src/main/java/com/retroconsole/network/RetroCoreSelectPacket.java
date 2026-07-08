@@ -1,15 +1,12 @@
 package com.retroconsole.network;
 
+import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
 
-/**
- * Packet sent from client to server to select which core and ROM
- * to load on a retro console block.
- */
+/** C2S: выбор core + ROM для консоли (запускает эмулятор). */
 public record RetroCoreSelectPacket(
         BlockPos pos,
         String coreName,
@@ -17,28 +14,15 @@ public record RetroCoreSelectPacket(
         boolean loadAuto
 ) implements CustomPacketPayload {
 
-    public static final Type<RetroCoreSelectPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath("retroconsole", "core_select"));
+    public static final Type<RetroCoreSelectPacket> TYPE = RetroPackets.type("core_select");
 
-    public static final StreamCodec<FriendlyByteBuf, RetroCoreSelectPacket> STREAM_CODEC =
-            new StreamCodec<>() {
-                @Override
-                public RetroCoreSelectPacket decode(FriendlyByteBuf buf) {
-                    BlockPos pos = buf.readBlockPos();
-                    String coreName = buf.readUtf(256);
-                    String romId = buf.readUtf(256);
-                    boolean loadAuto = buf.readBoolean();
-                    return new RetroCoreSelectPacket(pos, coreName, romId, loadAuto);
-                }
-
-                @Override
-                public void encode(FriendlyByteBuf buf, RetroCoreSelectPacket pkt) {
-                    buf.writeBlockPos(pkt.pos);
-                    buf.writeUtf(pkt.coreName, 256);
-                    buf.writeUtf(pkt.romId, 256);
-                    buf.writeBoolean(pkt.loadAuto);
-                }
-            };
+    public static final StreamCodec<ByteBuf, RetroCoreSelectPacket> STREAM_CODEC =
+            StreamCodec.composite(
+                    BlockPos.STREAM_CODEC,                          RetroCoreSelectPacket::pos,
+                    ByteBufCodecs.stringUtf8(RetroPackets.MAX_STR), RetroCoreSelectPacket::coreName,
+                    ByteBufCodecs.stringUtf8(RetroPackets.MAX_STR), RetroCoreSelectPacket::romId,
+                    ByteBufCodecs.BOOL,                             RetroCoreSelectPacket::loadAuto,
+                    RetroCoreSelectPacket::new);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

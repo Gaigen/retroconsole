@@ -1,5 +1,6 @@
 package com.retroconsole.server;
 
+import com.retroconsole.bridge.LibretroCore;
 import com.retroconsole.emu.CoreManager;
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
@@ -191,6 +192,11 @@ public class ServerConsoles {
         // Frame sending moved off the Minecraft server tick — see
         // FrameSenderThread. Tick is kept as a registered no-op so the
         // existing @SubscribeEvent wiring stays valid and easy to extend.
+    }
+
+    public static LibretroCore getCore(BlockPos pos) {
+        Entry e = ENTRIES.get(pos.immutable());
+        return e != null ? e.runtime().getCore() : null;
     }
 
     public static void handleInput(BlockPos pos, int buttonId, boolean pressed) {
