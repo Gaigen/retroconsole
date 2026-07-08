@@ -5,7 +5,9 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Per-player save paths.
@@ -22,6 +24,7 @@ import java.util.UUID;
 public record PlayerPaths(UUID playerId, Path saveDir, Path systemDir, Path pcsx2MemcardsDir) {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("PlayerPaths");
+    private static final Set<UUID> LOGGED_PLAYERS = ConcurrentHashMap.newKeySet();
 
     public static final UUID SHARED_OWNER =
             UUID.fromString("00000000-0000-0000-0000-000000000000");
@@ -37,8 +40,10 @@ public record PlayerPaths(UUID playerId, Path saveDir, Path systemDir, Path pcsx
         Path pSave = mkdirs(playerRoot);
         Path memcards = mkdirs(playerRoot.resolve("pcsx2").resolve("memcards"));
 
-        LOGGER.info("Player {}: saves -> {}, PS2 memcards stash -> {}, system -> (shared) {}",
-                id, pSave, memcards, RetroConsolePaths.systemDir());
+        if (LOGGED_PLAYERS.add(id)) {
+            LOGGER.info("Player {}: saves -> {}, PS2 memcards stash -> {}, system -> (shared) {}",
+                    id, pSave, memcards, RetroConsolePaths.systemDir());
+        }
 
         return new PlayerPaths(id, pSave, RetroConsolePaths.systemDir(), memcards);
     }

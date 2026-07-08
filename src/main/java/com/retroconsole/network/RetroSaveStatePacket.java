@@ -6,11 +6,12 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 
-/** F5/F6 — save or load emulator state slot on the server. */
+/** F5/F6 — save or load emulator state slot on the server; {@code auto} — автосейв при выходе из TvScreen. */
 public record RetroSaveStatePacket(
         BlockPos pos,
         int slot,
-        boolean save
+        boolean save,
+        boolean auto
 ) implements CustomPacketPayload {
 
     public static final Type<RetroSaveStatePacket> TYPE =
@@ -20,7 +21,8 @@ public record RetroSaveStatePacket(
             new StreamCodec<>() {
                 @Override
                 public RetroSaveStatePacket decode(FriendlyByteBuf buf) {
-                    return new RetroSaveStatePacket(buf.readBlockPos(), buf.readVarInt(), buf.readBoolean());
+                    return new RetroSaveStatePacket(
+                            buf.readBlockPos(), buf.readVarInt(), buf.readBoolean(), buf.readBoolean());
                 }
 
                 @Override
@@ -28,6 +30,7 @@ public record RetroSaveStatePacket(
                     buf.writeBlockPos(pkt.pos);
                     buf.writeVarInt(pkt.slot);
                     buf.writeBoolean(pkt.save);
+                    buf.writeBoolean(pkt.auto);
                 }
             };
 

@@ -17,6 +17,8 @@
   "key.retroconsole.btn_r": "Button R",
   "key.retroconsole.btn_l2": "Button L2",
   "key.retroconsole.btn_r2": "Button R2",
+  "key.retroconsole.btn_l3": "L3 (Left Stick Click)",
+  "key.retroconsole.btn_r3": "R3 (Right Stick Click)",
   "key.retroconsole.btn_start": "Start",
   "key.retroconsole.btn_select": "Select",
   "key.retroconsole.analog_left_up": "Left Analog Up",

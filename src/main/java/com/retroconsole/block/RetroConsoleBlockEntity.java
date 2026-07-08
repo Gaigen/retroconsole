@@ -17,6 +17,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     private String romId = "";
     private String coreName = "";
     private UUID ownerId;
+    private boolean pendingLoadAuto;
 
     public RetroConsoleBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.RETRO_CONSOLE_BE.get(), pos, state);
@@ -61,9 +62,26 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         setChanged();
     }
 
+    public void selectGame(String coreName, String romId, UUID ownerId, boolean loadAuto) {
+        if (level == null || level.isClientSide()) return;
+        this.ownerId = ownerId;
+        this.coreName = coreName;
+        this.pendingLoadAuto = loadAuto;
+        this.romId = romId;
+        setChanged();
+        level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        if (romId.isEmpty()) {
+            stopEmulator();
+        } else {
+            stopEmulator();
+            startEmulator();
+        }
+    }
+
     private void startEmulator() {
         if (level instanceof ServerLevel && !coreName.isEmpty() && !romId.isEmpty()) {
-            ServerConsoles.startEmulator(worldPosition, coreName, romId, ownerId);
+            ServerConsoles.startEmulator(worldPosition, coreName, romId, ownerId, pendingLoadAuto);
+            pendingLoadAuto = false;
         }
     }
 

@@ -63,7 +63,7 @@ private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
 
     private static void handleOpenScreen(RetroOpenScreenPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
-            Minecraft.getInstance().setScreen(new TvScreen(pkt.pos()));
+            Minecraft.getInstance().setScreen(new TvScreen(pkt.pos(), pkt.romId()));
         });
     }
 
@@ -98,14 +98,13 @@ private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             BlockEntity be = ctx.player().level().getBlockEntity(pkt.pos());
             if (be instanceof RetroConsoleBlockEntity console) {
-                console.setOwnerId(ctx.player().getUUID());
-                console.setCoreName(pkt.coreName());
-                console.setRomId(pkt.romId());
+                console.selectGame(pkt.coreName(), pkt.romId(), ctx.player().getUUID(), pkt.loadAuto());
             }
         });
     }
 
     private static void handleSaveState(RetroSaveStatePacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> ServerConsoles.handleSaveState(pkt.pos(), pkt.slot(), pkt.save()));
+        ctx.enqueueWork(() -> ServerConsoles.handleSaveState(
+                pkt.pos(), pkt.slot(), pkt.save(), pkt.auto()));
     }
 }
