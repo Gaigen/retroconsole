@@ -12,18 +12,15 @@ import java.util.ArrayDeque;
  * OpenAL streaming player for libretro PCM chunks.
  *
  * Отличия от старой версии:
- *  - УБРАН eviction буфера из середины очереди. Он был сломан: на играющем
- *    источнике alSourceUnqueueBuffers снимает только PROCESSED-буферы; если
- *    их нет, вызов падает с AL_INVALID_VALUE и возвращает мусор, который
- *    старый код передавал в alDeleteBuffers (утечка + грязное состояние AL).
- *    Даже "рабочий" eviction — это слышимый щелчок. Теперь при полной
- *    очереди дропается ВХОДЯЩИЙ чанк (+ счётчик).
+ *  - Добавлен пользовательский gain (setGain): AL_GAIN на источнике,
+ *    перемножается с дистанционным затуханием — позиционирование не страдает.
+ *  - УБРАН eviction буфера из середины очереди (был сломан: на играющем
+ *    источнике alSourceUnqueueBuffers снимает только PROCESSED-буферы; при их
+ *    отсутствии вызов падает с AL_INVALID_VALUE). При полной очереди дропается
+ *    ВХОДЯЩИЙ чанк (+ счётчик).
  *  - После underrun (AL_STOPPED) источник заново набирает пребуфер до
- *    START_QUEUED, а не рестартует с одним крошечным буфером (это и был
- *    цикл "stop -> restart -> stop" = похрипывание).
- *  - Правильная проверка выравнивания: кадр stereo16 = 4 байта, поэтому
- *    (length & 3), а не (length & 1). Чанк, порезанный не по границе кадра,
- *    сдвигает байты/каналы и даёт треск.
+ *    START_QUEUED, а не рестартует с одним крошечным буфером.
+ *  - Правильная проверка выравнивания: кадр stereo16 = 4 байта → (length & 3).
  *  - Проверка alGetError() и диагностика раз в 5 секунд.
  */
 public class RetroAudioPlayer implements AutoCloseable {
@@ -31,14 +28,17 @@ public class RetroAudioPlayer implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger("RetroAudioPlayer");
 
     private static final int NUM_BUFFERS = 24;
-    /** Пребуфер перед стартом/рестартом: ~100 мс при чанке в 1 кадр (60 fps). */
+    /* Пребуфер перед стартом/рестартом: ~100 мс при чанке в 1 кадр (60 fps). */
     private static final int START_QUEUED = 6;
 
     private final int source;
     private final ArrayDeque<Integer> freeBuffers = new ArrayDeque<>();
 
-    /** true, пока заново копим пребуфер после старта или underrun. */
+    /* true, пока заново копим пребуфер после старта или underrun. */
     private boolean starving = true;
+
+    /* Пользовательская громкость 0..1. volatile: setGain зовут с AUDIO_EXEC. */
+    private volatile float gain = 1.0f;
 
     // --- диагностика ---
     private long droppedChunks;
@@ -52,12 +52,25 @@ public class RetroAudioPlayer implements AutoCloseable {
         AL10.alSourcef(source, AL10.AL_REFERENCE_DISTANCE, 4.0f);
         AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, 256.0f);
         AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, 1.5f);
+        AL10.alSourcef(source, AL10.AL_GAIN, gain);
         for (int i = 0; i < NUM_BUFFERS; i++) freeBuffers.add(AL10.alGenBuffers());
         AL10.alGetError(); // сбросить накопившиеся ошибки
         lastStatsNs = System.nanoTime();
     }
 
-    /** Скормить interleaved stereo PCM (16-bit signed LE). */
+    /** Пользовательская громкость 0..1. Вызывать с аудио-потока (AUDIO_EXEC). */
+    public void setGain(float g) {
+        float clamped = Math.max(0f, Math.min(1f, g));
+        gain = clamped;
+        AL10.alSourcef(source, AL10.AL_GAIN, clamped);
+        checkAlError("setGain");
+    }
+
+    public float getGain() {
+        return gain;
+    }
+
+    /* Скормить interleaved stereo PCM (16-bit signed LE). */
     public void feed(int sampleRate, byte[] pcmStereo16) {
         if (pcmStereo16 == null || pcmStereo16.length < 4 || (pcmStereo16.length & 3) != 0) {
             return;
@@ -118,7 +131,7 @@ public class RetroAudioPlayer implements AutoCloseable {
         }
     }
 
-    /**
+    /*
      * Раз в 5 секунд: фактическая входная частота vs заявленная, глубина
      * очереди, дропы и underrun'ы.
      *  - rate стабильно НИЖЕ sampleRate + растут underruns -> ядро/сервер

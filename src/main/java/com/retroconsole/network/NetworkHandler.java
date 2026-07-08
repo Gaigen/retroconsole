@@ -16,6 +16,9 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 @EventBusSubscriber(modid = "retroconsole", bus = EventBusSubscriber.Bus.MOD)
 public class NetworkHandler {
 
+    /** Максимальная дистанция, с которой игрок может управлять консолью (выкл и т.п.). */
+    private static final double CONTROL_DISTANCE_SQ = 64.0 * 64.0;
+
     @SubscribeEvent
     public static void registerPackets(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar r = event.registrar("1");
@@ -41,18 +44,20 @@ public class NetworkHandler {
                 NetworkHandler::handleCoreSelect);
         r.playToServer(RetroSaveStatePacket.TYPE, RetroSaveStatePacket.STREAM_CODEC,
                 NetworkHandler::handleSaveState);
+        r.playToServer(RetroPowerOffPacket.TYPE, RetroPowerOffPacket.STREAM_CODEC,
+                NetworkHandler::handlePowerOff);
     }
 
     // --- Client-bound ---
 
-private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
-    // Всё на сетевом потоке: распаковка + submitFrame (внутри конвертация в ABGR).
-    // enqueueWork для кадров больше НЕ используется — очередь рендера не растёт.
-    int[] frame = pkt.decompressFrame();
-    if (frame != null) {
-        ClientConsoles.submitFrame(pkt.pos(), frame, pkt.width(), pkt.height());
+    private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
+        // Всё на сетевом потоке: распаковка + submitFrame (внутри конвертация в ABGR).
+        // enqueueWork для кадров больше НЕ используется — очередь рендера не растёт.
+        int[] frame = pkt.decompressFrame();
+        if (frame != null) {
+            ClientConsoles.submitFrame(pkt.pos(), frame, pkt.width(), pkt.height());
+        }
     }
-}
 
     private static void handleStopConsole(RetroStopConsolePacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
@@ -91,7 +96,7 @@ private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
         });
     }
 
-    /**
+    /*
      * Client selects core + ROM → set on block entity (triggers emulator start).
      */
     private static void handleCoreSelect(RetroCoreSelectPacket pkt, IPayloadContext ctx) {
@@ -106,5 +111,20 @@ private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
     private static void handleSaveState(RetroSaveStatePacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> ServerConsoles.handleSaveState(
                 pkt.pos(), pkt.slot(), pkt.save(), pkt.auto()));
+    }
+
+    /*
+     * «Выкл» из TvScreen: гасим консоль ЧЕРЕЗ block entity, чтобы очистился
+     * romId (иначе следующий ПКМ по блоку откроет TvScreen мёртвой консоли).
+     * Автосейв произойдёт внутри ServerConsoles.stopEmulator().
+     */
+    private static void handlePowerOff(RetroPowerOffPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (ctx.player().blockPosition().distSqr(pkt.pos()) > CONTROL_DISTANCE_SQ) return;
+            BlockEntity be = ctx.player().level().getBlockEntity(pkt.pos());
+            if (be instanceof RetroConsoleBlockEntity console) {
+                console.powerOff();
+            }
+        });
     }
 }
