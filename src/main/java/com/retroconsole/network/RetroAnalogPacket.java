@@ -1,44 +1,35 @@
 package com.retroconsole.network;
 
+import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
 
 /**
- * Packet sent from client to server carrying analog stick state
- * for a retro console at a given block position.
+ * C2S: полное аналоговое состояние геймпада (обе оси обоих стиков).
+ * Один пакет вместо четырёх — меньше трафика. Клиент шлёт его только
+ * при изменении состояния (с deadzone) и не чаще раза в тик.
+ * Хендлер — в NetworkHandler.handleAnalog.
  */
 public record RetroAnalogPacket(
         BlockPos pos,
-        int stick,  // 0=left, 1=right
-        int axis,   // 0=X, 1=Y
-        short value // -32768 to 32767
+        short lx,   // левый стик X, -32768..32767
+        short ly,   // левый стик Y
+        short rx,   // правый стик X
+        short ry    // правый стик Y
 ) implements CustomPacketPayload {
 
-    public static final Type<RetroAnalogPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath("retroconsole", "analog"));
+    public static final Type<RetroAnalogPacket> TYPE = RetroPackets.type("analog");
 
-    public static final StreamCodec<FriendlyByteBuf, RetroAnalogPacket> STREAM_CODEC =
-            new StreamCodec<>() {
-                @Override
-                public RetroAnalogPacket decode(FriendlyByteBuf buf) {
-                    BlockPos pos = buf.readBlockPos();
-                    int stick = buf.readVarInt();
-                    int axis = buf.readVarInt();
-                    short value = buf.readShort();
-                    return new RetroAnalogPacket(pos, stick, axis, value);
-                }
-
-                @Override
-                public void encode(FriendlyByteBuf buf, RetroAnalogPacket pkt) {
-                    buf.writeBlockPos(pkt.pos);
-                    buf.writeVarInt(pkt.stick);
-                    buf.writeVarInt(pkt.axis);
-                    buf.writeShort(pkt.value);
-                }
-            };
+    public static final StreamCodec<ByteBuf, RetroAnalogPacket> STREAM_CODEC =
+            StreamCodec.composite(
+                    BlockPos.STREAM_CODEC, RetroAnalogPacket::pos,
+                    ByteBufCodecs.SHORT,   RetroAnalogPacket::lx,
+                    ByteBufCodecs.SHORT,   RetroAnalogPacket::ly,
+                    ByteBufCodecs.SHORT,   RetroAnalogPacket::rx,
+                    ByteBufCodecs.SHORT,   RetroAnalogPacket::ry,
+                    RetroAnalogPacket::new);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

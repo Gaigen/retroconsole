@@ -1,41 +1,26 @@
 package com.retroconsole.network;
 
+import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
 
-/**
- * Packet sent from client to server carrying a button press/release event
- * for a retro console at a given block position.
- */
+/** C2S: нажатие/отпускание кнопки консоли на заданной позиции. */
 public record RetroInputPacket(
         BlockPos pos,
         int buttonId,
         boolean pressed
 ) implements CustomPacketPayload {
 
-    public static final Type<RetroInputPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath("retroconsole", "input"));
+    public static final Type<RetroInputPacket> TYPE = RetroPackets.type("input");
 
-    public static final StreamCodec<FriendlyByteBuf, RetroInputPacket> STREAM_CODEC =
-            new StreamCodec<>() {
-                @Override
-                public RetroInputPacket decode(FriendlyByteBuf buf) {
-                    BlockPos pos = buf.readBlockPos();
-                    int buttonId = buf.readVarInt();
-                    boolean pressed = buf.readBoolean();
-                    return new RetroInputPacket(pos, buttonId, pressed);
-                }
-
-                @Override
-                public void encode(FriendlyByteBuf buf, RetroInputPacket pkt) {
-                    buf.writeBlockPos(pkt.pos);
-                    buf.writeVarInt(pkt.buttonId);
-                    buf.writeBoolean(pkt.pressed);
-                }
-            };
+    public static final StreamCodec<ByteBuf, RetroInputPacket> STREAM_CODEC =
+            StreamCodec.composite(
+                    BlockPos.STREAM_CODEC, RetroInputPacket::pos,
+                    ByteBufCodecs.VAR_INT,  RetroInputPacket::buttonId,
+                    ByteBufCodecs.BOOL,     RetroInputPacket::pressed,
+                    RetroInputPacket::new);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

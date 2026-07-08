@@ -1,32 +1,21 @@
 package com.retroconsole.network;
 
+import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
 
-/**
- * Packet sent from server to client to open the TV screen GUI.
- */
+/** S2C: открыть GUI телевизора (пустой romId = меню выбора игры). */
 public record RetroOpenScreenPacket(BlockPos pos, String romId) implements CustomPacketPayload {
 
-    public static final Type<RetroOpenScreenPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath("retroconsole", "open_screen"));
+    public static final Type<RetroOpenScreenPacket> TYPE = RetroPackets.type("open_screen");
 
-    public static final StreamCodec<FriendlyByteBuf, RetroOpenScreenPacket> STREAM_CODEC =
-            new StreamCodec<>() {
-                @Override
-                public RetroOpenScreenPacket decode(FriendlyByteBuf buf) {
-                    return new RetroOpenScreenPacket(buf.readBlockPos(), buf.readUtf(256));
-                }
-
-                @Override
-                public void encode(FriendlyByteBuf buf, RetroOpenScreenPacket pkt) {
-                    buf.writeBlockPos(pkt.pos);
-                    buf.writeUtf(pkt.romId, 256);
-                }
-            };
+    public static final StreamCodec<ByteBuf, RetroOpenScreenPacket> STREAM_CODEC =
+            StreamCodec.composite(
+                    BlockPos.STREAM_CODEC,                          RetroOpenScreenPacket::pos,
+                    ByteBufCodecs.stringUtf8(RetroPackets.MAX_STR), RetroOpenScreenPacket::romId,
+                    RetroOpenScreenPacket::new);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

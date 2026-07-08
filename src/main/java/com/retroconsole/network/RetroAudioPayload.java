@@ -1,29 +1,23 @@
 package com.retroconsole.network;
 
+import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
 
+/** S2C: порция PCM-аудио консоли. */
 public record RetroAudioPayload(BlockPos pos, int sampleRate, byte[] pcm)
         implements CustomPacketPayload {
 
-    public static final Type<RetroAudioPayload> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath("retroconsole", "audio"));
+    public static final Type<RetroAudioPayload> TYPE = RetroPackets.type("audio");
 
-    public static final StreamCodec<FriendlyByteBuf, RetroAudioPayload> STREAM_CODEC =
-            StreamCodec.of(RetroAudioPayload::write, RetroAudioPayload::read);
-
-    private static void write(FriendlyByteBuf buf, RetroAudioPayload p) {
-        buf.writeBlockPos(p.pos);
-        buf.writeVarInt(p.sampleRate);
-        buf.writeByteArray(p.pcm);
-    }
-
-    private static RetroAudioPayload read(FriendlyByteBuf buf) {
-        return new RetroAudioPayload(buf.readBlockPos(), buf.readVarInt(), buf.readByteArray());
-    }
+    public static final StreamCodec<ByteBuf, RetroAudioPayload> STREAM_CODEC =
+            StreamCodec.composite(
+                    BlockPos.STREAM_CODEC,    RetroAudioPayload::pos,
+                    ByteBufCodecs.VAR_INT,    RetroAudioPayload::sampleRate,
+                    ByteBufCodecs.BYTE_ARRAY, RetroAudioPayload::pcm,
+                    RetroAudioPayload::new);
 
     @Override
     public Type<? extends CustomPacketPayload> type() {

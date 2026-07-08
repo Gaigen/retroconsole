@@ -1,5 +1,6 @@
 package com.retroconsole.block;
 
+import com.retroconsole.bridge.LibretroCore;
 import com.retroconsole.reg.ModBlockEntities;
 import com.retroconsole.server.ServerConsoles;
 import net.minecraft.core.BlockPos;
@@ -7,6 +8,7 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -86,6 +88,17 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     public void powerOff() {
         if (level == null || level.isClientSide()) return;
         setRomId("");
+    }
+
+    /** Игрок, выбравший игру (или перезапустивший консоль), — единственный «водитель». */
+    public boolean isControlledBy(ServerPlayer player) {
+        return ownerId != null && ownerId.equals(player.getUUID());
+    }
+
+    /** Активное libretro-ядро на сервере, или null если эмулятор не запущен. */
+    public LibretroCore getCore() {
+        if (level == null || level.isClientSide()) return null;
+        return ServerConsoles.getCore(worldPosition);
     }
 
     private void startEmulator() {

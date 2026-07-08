@@ -14,10 +14,10 @@ public final class VideoQualityPresets {
         putBoth(m, "per_content_vmus", "VMU A1");
         putBoth(m, "device_port1_slot1", "VMU");
         putBoth(m, "internal_resolution", "1920x1440");
-        putBoth(m, "texupscale", "4");
+        putBoth(m, "texupscale", "2");
         putBoth(m, "texupscale_max_filtered_texture_size", "1024");
-        putBoth(m, "anisotropic_filtering", "16");
-        putBoth(m, "texture_filtering", "2");
+        putBoth(m, "anisotropic_filtering", "8");
+        putBoth(m, "texture_filtering", "1");
         putBoth(m, "alpha_sorting", "per-triangle (normal)");
         putBoth(m, "fix_upscale_bleeding_edge", "enabled");
         return Map.copyOf(m);

@@ -64,6 +64,8 @@ public class TvScreen extends Screen {
     private final RetroInputBindings.StickState leftStick = new RetroInputBindings.StickState();
     private final RetroInputBindings.StickState rightStick = new RetroInputBindings.StickState();
 
+    private short sentLx, sentLy, sentRx, sentRy;
+
     public TvScreen(BlockPos consolePos, String romId) {
         super(Component.literal("Retro Console"));
         this.consolePos = consolePos;
@@ -402,24 +404,36 @@ public class TvScreen extends Screen {
                 RetroInputBindings.LEFT_STICK, key, pressed, leftStick);
         boolean rightChanged = RetroInputBindings.updateStick(
                 RetroInputBindings.RIGHT_STICK, key, pressed, rightStick);
-        if (leftChanged) {
-            sendAnalogStick(0, leftStick.left, leftStick.right, leftStick.up, leftStick.down);
-        }
-        if (rightChanged) {
-            sendAnalogStick(1, rightStick.left, rightStick.right, rightStick.up, rightStick.down);
+        if (leftChanged || rightChanged) {
+            sendAnalogIfChanged();
         }
         return leftChanged || rightChanged;
     }
 
-    private void sendAnalogStick(int stick, boolean left, boolean right, boolean up, boolean down) {
-        short xVal = 0;
-        if (right && !left) xVal = ANALOG_MAX;
-        else if (left && !right) xVal = ANALOG_MIN;
-        short yVal = 0;
-        if (up && !down) yVal = ANALOG_MIN;
-        else if (down && !up) yVal = ANALOG_MAX;
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, stick, 0, xVal));
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, stick, 1, yVal));
+    private short stickToX(RetroInputBindings.StickState stick) {
+        if (stick.right && !stick.left) return ANALOG_MAX;
+        if (stick.left && !stick.right) return ANALOG_MIN;
+        return 0;
+    }
+
+    private short stickToY(RetroInputBindings.StickState stick) {
+        if (stick.up && !stick.down) return ANALOG_MIN;
+        if (stick.down && !stick.up) return ANALOG_MAX;
+        return 0;
+    }
+
+    /** Один пакет со всеми осями — только при изменении состояния. */
+    private void sendAnalogIfChanged() {
+        short lx = stickToX(leftStick);
+        short ly = stickToY(leftStick);
+        short rx = stickToX(rightStick);
+        short ry = stickToY(rightStick);
+        if (lx == sentLx && ly == sentLy && rx == sentRx && ry == sentRy) return;
+        sentLx = lx;
+        sentLy = ly;
+        sentRx = rx;
+        sentRy = ry;
+        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, lx, ly, rx, ry));
     }
 
     // ------------------------------------------------------------------
@@ -456,10 +470,8 @@ public class TvScreen extends Screen {
     }
 
     private void sendAnalogZeros() {
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, 0, 0, (short) 0));
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, 0, 1, (short) 0));
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, 1, 0, (short) 0));
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, 1, 1, (short) 0));
+        sentLx = sentLy = sentRx = sentRy = 0;
+        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, (short) 0, (short) 0, (short) 0, (short) 0));
     }
 
     private void sendReleaseAll() {
