@@ -1,11 +1,11 @@
 package com.retroconsole.block;
 
 import com.mojang.serialization.MapCodec;
-import com.retroconsole.client.CoreSelectScreen;
-import com.retroconsole.client.TvScreen;
-import net.minecraft.client.Minecraft;
+import com.retroconsole.network.RetroOpenScreenPacket;
+import com.retroconsole.server.ServerConsoles;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.ItemInteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
@@ -21,11 +21,12 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.level.storage.loot.LootParams;
+import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
 public class RetroConsoleBlock extends BaseEntityBlock {
 
@@ -62,32 +63,106 @@ public class RetroConsoleBlock extends BaseEntityBlock {
         return new RetroConsoleBlockEntity(pos, state);
     }
 
+    // ------------------------------------------------------------------
+    // Клик
+    // ------------------------------------------------------------------
+
     @Override
     protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level,
                                                BlockPos pos, Player player,
                                                net.minecraft.world.InteractionHand hand,
                                                BlockHitResult hitResult) {
+        if (!player.getItemInHand(hand).isEmpty()) {
+            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        }
         if (level.isClientSide()) {
-            BlockEntity be = level.getBlockEntity(pos);
-            if (be instanceof RetroConsoleBlockEntity console) {
-                if (player.getItemInHand(hand).isEmpty()) {
-                    if (console.getRomId().isEmpty()) {
-                        // No ROM loaded — open core/ROM selection GUI
-                        Minecraft.getInstance().setScreen(new CoreSelectScreen(pos));
-                    } else {
-                        // ROM loaded — open TV screen
-                        Minecraft.getInstance().setScreen(new TvScreen(pos, console.getRomId()));
-                    }
-                    return ItemInteractionResult.SUCCESS;
-                }
+            return ItemInteractionResult.SUCCESS;
+        }
+        if (!(level.getBlockEntity(pos) instanceof RetroConsoleBlockEntity console)
+                || !(player instanceof ServerPlayer serverPlayer)) {
+            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        }
+
+        String romId = console.getRomId();
+        if (!romId.isEmpty() && !ServerConsoles.hasEmulator(pos)) {
+            if (!console.getCoreName().isEmpty()) {
+                UUID owner = console.getOwnerId() != null ? console.getOwnerId() : serverPlayer.getUUID();
+                console.selectGame(console.getCoreName(), romId, owner, true);
+            } else {
+                console.powerOff();
             }
         }
-        return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+
+        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
+                serverPlayer, new RetroOpenScreenPacket(pos, console.getRomId()));
+        return ItemInteractionResult.SUCCESS;
+    }
+
+    // ------------------------------------------------------------------
+    // Реестр консолей + линковка экранов
+    // ------------------------------------------------------------------
+
+    @Override
+    public void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
+        super.onPlace(state, level, pos, oldState, movedByPiston);
+        if (!level.isClientSide() && !oldState.is(this)) {
+            ConsoleRegistry.add(level, pos);
+            linkNearbyScreens(level, pos);
+        }
     }
 
     @Override
+    public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        if (!level.isClientSide() && !newState.is(this)) {
+            ConsoleRegistry.remove(level, pos);
+            unlinkScreens(level, pos);
+        }
+        super.onRemove(state, level, pos, newState, movedByPiston);
+    }
+
+    private static void linkNearbyScreens(Level level, BlockPos consolePos) {
+        int r = ScreenBlock.LINK_RADIUS;
+        for (BlockPos candidate : BlockPos.betweenClosed(
+                consolePos.offset(-r, -r, -r), consolePos.offset(r, r, r))) {
+            if (!(level.getBlockState(candidate).getBlock() instanceof ScreenBlock)) continue;
+            if (!(level.getBlockEntity(candidate) instanceof ScreenBlockEntity screen)) continue;
+            BlockPos cur = screen.getConsolePos();
+            boolean unlinked = cur == null || BlockPos.ZERO.equals(cur);
+            boolean stale = !unlinked
+                    && !(level.getBlockEntity(cur) instanceof RetroConsoleBlockEntity);
+            if (unlinked || stale) {
+                screen.setConsolePos(consolePos);
+            }
+        }
+    }
+
+    private static void unlinkScreens(Level level, BlockPos consolePos) {
+        int r = ScreenBlock.LINK_RADIUS;
+        for (BlockPos candidate : BlockPos.betweenClosed(
+                consolePos.offset(-r, -r, -r), consolePos.offset(r, r, r))) {
+            if (!(level.getBlockState(candidate).getBlock() instanceof ScreenBlock)) continue;
+            if (level.getBlockEntity(candidate) instanceof ScreenBlockEntity screen
+                    && consolePos.equals(screen.getConsolePos())) {
+                BlockPos next = ConsoleRegistry.nearestWithin(
+                        level, screen.getBlockPos(), ScreenBlock.LINK_RADIUS, consolePos);
+                screen.setConsolePos(next != null ? next : BlockPos.ZERO);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Прочее
+    // ------------------------------------------------------------------
+
+    @Override
     protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
-        return Collections.emptyList();
+        ItemStack stack = new ItemStack(this);
+        if (builder.getOptionalParameter(LootContextParams.BLOCK_ENTITY)
+                instanceof RetroConsoleBlockEntity console
+                && (!console.getRomId().isEmpty() || !console.getCoreName().isEmpty())) {
+            console.saveToItem(stack, builder.getLevel().registryAccess());
+        }
+        return List.of(stack);
     }
 
     @Override

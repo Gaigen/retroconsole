@@ -3,6 +3,7 @@ package com.retroconsole.network;
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.client.ClientAudioHandler;
 import com.retroconsole.client.ClientConsoles;
+import com.retroconsole.client.CoreSelectScreen;
 import com.retroconsole.client.TvScreen;
 import com.retroconsole.server.ServerConsoles;
 import net.minecraft.client.Minecraft;
@@ -51,9 +52,10 @@ public class NetworkHandler {
     // --- Client-bound ---
 
     private static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
-        // Всё на сетевом потоке: распаковка + submitFrame (внутри конвертация в ABGR).
-        // enqueueWork для кадров больше НЕ используется — очередь рендера не растёт.
-        int[] frame = pkt.decompressFrame();
+        // Всё на сетевом потоке: распаковка СРАЗУ в ABGR (один попиксельный
+        // проход вместо двух) + submitFrame. enqueueWork для кадров
+        // НЕ используется — очередь рендера не растёт.
+        int[] frame = pkt.decompressFrameAbgr();
         if (frame != null) {
             ClientConsoles.submitFrame(pkt.pos(), frame, pkt.width(), pkt.height());
         }
@@ -66,9 +68,18 @@ public class NetworkHandler {
         });
     }
 
+    /**
+     * Пара к серверному клику в RetroConsoleBlock.useItemOn: сервер решает,
+     * что консоль готова (или перезапущена с автосейва), а клиент
+     * только открывает нужный экран. Пустой romId = меню выбора игры.
+     */
     private static void handleOpenScreen(RetroOpenScreenPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
-            Minecraft.getInstance().setScreen(new TvScreen(pkt.pos(), pkt.romId()));
+            if (pkt.romId() == null || pkt.romId().isEmpty()) {
+                Minecraft.getInstance().setScreen(new CoreSelectScreen(pkt.pos()));
+            } else {
+                Minecraft.getInstance().setScreen(new TvScreen(pkt.pos(), pkt.romId()));
+            }
         });
     }
 

@@ -101,13 +101,38 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Реестр консолей (ConsoleRegistry)
+    // ------------------------------------------------------------------
+
+    @Override
+    public void onLoad() {
+        super.onLoad();
+        if (level != null && !level.isClientSide()) {
+            ConsoleRegistry.add(level, worldPosition);
+        }
+    }
+
+    @Override
+    public void onChunkUnloaded() {
+        super.onChunkUnloaded();
+        if (level != null && !level.isClientSide()) {
+            ConsoleRegistry.remove(level, worldPosition);
+        }
+    }
+
     @Override
     public void setRemoved() {
         super.setRemoved();
         if (level != null && !level.isClientSide()) {
+            ConsoleRegistry.remove(level, worldPosition);
             stopEmulator();
         }
     }
+
+    // ------------------------------------------------------------------
+    // NBT / синхронизация
+    // ------------------------------------------------------------------
 
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {

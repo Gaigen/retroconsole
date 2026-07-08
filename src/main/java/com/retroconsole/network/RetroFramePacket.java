@@ -1,5 +1,6 @@
 package com.retroconsole.network;
 
+import io.netty.handler.codec.DecoderException;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
@@ -7,14 +8,25 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 
 import java.io.ByteArrayOutputStream;
+import java.util.Arrays;
+import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
-import java.util.zip.DeflaterOutputStream;
 import java.util.zip.Inflater;
-import java.util.zip.InflaterOutputStream;
 
 /**
  * Packet sent from server to client carrying a compressed emulator frame.
  * The frame is stored as compressed RGB bytes (3 bytes per pixel, no alpha).
+ *
+ * <p>БАГФИКС (утечка нативной памяти): раньше на каждый кадр создавались
+ * new Deflater()/new Inflater() и НИКОГДА не вызывался end().
+ * DeflaterOutputStream.close() не освобождает ВНЕШНИЙ deflater, а финализация
+ * у них ленивая — при 60 fps нативная память росла, и в heap-дампе этого не
+ * видно. Теперь: один Deflater/Inflater на поток (ThreadLocal) + reset()
+ * между кадрами. То же с временными byte[]-буферами.
+ *
+ * <p>ОПТИМИЗАЦИЯ: distribute-декомпрессия выдаёт сразу ABGR (формат GL RGBA
+ * little-endian) — второй попиксельный проход в ClientConsoles.submitFrame
+ * больше не нужен.
  */
 public record RetroFramePacket(
         BlockPos pos,
@@ -26,6 +38,19 @@ public record RetroFramePacket(
     public static final Type<RetroFramePacket> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath("retroconsole", "frame"));
 
+    /** Санити-предел: кадров больше 4K не бывает, всё прочее — мусор в пакете. */
+    private static final int MAX_DIM = 4096;
+
+    private static final ThreadLocal<Deflater> DEFLATER =
+            ThreadLocal.withInitial(() -> new Deflater(Deflater.BEST_SPEED));
+    private static final ThreadLocal<Inflater> INFLATER =
+            ThreadLocal.withInitial(Inflater::new);
+    /** RGB-буфер на поток: FrameSender сжимает, network thread распаковывает — не пересекаются. */
+    private static final ThreadLocal<byte[]> RGB_BUF =
+            ThreadLocal.withInitial(() -> new byte[0]);
+    private static final ThreadLocal<byte[]> CHUNK =
+            ThreadLocal.withInitial(() -> new byte[64 * 1024]);
+
     public static final StreamCodec<FriendlyByteBuf, RetroFramePacket> STREAM_CODEC =
             new StreamCodec<>() {
                 @Override
@@ -33,7 +58,16 @@ public record RetroFramePacket(
                     BlockPos pos = buf.readBlockPos();
                     int width = buf.readVarInt();
                     int height = buf.readVarInt();
+                    if (width <= 0 || height <= 0 || width > MAX_DIM || height > MAX_DIM) {
+                        throw new DecoderException("Bad frame size " + width + "x" + height);
+                    }
                     int length = buf.readVarInt();
+                    // БАГФИКС: раньше new byte[length] без проверки — злонамеренный
+                    // или битый пакет мог заказать гигабайтную аллокацию.
+                    long max = (long) width * height * 3 + 1024;
+                    if (length < 0 || length > max || length > buf.readableBytes()) {
+                        throw new DecoderException("Bad frame payload length " + length);
+                    }
                     byte[] compressedFrame = new byte[length];
                     buf.readBytes(compressedFrame);
                     return new RetroFramePacket(pos, width, height, compressedFrame);
@@ -56,79 +90,85 @@ public record RetroFramePacket(
 
     /**
      * Create a RetroFramePacket from an ARGB int[] frame buffer.
-     * Strips alpha channel (converts to RGB, 3 bytes/pixel) and compresses with Deflater at BEST_SPEED.
+     * Strips alpha channel (RGB, 3 bytes/pixel) and compresses with Deflater at BEST_SPEED.
      */
     public static RetroFramePacket create(BlockPos pos, int[] frame, int width, int height) {
         int pixelCount = width * height;
         if (pixelCount <= 0 || frame.length < pixelCount) {
             return new RetroFramePacket(pos, width, height, new byte[0]);
         }
-        // Convert ARGB int[] to RGB byte[] (3 bytes per pixel)
-        byte[] rgb = new byte[pixelCount * 3];
+        byte[] rgb = takeRgbBuf(pixelCount * 3);
         for (int i = 0; i < pixelCount; i++) {
             int argb = frame[i];
             int base = i * 3;
-            rgb[base]     = (byte) ((argb >> 16) & 0xFF); // R
+            rgb[base] = (byte) ((argb >> 16) & 0xFF);     // R
             rgb[base + 1] = (byte) ((argb >> 8) & 0xFF);  // G
-            rgb[base + 2] = (byte) (argb & 0xFF);          // B
+            rgb[base + 2] = (byte) (argb & 0xFF);         // B
         }
-
-        byte[] compressed = compress(rgb);
+        byte[] compressed = compress(rgb, pixelCount * 3);
         return new RetroFramePacket(pos, width, height, compressed);
     }
 
     /**
-     * Decompress and convert back to an ARGB int[] frame buffer.
-     * Returns null on error.
-     *
-     * <p>Note: the length of the decoded RGB byte stream is determined by
-     * how many bytes the server compressed. If the core has changed its
-     * resolution mid-flight, the wire length can be {@code != width*height*3}.
-     * We clamp to whatever the decompressed buffer gives us and pad with
-     * opaque black so a mismatch produces a black frame on the client
-     * rather than a corrupted one or an exception.
+     * Распаковать кадр сразу в ABGR (GL RGBA little-endian) для ClientConsoles.
+     * Возвращает null при ошибке. Недостающие пиксели (смена разрешения
+     * в полёте) заполняются непрозрачным чёрным. Inflate жёстко ограничен
+     * ожидаемым размером кадра — «zip-бомба» не раздуется.
      */
-    public int[] decompressFrame() {
-        byte[] rgb = decompress(compressedFrame);
-        if (rgb == null) return null;
-
+    public int[] decompressFrameAbgr() {
         int pixelCount = width * height;
-        int[] argb = new int[pixelCount]; // zero-filled — bare pixels stay black (alpha=0)
-        int have = rgb.length / 3;        // number of fully readable pixels
+        if (pixelCount <= 0) return null;
+        int expected = pixelCount * 3;
+        byte[] rgb = takeRgbBuf(expected);
+
+        Inflater inflater = INFLATER.get();
+        inflater.reset();
+        inflater.setInput(compressedFrame);
+        int got = 0;
+        try {
+            while (got < expected && !inflater.finished()) {
+                int n = inflater.inflate(rgb, got, expected - got);
+                if (n == 0) break; // needsInput / battered stream — обрезанный кадр
+                got += n;
+            }
+        } catch (DataFormatException e) {
+            return null;
+        }
+
+        int[] abgr = new int[pixelCount];
+        int have = got / 3;
         int n = Math.min(pixelCount, have);
         for (int i = 0; i < n; i++) {
             int base = i * 3;
             int r = rgb[base] & 0xFF;
             int g = rgb[base + 1] & 0xFF;
             int b = rgb[base + 2] & 0xFF;
-            argb[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            abgr[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
         }
-        return argb;
+        Arrays.fill(abgr, n, pixelCount, 0xFF000000);
+        return abgr;
     }
 
-    private static byte[] compress(byte[] data) {
-        try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(data.length);
-            Deflater deflater = new Deflater(Deflater.BEST_SPEED);
-            try (DeflaterOutputStream dos = new DeflaterOutputStream(baos, deflater)) {
-                dos.write(data);
-            }
-            return baos.toByteArray();
-        } catch (Exception e) {
-            return new byte[0];
+    private static byte[] takeRgbBuf(int size) {
+        byte[] b = RGB_BUF.get();
+        if (b.length < size) {
+            b = new byte[size];
+            RGB_BUF.set(b);
         }
+        return b;
     }
 
-    private static byte[] decompress(byte[] compressed) {
-        try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream(compressed.length * 3);
-            Inflater inflater = new Inflater();
-            try (InflaterOutputStream ios = new InflaterOutputStream(baos, inflater)) {
-                ios.write(compressed);
-            }
-            return baos.toByteArray();
-        } catch (Exception e) {
-            return null;
+    private static byte[] compress(byte[] data, int len) {
+        Deflater deflater = DEFLATER.get();
+        deflater.reset();
+        deflater.setInput(data, 0, len);
+        deflater.finish();
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(Math.max(4096, len / 8));
+        byte[] chunk = CHUNK.get();
+        while (!deflater.finished()) {
+            int n = deflater.deflate(chunk);
+            if (n > 0) baos.write(chunk, 0, n);
         }
+        return baos.toByteArray();
     }
 }
