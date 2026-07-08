@@ -38,6 +38,25 @@ public final class SaveStateManager {
         }
     }
 
+    public static boolean saveAuto(LibretroCore core, String romId, PlayerPaths paths) {
+        if (!supportsSaveStates(core)) {
+            LOGGER.info("Auto save state not supported for this core");
+            return false;
+        }
+        byte[] data = core.serialize();
+        if (data == null || data.length == 0) return false;
+        Path file = SaveFiles.autoStatePath(paths, romId);
+        try {
+            Files.createDirectories(file.getParent());
+            Files.write(file, data);
+            LOGGER.info("Auto save state -> {} ({} bytes)", file.getFileName(), data.length);
+            return true;
+        } catch (Exception ex) {
+            LOGGER.warn("Failed to write auto save state {}: {}", file, ex.getMessage());
+            return false;
+        }
+    }
+
     public static boolean load(LibretroCore core, Path romPath, PlayerPaths paths, int slot) {
         if (!supportsSaveStates(core)) {
             LOGGER.info("Save state not supported for this core");
@@ -60,5 +79,35 @@ public final class SaveStateManager {
             LOGGER.warn("Failed to load save state {}: {}", file, ex.getMessage());
             return false;
         }
+    }
+
+    public static boolean loadAuto(LibretroCore core, String romId, PlayerPaths paths) {
+        if (!supportsSaveStates(core)) {
+            LOGGER.info("Auto save state not supported for this core");
+            return false;
+        }
+        Path file = SaveFiles.autoStatePath(paths, romId);
+        if (!Files.isRegularFile(file)) {
+            LOGGER.info("No auto save state ({})", file.getFileName());
+            return false;
+        }
+        try {
+            byte[] data = Files.readAllBytes(file);
+            if (core.unserialize(data)) {
+                LOGGER.info("Loaded auto save state from {} ({} bytes)", file.getFileName(), data.length);
+                return true;
+            }
+            LOGGER.warn("Core rejected auto save state {}", file.getFileName());
+            return false;
+        } catch (Exception ex) {
+            LOGGER.warn("Failed to load auto save state {}: {}", file, ex.getMessage());
+            return false;
+        }
+    }
+
+    /** Автосейв, иначе ручной слот 0 (F5). */
+    public static boolean loadAutoOrSlot(LibretroCore core, String romId, Path romPath, PlayerPaths paths) {
+        if (loadAuto(core, romId, paths)) return true;
+        return load(core, romPath, paths, 0);
     }
 }

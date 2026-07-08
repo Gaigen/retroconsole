@@ -76,7 +76,7 @@ public class RetroConsoleBlock extends BaseEntityBlock {
                         Minecraft.getInstance().setScreen(new CoreSelectScreen(pos));
                     } else {
                         // ROM loaded — open TV screen
-                        Minecraft.getInstance().setScreen(new TvScreen(pos));
+                        Minecraft.getInstance().setScreen(new TvScreen(pos, console.getRomId()));
                     }
                     return ItemInteractionResult.SUCCESS;
                 }

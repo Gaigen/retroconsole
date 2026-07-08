@@ -22,4 +22,13 @@ public final class SaveFiles {
     public static Path saveStatePath(Path saveRoot, Path romPath, int slot) {
         return saveRoot.resolve(romPath.getFileName().toString() + ".state" + slot);
     }
+
+    /** Автосейв при выходе из TvScreen — полный romId, без коллизий между папками. */
+    public static Path autoStatePath(Path saveRoot, String romId) {
+        return saveRoot.resolve(romId.replace('\\', '/') + ".auto.state");
+    }
+
+    public static Path autoStatePath(PlayerPaths paths, String romId) {
+        return autoStatePath(paths.saveDir(), romId);
+    }
 }

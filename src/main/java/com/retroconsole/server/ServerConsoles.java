@@ -77,6 +77,10 @@ public class ServerConsoles {
     }
 
     public static void startEmulator(BlockPos pos, String coreName, String romId, UUID ownerId) {
+        startEmulator(pos, coreName, romId, ownerId, false);
+    }
+
+    public static void startEmulator(BlockPos pos, String coreName, String romId, UUID ownerId, boolean loadAuto) {
         pos = pos.immutable();
         Entry existing = ENTRIES.get(pos);
         if (existing != null) {
@@ -101,6 +105,14 @@ public class ServerConsoles {
         LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath, playerPaths);
         if (runtime == null) { LOGGER.error("Failed to load core {} with ROM {}", coreName, romId); return; }
 
+        if (loadAuto) {
+            runtime.runFrame();
+            runtime.runFrame();
+            boolean loaded = SaveStateManager.loadAutoOrSlot(
+                    runtime.getCore(), romId, romPath, playerPaths);
+            LOGGER.info("Continue load for {} -> {}", romId, loaded);
+        }
+
         int w = Math.max(runtime.getWidth(), 1);
         int h = Math.max(runtime.getHeight(), 1);
         int[] buf = new int[w * h];
@@ -116,8 +128,8 @@ public class ServerConsoles {
 
         ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId, ownerId));
         FRAME_SENDERS.put(pos, sender);
-        LOGGER.info("Started {} emulator at {} ({}x{}, owner={})",
-                coreName, pos, w, h, ownerId);
+        LOGGER.info("Started {} emulator at {} ({}x{}, owner={}, loadAuto={})",
+                coreName, pos, w, h, ownerId, loadAuto);
     }
 
     public static void startEmulator(BlockPos pos, String coreName, String romId) {
@@ -132,6 +144,9 @@ public class ServerConsoles {
         if (e != null) {
             LOGGER.info("stopEmulator({}): core={}, rom={}", pos, e.coreName(), e.romId());
             e.threaded().stop();
+            boolean saved = SaveStateManager.saveAuto(
+                    e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
+            LOGGER.info("Auto save on stop {} -> {}", e.romId(), saved);
             scheduleClose(e.runtime(), pos);
         }
         notifyConsoleStopped(pos);
@@ -188,9 +203,16 @@ public class ServerConsoles {
         if (e != null) e.runtime().setAnalog(stick, axis, value);
     }
 
-    public static void handleSaveState(BlockPos pos, int slot, boolean save) {
+    public static void handleSaveState(BlockPos pos, int slot, boolean save, boolean auto) {
         Entry e = ENTRIES.get(pos.immutable());
         if (e == null) return;
+        if (auto) {
+            if (!save) return;
+            boolean ok = SaveStateManager.saveAuto(
+                    e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
+            LOGGER.info("Auto save state @ {} -> {}", pos, ok);
+            return;
+        }
         if (slot < 0 || slot > SaveStateManager.MAX_SLOT) return;
         boolean ok = save ? e.runtime().saveState(slot) : e.runtime().loadState(slot);
         LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, pos, ok);

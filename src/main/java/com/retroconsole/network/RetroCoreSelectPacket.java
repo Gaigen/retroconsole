@@ -13,7 +13,8 @@ import net.minecraft.resources.ResourceLocation;
 public record RetroCoreSelectPacket(
         BlockPos pos,
         String coreName,
-        String romId
+        String romId,
+        boolean loadAuto
 ) implements CustomPacketPayload {
 
     public static final Type<RetroCoreSelectPacket> TYPE =
@@ -26,7 +27,8 @@ public record RetroCoreSelectPacket(
                     BlockPos pos = buf.readBlockPos();
                     String coreName = buf.readUtf(256);
                     String romId = buf.readUtf(256);
-                    return new RetroCoreSelectPacket(pos, coreName, romId);
+                    boolean loadAuto = buf.readBoolean();
+                    return new RetroCoreSelectPacket(pos, coreName, romId, loadAuto);
                 }
 
                 @Override
@@ -34,6 +36,7 @@ public record RetroCoreSelectPacket(
                     buf.writeBlockPos(pkt.pos);
                     buf.writeUtf(pkt.coreName, 256);
                     buf.writeUtf(pkt.romId, 256);
+                    buf.writeBoolean(pkt.loadAuto);
                 }
             };
 

@@ -47,6 +47,7 @@ public final class ClientConsoles {
         private final int width;
         private final int height;
         private final IntBuffer staging; // direct-память, переиспользуется каждый кадр
+        private int[] lastAbgr;
 
         private ScreenEntry(BlockPos pos, int width, int height) {
             this.width = width;
@@ -66,6 +67,7 @@ public final class ClientConsoles {
         public ResourceLocation id() { return id; }
         public int width() { return width; }
         public int height() { return height; }
+        public int[] lastAbgr() { return lastAbgr; }
     }
 
     /** PENDING пишется с сетевого потока, читается с рендера — обязательно concurrent. */
@@ -119,6 +121,12 @@ public final class ClientConsoles {
         return SCREENS.get(pos);
     }
 
+    /** Без заливки кадра — можно с любого потока (миниатюры при выходе). */
+    public static ScreenEntry peekScreen(BlockPos consolePos) {
+        if (consolePos == null) return null;
+        return SCREENS.get(consolePos.immutable());
+    }
+
     /** Только рендер-поток. Забирает последний кадр из слота и заливает в текстуру. */
     private static void uploadPendingFrame(BlockPos pos) {
         if (!RenderSystem.isOnRenderThread()) return;
@@ -141,6 +149,7 @@ public final class ClientConsoles {
         entry.staging.clear();
         entry.staging.put(f.abgr(), 0, n);
         entry.staging.flip();
+        entry.lastAbgr = java.util.Arrays.copyOf(f.abgr(), n);
 
         GlStateManager._bindTexture(entry.tex.getId());
         GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
