@@ -50,8 +50,11 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             }
         }
 
+        // Mirror U when "right for the viewer" maps to decreasing world coordinate
+        // (NORTH: -X, EAST: -Z). SOUTH/WEST grow with gridX and need no mirror.
+        boolean mirrorU = facing == Direction.NORTH || facing == Direction.EAST;
         float u0, u1, v0, v1;
-        if (facing == Direction.NORTH || facing == Direction.SOUTH) {
+        if (mirrorU) {
             u0 = 1.0f - (float) (gridX + 1) / gridW;
             u1 = 1.0f - (float) gridX / gridW;
         } else {
