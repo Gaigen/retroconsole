@@ -1,11 +1,12 @@
 package com.retroconsole.client;
 
-import com.retroconsole.client.library.GameSystem;
+import com.retroconsole.library.GameSystem;
 import com.retroconsole.client.library.ClientPlayerData;
 import com.retroconsole.client.library.PlayStats;
-import com.retroconsole.client.library.RomLibrary;
+import com.retroconsole.library.RomLibrary;
 import com.retroconsole.client.library.SaveStates;
 import com.retroconsole.network.RetroCoreSelectPacket;
+import com.retroconsole.network.RetroLibraryPacket;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -62,8 +63,10 @@ public class CoreSelectScreen extends Screen {
     private int pickerScroll;
 
     private EditBox searchBox;
-    private Button startBtn, pickCoreBtn, backBtn, modeBtn;
+    private Button startBtn, pickCoreBtn, backBtn, modeBtn, folderBtn;
     private boolean showHelp, showCorePicker;
+    private boolean serverLibrary;
+    private boolean libraryLoading;
     private long lastClickTime;
     private RomLibrary.Rom lastClicked;
 
@@ -76,11 +79,14 @@ public class CoreSelectScreen extends Screen {
         this.consolePos = consolePos;
     }
 
+    public BlockPos consolePos() {
+        return consolePos;
+    }
+
     @Override
     protected void init() {
         super.init();
-        lib.scan();
-        rebuildTabs();
+        serverLibrary = ClientLibraryCache.useServerLibrary();
 
         backBtn = addRenderableWidget(Button.builder(Component.literal("⌂"), b -> {
             view = View.CARDS;
@@ -104,9 +110,10 @@ public class CoreSelectScreen extends Screen {
             refreshShown();
         }).pos(width - 148, 22).size(64, 18).build());
 
-        addRenderableWidget(Button.builder(Component.literal("Папка"),
+        folderBtn = addRenderableWidget(Button.builder(Component.literal("Папка"),
                         b -> Util.getPlatform().openFile(RomLibrary.ensureDir(currentFolder()).toFile()))
                 .pos(width - 80, 22).size(44, 18).build());
+        folderBtn.active = !serverLibrary;
 
         addRenderableWidget(Button.builder(Component.literal("?"), b -> showHelp = !showHelp)
                 .pos(width - 32, 22).size(20, 18).build());
@@ -119,6 +126,33 @@ public class CoreSelectScreen extends Screen {
                         b -> startEmulator())
                 .pos(width / 2 - 60, height - 26).size(120, 20).build());
 
+        if (serverLibrary) {
+            libraryLoading = true;
+            ClientLibraryCache.request(consolePos);
+        } else {
+            lib.scan();
+            onLibraryReady();
+        }
+    }
+
+    /** Вызывается из ClientPacketHandlers при получении каталога с сервера. */
+    public void onServerLibraryReceived(RetroLibraryPacket pkt) {
+        if (!pkt.consolePos().equals(consolePos)) return;
+        lib.loadFromNetwork(pkt);
+        libraryLoading = false;
+        onLibraryReady();
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (libraryLoading) {
+            ClientLibraryCache.poll(consolePos).ifPresent(this::onServerLibraryReceived);
+        }
+    }
+
+    private void onLibraryReady() {
+        rebuildTabs();
         loadPrefs();
         String heroId = PlayStats.lastPlayedRomId();
         heroRom = heroId == null ? null
@@ -181,8 +215,8 @@ public class CoreSelectScreen extends Screen {
 
     private Path currentFolder() {
         if (view == View.LIST && activeTab != null && activeTab != GameSystem.OTHER)
-            return RomLibrary.ROMS_DIR.resolve(activeTab.folder);
-        return RomLibrary.ROMS_DIR;
+            return RomLibrary.romsDir().resolve(activeTab.folder);
+        return RomLibrary.romsDir();
     }
 
     private void startEmulator() {
@@ -272,7 +306,9 @@ public class CoreSelectScreen extends Screen {
             g.drawString(font, right, x + w - rightW - 10, ry + 4, 0xFFFFFF);
         }
         if (popupRoms.isEmpty())
-            g.drawCenteredString(font, "Пусто. Закиньте игры в roms/" + popupSystem.folder,
+            g.drawCenteredString(font, serverLibrary
+                            ? "На сервере нет игр в roms/" + popupSystem.folder
+                            : "Пусто. Закиньте игры в roms/" + popupSystem.folder,
                     x + w / 2, listY + 16, 0x808890);
 
         RomLibrary.Core core = coreFor(selectedRom);
@@ -315,9 +351,19 @@ public class CoreSelectScreen extends Screen {
         g.fill(0, 0, width, 46, COL_PANEL_2);
         g.fill(0, 45, width, 46, COL_EDGE);
         g.drawString(font, "§lRETRO CONSOLE", 10, 8, 0xFFE0E0E0);
-        if (cards)
-            g.drawString(font, "§8" + lib.roms.size() + " " + plural(lib.roms.size())
-                    + " • " + lib.cores.size() + " ядер", 110, 8, 0xFFFFFF);
+        if (libraryLoading) {
+            g.drawCenteredString(font, "Загрузка библиотеки с сервера…", width / 2, height / 2, 0xC0C8D0);
+            for (Renderable renderable : this.renderables) {
+                renderable.render(g, mx, my, pt);
+            }
+            return;
+        }
+        if (cards) {
+            String stats = lib.roms.size() + " " + plural(lib.roms.size())
+                    + " • " + lib.cores.size() + " ядер";
+            if (serverLibrary) stats += " §8(сервер)";
+            g.drawString(font, "§8" + stats, 110, 8, 0xFFFFFF);
+        }
 
         switch (view) {
             case CARDS -> renderCards(g, mx, my);
@@ -355,8 +401,7 @@ public class CoreSelectScreen extends Screen {
     private void renderCards(GuiGraphics g, int mx, int my) {
         if (heroRom != null) renderHero(g, mx, my);
         if (tabs.isEmpty()) {
-            g.drawCenteredString(font, "Закиньте ядра в cores и игры в roms — кнопка «Папка»",
-                    width / 2, height / 2, 0x808890);
+            g.drawCenteredString(font, emptyLibraryHint(), width / 2, height / 2, 0x808890);
             return;
         }
         int cols = cardCols(), cw = cardW(), top = cardsTop();
@@ -545,8 +590,8 @@ public class CoreSelectScreen extends Screen {
 
         if (shown.isEmpty()) {
             String hint = !searchBox.getValue().isEmpty() ? "Ничего не найдено"
-                    : activeTab != null ? "Пусто. Закиньте игры в roms/" + activeTab.folder + " — кнопка «Папка»"
-                    : "Закиньте игры в config/retroconsole/roms — кнопка «Папка»";
+                    : activeTab != null ? emptyTabHint(activeTab)
+                    : emptyLibraryHint();
             g.drawCenteredString(font, hint, x + w / 2, top + 24, 0x808890);
         }
     }
@@ -568,7 +613,10 @@ public class CoreSelectScreen extends Screen {
         }
         renderScrollbar(g, x + w, top, viewH, lib.cores.size(), scrollCores);
         if (lib.cores.isEmpty())
-            g.drawCenteredString(font, "Положите ядра (.dll/.so) в cores", x + w / 2, top + 24, 0x808890);
+            g.drawCenteredString(font, serverLibrary
+                            ? "На сервере нет ядер в config/retroconsole/cores"
+                            : "Положите ядра (.dll/.so) в cores",
+                    x + w / 2, top + 24, 0x808890);
     }
 
     private void renderInfoBar(GuiGraphics g) {
@@ -970,6 +1018,18 @@ public class CoreSelectScreen extends Screen {
         if (bytes >= 1024 * 1024) return String.format(Locale.ROOT, "%.1f MB", bytes / 1048576.0);
         if (bytes >= 1024) return (bytes / 1024) + " KB";
         return bytes + " B";
+    }
+
+    private String emptyLibraryHint() {
+        return serverLibrary
+                ? "На сервере нет ROM/ядер — положите файлы в config/retroconsole/ на сервере"
+                : "Закиньте ядра в cores и игры в roms — кнопка «Папка»";
+    }
+
+    private String emptyTabHint(GameSystem tab) {
+        return serverLibrary
+                ? "На сервере нет игр в roms/" + tab.folder
+                : "Пусто. Закиньте игры в roms/" + tab.folder + " — кнопка «Папка»";
     }
 
     private static String plural(long n) {

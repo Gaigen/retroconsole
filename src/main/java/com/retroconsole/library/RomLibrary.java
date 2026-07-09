@@ -1,4 +1,7 @@
-package com.retroconsole.client.library;
+package com.retroconsole.library;
+
+import com.retroconsole.network.RetroLibraryPacket;
+import com.retroconsole.platform.RetroConsolePaths;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -9,7 +12,6 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Stream;
 import java.util.zip.ZipFile;
@@ -17,9 +19,12 @@ import java.util.zip.ZipFile;
 /** Библиотека: сканирует ядра и игры, скрывает мусор, определяет системы. */
 public final class RomLibrary {
 
-    public static final Path CORES_DIR = Paths.get("config/retroconsole/cores");
-    public static final Path ROMS_DIR  = Paths.get("config/retroconsole/roms");
-    private static final Path SNIFF_CACHE = Paths.get("config/retroconsole/systems.v3.cache");
+    public static Path coresDir() { return RetroConsolePaths.coresDir(); }
+    public static Path romsDir()  { return RetroConsolePaths.romsDir(); }
+
+    private static Path sniffCache() {
+        return RetroConsolePaths.systemDir().resolve("systems.v3.cache");
+    }
 
     private static final List<String> ROM_EXTS = List.of(".nes", ".gb", ".gbc", ".gba",
             ".sfc", ".smc", ".gen", ".md", ".sms", ".gg", ".zip", ".bin", ".cue",
@@ -45,7 +50,7 @@ public final class RomLibrary {
     }
 
     private void scanCores() {
-        try (var stream = Files.newDirectoryStream(ensureDir(CORES_DIR))) {
+        try (var stream = Files.newDirectoryStream(ensureDir(coresDir()))) {
             for (Path p : stream) {
                 String name = p.getFileName().toString();
                 if (name.startsWith(".")) continue;
@@ -58,7 +63,7 @@ public final class RomLibrary {
                         : sys.fullName + " · " + id.replace("_libretro", "");
                 cores.add(new Core(id, sys, pretty));
                 if (sys != GameSystem.OTHER)
-                    ensureDir(ROMS_DIR.resolve(sys.folder));
+                    ensureDir(romsDir().resolve(sys.folder));
             }
         } catch (IOException ignored) {}
         cores.sort(Comparator.comparing(c -> c.displayName, String.CASE_INSENSITIVE_ORDER));
@@ -66,7 +71,8 @@ public final class RomLibrary {
 
     private void scanRoms() {
         List<Path> files = new ArrayList<>();
-        try (Stream<Path> s = Files.walk(ensureDir(ROMS_DIR), 2)) {
+        Path romsRoot = romsDir();
+        try (Stream<Path> s = Files.walk(ensureDir(romsRoot), 2)) {
             s.filter(Files::isRegularFile).forEach(files::add);
         } catch (IOException ignored) {}
 
@@ -80,14 +86,14 @@ public final class RomLibrary {
         Set<String> knownExts = new HashSet<>(ROM_EXTS);
         for (GameSystem s : GameSystem.all()) knownExts.addAll(s.exts);
 
-        loadProps(sniffCache, SNIFF_CACHE);
+        loadProps(sniffCache, sniffCache());
         for (Path p : files) {
             String name = p.getFileName().toString();
             String lower = name.toLowerCase(Locale.ROOT);
             if (name.startsWith(".") || lower.startsWith("flycast_cue_")) continue;
             if (tracks.contains(lower)) continue;
             String ext = extOf(lower);
-            boolean inSubfolder = !p.getParent().equals(ROMS_DIR);
+            boolean inSubfolder = !p.getParent().equals(romsRoot);
             // в корне — только известные расширения; в подпапке — любые, кроме мусора
             if (inSubfolder ? IGNORE_EXTS.contains(ext) : !knownExts.contains(ext)) continue;
 
@@ -102,10 +108,10 @@ public final class RomLibrary {
             boolean misplaced = byFolder != null && detected != null
                     && detected != GameSystem.OTHER && detected != byFolder;
 
-            roms.add(new Rom(ROMS_DIR.relativize(p).toString().replace('\\', '/'),
+            roms.add(new Rom(romsRoot.relativize(p).toString().replace('\\', '/'),
                     p, ext, size, sys, stripExt(name), misplaced));
         }
-        saveProps(sniffCache, SNIFF_CACHE, "system sniff cache");
+        saveProps(sniffCache, sniffCache(), "system sniff cache");
         roms.sort((a, b) -> a.displayName().compareToIgnoreCase(b.displayName()));
     }
 
@@ -276,6 +282,25 @@ public final class RomLibrary {
         byte[] d = new byte[len];
         for (int i = 0; i < len; i++) d[i] = b.get(off + i);
         return new String(d, StandardCharsets.US_ASCII);
+    }
+
+    /** Заполнить каталог из S2C-пакета (мультиплеер / dedicated server). */
+    public void loadFromNetwork(RetroLibraryPacket pkt) {
+        GameSystem.reload();
+        cores.clear();
+        roms.clear();
+        for (RetroLibraryPacket.CoreEntry c : pkt.cores()) {
+            GameSystem sys = GameSystem.byId(c.systemId());
+            if (sys == null) sys = GameSystem.OTHER;
+            cores.add(new Core(c.id(), sys, c.displayName()));
+        }
+        for (RetroLibraryPacket.RomEntry r : pkt.roms()) {
+            GameSystem sys = GameSystem.byId(r.systemId());
+            if (sys == null) sys = GameSystem.OTHER;
+            roms.add(new Rom(r.id(), null, r.ext(), r.size(), sys, r.displayName(), r.misplaced()));
+        }
+        cores.sort(Comparator.comparing(c -> c.displayName, String.CASE_INSENSITIVE_ORDER));
+        roms.sort((a, b) -> a.displayName().compareToIgnoreCase(b.displayName()));
     }
 
     // ---- утилиты ----
