@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 
-/** PNG с диска -> GUI-текстура. Грузим один раз, а не каждый кадр. */
+/** Disk PNG -> GUI texture. Loaded once, not every frame. */
 public final class TextureCache {
 
     public record Tex(ResourceLocation location, int width, int height) {}
@@ -20,7 +20,7 @@ public final class TextureCache {
     private static final Map<String, Tex> CACHE = new HashMap<>();
     private static int counter;
 
-    /** null, если файла нет или он не читается. */
+    /** null if the file is missing or unreadable. */
     public static Tex get(Path png) {
         String key = png.toAbsolutePath().toString();
         if (CACHE.containsKey(key)) return CACHE.get(key);
@@ -38,7 +38,7 @@ public final class TextureCache {
         return tex;
     }
 
-    /** PNG из памяти (например, с сервера). null, если данные пустые или битые. */
+    /** PNG from memory (e.g. from server). null if data is empty or corrupt. */
     public static Tex getFromBytes(String key, byte[] png) {
         if (CACHE.containsKey(key)) return CACHE.get(key);
         Tex tex = null;
@@ -55,9 +55,9 @@ public final class TextureCache {
         return tex;
     }
 
-    /** Сброс записи (вызываем при открытии экрана, чтобы подхватить свежие миниатюры). */
+    /** Evict cache entry (call when opening a screen to pick up fresh thumbnails). */
     public static void invalidate(String key) { CACHE.remove(key); }
 
-    /** Сброс записи по пути на диске. */
+    /** Evict cache entry by disk path. */
     public static void invalidate(Path png) { CACHE.remove(png.toAbsolutePath().toString()); }
 }

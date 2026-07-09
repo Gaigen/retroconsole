@@ -5,7 +5,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** C2S: запросить каталог ROM/ядер с сервера для консоли на заданной позиции. */
+/** C2S: request the ROM/core catalog from the server for a console at the given position. */
 public record RetroLibraryRequestPacket(BlockPos consolePos) implements CustomPacketPayload {
 
     public static final Type<RetroLibraryRequestPacket> TYPE = RetroPackets.type("library_request");

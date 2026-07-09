@@ -6,7 +6,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** F5/F6 — save/load слота состояния на сервере; auto — автосейв при выходе из TvScreen. */
+/** F5/F6 — save/load state slot on server; auto — autosave when leaving TvScreen. */
 public record RetroSaveStatePacket(
         BlockPos pos,
         int slot,

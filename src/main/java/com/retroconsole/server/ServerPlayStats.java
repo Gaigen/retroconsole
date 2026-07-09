@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
 
-/** Серверная статистика: кто сколько играл (эмулятор крутится на сервере). */
+/** Server-side playtime stats (emulator runs on the server). */
 public final class ServerPlayStats {
 
     private ServerPlayStats() {}

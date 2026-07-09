@@ -16,7 +16,7 @@ import java.util.*;
 import java.util.stream.Stream;
 import java.util.zip.ZipFile;
 
-/** Библиотека: сканирует ядра и игры, скрывает мусор, определяет системы. */
+/** Library: scans cores and games, filters junk, detects systems. */
 public final class RomLibrary {
 
     public static Path coresDir() { return RetroConsolePaths.coresDir(); }
@@ -29,7 +29,7 @@ public final class RomLibrary {
     private static final List<String> ROM_EXTS = List.of(".nes", ".gb", ".gbc", ".gba",
             ".sfc", ".smc", ".gen", ".md", ".sms", ".gg", ".zip", ".bin", ".cue",
             ".iso", ".chd", ".cdi", ".gdi", ".cso");
-    /** В подпапках принимаем любые файлы, кроме заведомого мусора. */
+    /** In subfolders accept any file except known junk extensions. */
     private static final List<String> IGNORE_EXTS = List.of(".txt", ".png", ".jpg", ".jpeg",
             ".pdf", ".sav", ".srm", ".state", ".cfg", ".json", ".dat", ".xml");
 
@@ -42,7 +42,7 @@ public final class RomLibrary {
     private final Properties sniffCache = new Properties();
 
     public void scan() {
-        GameSystem.reload();          // подхватываем systems.json и сбрасываем папочные системы
+        GameSystem.reload();          // reload systems.json and reset folder-derived systems
         cores.clear();
         roms.clear();
         scanCores();
@@ -94,7 +94,7 @@ public final class RomLibrary {
             if (tracks.contains(lower)) continue;
             String ext = extOf(lower);
             boolean inSubfolder = !p.getParent().equals(romsRoot);
-            // в корне — только известные расширения; в подпапке — любые, кроме мусора
+            // root: known extensions only; subfolder: anything except junk
             if (inSubfolder ? IGNORE_EXTS.contains(ext) : !knownExts.contains(ext)) continue;
 
             long size = 0;
@@ -155,7 +155,7 @@ public final class RomLibrary {
         return sys;
     }
 
-    /** Разбор файловой системы ISO9660: находим SYSTEM.CNF / PSP_GAME по адресу. */
+    /** ISO9660 layout: locate SYSTEM.CNF / PSP_GAME by LBA. */
     private static GameSystem sniffIso(Path iso, long size) {
         try (SeekableByteChannel ch = Files.newByteChannel(iso)) {
             ByteBuffer pvd = readAt(ch, 0x8000, 2048);
@@ -188,7 +188,7 @@ public final class RomLibrary {
         return null;
     }
 
-    /** .chd: данные сжаты, но метаданные читаемы — тег GD-ROM означает Dreamcast. */
+    /** .chd: compressed data but readable metadata — GD-ROM tag means Dreamcast. */
     private static GameSystem sniffChd(Path file) {
         try (SeekableByteChannel ch = Files.newByteChannel(file)) {
             ByteBuffer head = readAt(ch, 0, 124);
@@ -208,7 +208,7 @@ public final class RomLibrary {
         return GameSystem.OTHER;
     }
 
-    /** Магические строки в первых 16 МБ (для .bin/.cue и как fallback). */
+    /** Magic strings in the first 16 MiB (for .bin/.cue and as fallback). */
     private static GameSystem sniff(Path file, long fullSize) {
         if (file == null) return GameSystem.OTHER;
         try (SeekableByteChannel ch = Files.newByteChannel(file)) {
@@ -284,7 +284,7 @@ public final class RomLibrary {
         return new String(d, StandardCharsets.US_ASCII);
     }
 
-    /** Заполнить каталог из S2C-пакета (мультиплеер / dedicated server). */
+    /** Populate catalog from S2C packet (multiplayer / dedicated server). */
     public void loadFromNetwork(RetroLibraryPacket pkt) {
         GameSystem.applyServerCatalog(pkt.systems());
         cores.clear();
@@ -303,7 +303,6 @@ public final class RomLibrary {
         roms.sort((a, b) -> a.displayName().compareToIgnoreCase(b.displayName()));
     }
 
-    // ---- утилиты ----
     public static Path ensureDir(Path dir) {
         try { Files.createDirectories(dir); } catch (IOException ignored) {}
         return dir;

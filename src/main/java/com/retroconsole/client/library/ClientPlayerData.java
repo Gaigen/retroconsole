@@ -9,7 +9,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
-/** Локальные данные клиента, привязанные к игроку: stats, ui, thumbs. */
+/** Client-local per-player data: stats, ui, thumbs. */
 public final class ClientPlayerData {
 
     private static final Path ROOT = Paths.get("config/retroconsole/players");

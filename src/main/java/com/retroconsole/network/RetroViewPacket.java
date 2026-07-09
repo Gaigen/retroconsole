@@ -6,7 +6,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** C2S: подписка/отписка на кадры консоли на заданной позиции. */
+/** C2S: subscribe/unsubscribe to console frames at the given position. */
 public record RetroViewPacket(
         BlockPos pos,
         boolean watching

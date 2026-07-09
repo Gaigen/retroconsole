@@ -7,17 +7,16 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 /**
- * C2S: полное аналоговое состояние геймпада (обе оси обоих стиков).
- * Один пакет вместо четырёх — меньше трафика. Клиент шлёт его только
- * при изменении состояния (с deadzone) и не чаще раза в тик.
- * Хендлер — в NetworkHandler.handleAnalog.
+ * C2S: full gamepad analog state (both axes of both sticks).
+ * One packet instead of four — less traffic. Client sends only on change
+ * (with deadzone) and at most once per tick. Handler: NetworkHandler.handleAnalog.
  */
 public record RetroAnalogPacket(
         BlockPos pos,
-        short lx,   // левый стик X, -32768..32767
-        short ly,   // левый стик Y
-        short rx,   // правый стик X
-        short ry    // правый стик Y
+        short lx,   // left stick X, -32768..32767
+        short ly,   // left stick Y
+        short rx,   // right stick X
+        short ry    // right stick Y
 ) implements CustomPacketPayload {
 
     public static final Type<RetroAnalogPacket> TYPE = RetroPackets.type("analog");

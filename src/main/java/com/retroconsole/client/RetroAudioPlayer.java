@@ -11,36 +11,33 @@ import java.util.ArrayDeque;
 /**
  * OpenAL streaming player for libretro PCM chunks.
  *
- * Отличия от старой версии:
- *  - Добавлен пользовательский gain (setGain): AL_GAIN на источнике,
- *    перемножается с дистанционным затуханием — позиционирование не страдает.
- *  - УБРАН eviction буфера из середины очереди (был сломан: на играющем
- *    источнике alSourceUnqueueBuffers снимает только PROCESSED-буферы; при их
- *    отсутствии вызов падает с AL_INVALID_VALUE). При полной очереди дропается
- *    ВХОДЯЩИЙ чанк (+ счётчик).
- *  - После underrun (AL_STOPPED) источник заново набирает пребуфер до
- *    START_QUEUED, а не рестартует с одним крошечным буфером.
- *  - Правильная проверка выравнивания: кадр stereo16 = 4 байта → (length & 3).
- *  - Проверка alGetError() и диагностика раз в 5 секунд.
+ * Changes from the earlier version:
+ *  - User gain (setGain): AL_GAIN on the source, multiplied with distance attenuation.
+ *  - Removed mid-queue buffer eviction (broken: on a playing source alSourceUnqueueBuffers
+ *    only removes PROCESSED buffers; with none queued the call fails with AL_INVALID_VALUE).
+ *    When the queue is full, incoming chunks are dropped instead (+ counter).
+ *  - After underrun (AL_STOPPED) the source refills the prebuffer to START_QUEUED
+ *    instead of restarting with a single tiny buffer.
+ *  - Alignment check: stereo16 frame = 4 bytes → (length & 3).
+ *  - alGetError() checks and diagnostics every 5 seconds.
  */
 public class RetroAudioPlayer implements AutoCloseable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("RetroAudioPlayer");
 
     private static final int NUM_BUFFERS = 24;
-    /* Пребуфер перед стартом/рестартом: ~100 мс при чанке в 1 кадр (60 fps). */
+    /* Prebuffer before start/restart: ~100 ms at one frame per chunk (60 fps). */
     private static final int START_QUEUED = 6;
 
     private final int source;
     private final ArrayDeque<Integer> freeBuffers = new ArrayDeque<>();
 
-    /* true, пока заново копим пребуфер после старта или underrun. */
+    /* true while refilling prebuffer after start or underrun. */
     private boolean starving = true;
 
-    /* Пользовательская громкость 0..1. volatile: setGain зовут с AUDIO_EXEC. */
+    /* User volume 0..1. volatile: setGain is called from AUDIO_EXEC. */
     private volatile float gain = 1.0f;
 
-    // --- диагностика ---
     private long droppedChunks;
     private long underruns;
     private long samplesFed;
@@ -54,11 +51,11 @@ public class RetroAudioPlayer implements AutoCloseable {
         AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, 1.5f);
         AL10.alSourcef(source, AL10.AL_GAIN, gain);
         for (int i = 0; i < NUM_BUFFERS; i++) freeBuffers.add(AL10.alGenBuffers());
-        AL10.alGetError(); // сбросить накопившиеся ошибки
+        AL10.alGetError(); // clear accumulated errors
         lastStatsNs = System.nanoTime();
     }
 
-    /** Пользовательская громкость 0..1. Вызывать с аудио-потока (AUDIO_EXEC). */
+    /** User volume 0..1. Call from the audio thread (AUDIO_EXEC). */
     public void setGain(float g) {
         float clamped = Math.max(0f, Math.min(1f, g));
         gain = clamped;
@@ -70,7 +67,7 @@ public class RetroAudioPlayer implements AutoCloseable {
         return gain;
     }
 
-    /* Скормить interleaved stereo PCM (16-bit signed LE). */
+    /* Feed interleaved stereo PCM (16-bit signed LE). */
     public void feed(int sampleRate, byte[] pcmStereo16) {
         if (pcmStereo16 == null || pcmStereo16.length < 4 || (pcmStereo16.length & 3) != 0) {
             return;
@@ -78,14 +75,13 @@ public class RetroAudioPlayer implements AutoCloseable {
 
         int state = AL10.alGetSourcei(source, AL10.AL_SOURCE_STATE);
         if (state == AL10.AL_STOPPED) {
-            // Настоящий underrun: доиграли до тишины.
+            // Real underrun: playback reached silence.
             underruns++;
             starving = true;
-            // ВАЖНО: на STOPPED-источнике ВСЕ queued-буферы (даже свежие,
-            // ещё не игравшие) считаются processed — если просто продолжать
-            // queue + reclaim, очередь никогда не наберётся и звук не
-            // вернётся. Снимаем всё и переводим источник в AL_INITIAL:
-            // там новые буферы копятся как pending.
+            // On a STOPPED source ALL queued buffers (even fresh, unplayed ones) count as
+            // processed — if we keep queue + reclaim, the queue never refills and audio
+            // never returns. Drain everything and move the source to AL_INITIAL where new
+            // buffers accumulate as pending.
             reclaimProcessedBuffers();
             AL10.alSourceRewind(source);
             state = AL10.AL_INITIAL;
@@ -132,12 +128,10 @@ public class RetroAudioPlayer implements AutoCloseable {
     }
 
     /*
-     * Раз в 5 секунд: фактическая входная частота vs заявленная, глубина
-     * очереди, дропы и underrun'ы.
-     *  - rate стабильно НИЖЕ sampleRate + растут underruns -> ядро/сервер
-     *    не успевает за реальным временем;
-     *  - rate стабильно ВЫШЕ + растут dropped -> цикл сервера гонит быстрее
-     *    реального времени (дрейф пейсинга FrameSender).
+     * Every 5 seconds: actual input rate vs nominal, queue depth, drops and underruns.
+     *  - rate consistently BELOW sampleRate + rising underruns → core/server can't keep real time;
+     *  - rate consistently ABOVE + rising dropped → server loop runs faster than real time
+     *    (FrameSender pacing drift).
      */
     private void maybeLogStats(int sampleRate) {
         long now = System.nanoTime();
@@ -153,8 +147,7 @@ public class RetroAudioPlayer implements AutoCloseable {
     @Override
     public void close() {
         AL10.alSourceStop(source);
-        // После alSourceStop ВСЕ queued-буферы становятся processed,
-        // и их можно легально снять и удалить.
+        // After alSourceStop ALL queued buffers become processed and can be unqueued/deleted.
         int queued = AL10.alGetSourcei(source, AL10.AL_BUFFERS_QUEUED);
         while (queued-- > 0) {
             AL10.alDeleteBuffers(AL10.alSourceUnqueueBuffers(source));

@@ -11,13 +11,13 @@ import java.nio.file.*;
 import java.util.Arrays;
 import java.util.List;
 
-/** JNA-интерфейс к .libheadless_gl.so — multi-instance headless EGL/Mesa GL. */
+/** JNA interface to .libheadless_gl.so — multi-instance headless EGL/Mesa GL. */
 interface HeadlessGL extends Library {
     HeadlessGL INSTANCE = Native.load(
             Paths.get("config/retroconsole/cores/.libheadless_gl.so").toAbsolutePath().toString(),
             HeadlessGL.class);
 
-    /* Жизненный цикл инстанса — handle первым параметром. */
+    /* Instance lifecycle — handle is the first parameter. */
     Pointer hlg_create();
     void    hlg_free(Pointer h);
     int     hlg_init(Pointer h, int major, int minor);
@@ -32,7 +32,7 @@ interface HeadlessGL extends Library {
     String  hlg_get_gpu_info(Pointer h);
     void    hlg_log_gpu_identity(Pointer h);
 
-    /* Процессные (без handle): libretro-коллбеки + лог/диагностика. */
+    /* Process-wide (no handle): libretro callbacks + log/diagnostics. */
     Pointer hlg_get_proc_address(String sym);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
@@ -71,8 +71,8 @@ class RetroHwRenderCallback extends Structure {
 }
 
 /**
- * Высокоуровневая обёртка над libretro-ядром: регистрация коллбеков,
- * загрузка игры, прогон кадров и чистый int[] ARGB-фреймбуфер.
+ * High-level libretro core wrapper: callback registration,
+ * game loading, frame stepping, and a plain int[] ARGB framebuffer.
  */
 public class LibretroCoreLinux extends LibretroCore {
 
@@ -91,7 +91,7 @@ public class LibretroCoreLinux extends LibretroCore {
     private LibretroBridge.RetroInputPoll inputPollCallback;
     private LibretroBridge.RetroInputState inputStateCallback;
 
-    // Фреймбуфер — пишет video-коллбек, читает pollFrame()
+    // Framebuffer — written by video callback, read by pollFrame()
     private final Object frameLock = new Object();
     private int[] frameBuffer;
     private int frameWidth;
@@ -100,7 +100,7 @@ public class LibretroCoreLinux extends LibretroCore {
 
     private int pixelFormat = LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888;
 
-    // Состояние HW-рендера
+    // HW render state
     private boolean hwRenderActive = false;
     private boolean hwGpuLoggedOnEmulatorThread = false;
     private boolean hwBottomLeftOrigin = true;
@@ -111,14 +111,14 @@ public class LibretroCoreLinux extends LibretroCore {
     private Pointer hwContextReset = null;
     private boolean hwContextResetDone = false;
 
-    /** Хэндл нашего GL-инстанса в .libheadless_gl.so (свой на каждое ядро). */
+    /** Handle of our GL instance in .libheadless_gl.so (one per core). */
     private Pointer glCtx = null;
 
     private LibretroBridge.RetroLogCallback logCallback;
     private LibretroBridge.RetroLogCallbackStruct logCallbackStruct;
     private static final Pointer RETRO_HW_FRAME_BUFFER_VALID = Pointer.createConstant(-1);
 
-    // Аудио-пейсинг (Flycast использует потребление аудио как тайминг)
+    // Audio pacing (Flycast uses audio consumption as timing)
     private final AudioPacing audioPacing = new AudioPacing(44100);
     private static final int AUDIO_RING_CAP = 48000 * 2;
     private final short[] audioRing = new short[AUDIO_RING_CAP];
@@ -129,7 +129,7 @@ public class LibretroCoreLinux extends LibretroCore {
     private volatile double audioSampleRate = 48000.0;
     private volatile double timingFps = 60.0;
 
-    // Ввод — пишет server-поток, читает emulator-поток (lock-free)
+    // Input — written by server thread, read by emulator thread (lock-free)
     private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
             new java.util.concurrent.atomic.AtomicIntegerArray(16);
     private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
@@ -137,7 +137,7 @@ public class LibretroCoreLinux extends LibretroCore {
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
 
-    // Системные пути (persistent native memory для env-коллбеков)
+    // System paths (persistent native memory for env callbacks)
     private String systemDir;
     private String saveDir;
     private Memory persistentSystemDir;
@@ -151,7 +151,7 @@ public class LibretroCoreLinux extends LibretroCore {
 
     private LibretroCoreLinux(Path corePath, String systemDir, String saveDir) {
         super(corePath);
-        this.corePath = corePath;              // FIX: раньше не присваивалось → NPE в isXxxCore()
+        this.corePath = corePath;              // FIX: was not assigned → NPE in isXxxCore()
         LOGGER.info("Loading libretro core: {}", corePath);
 
         if (systemDir != null)
@@ -165,7 +165,7 @@ public class LibretroCoreLinux extends LibretroCore {
         this.core = Native.load(corePath.toAbsolutePath().toString(), LibretroBridge.class);
         LOGGER.info("Core loaded. API version: {}", this.core.retro_api_version());
 
-        setupCallbacks(); // ДО retro_init()
+        setupCallbacks(); // BEFORE retro_init()
 
         if (isFlycastCore()) disableFlycastLogCall();
         if (isPpssppCore()) seedPpssppDefaults();
@@ -182,11 +182,11 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private void setupCallbacks() {
-        // Environment — запросы ядра
+        // Environment — core requests
         envCallback = (cmd, data) -> handleEnvironment(cmd, data);
         core.retro_set_environment(envCallback);
 
-        // Video — кадры от ядра
+        // Video — frames from core
         videoCallback = (data, width, height, pitch) -> {
             if (width <= 0 || height <= 0) {
                 if (hwRenderActive) newFrame = true;
@@ -195,7 +195,7 @@ public class LibretroCoreLinux extends LibretroCore {
             synchronized (frameLock) {
                 long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
                 boolean hwFb = hwRenderActive && (data == null || dataAddr == -1 || dataAddr == 0);
-                // GET_CAN_DUPE: NULL data = «повтори прошлый кадр», а не буфер пикселей.
+                // GET_CAN_DUPE: NULL data = duplicate previous frame, not a pixel buffer.
                 if (!hwFb && (data == null || dataAddr == 0)) {
                     newFrame = true;
                     return;
@@ -207,7 +207,7 @@ public class LibretroCoreLinux extends LibretroCore {
                 }
                 int[] fb = frameBuffer;
                 if (hwFb) {
-                    // PPSSPP/PCSX2: не читаем до context_reset на emulator-потоке
+                    // PPSSPP/PCSX2: do not read until context_reset on emulator thread
                     if ((isPpssppCore() || isPcsx2Core()) && !hwContextResetDone) {
                         newFrame = true;
                         return;
@@ -223,7 +223,7 @@ public class LibretroCoreLinux extends LibretroCore {
         };
         core.retro_set_video_refresh(videoCallback);
 
-        // Audio — производство аудио = сигнал тайминга (Flycast)
+        // Audio — audio production = timing signal (Flycast)
         audioCallback = (left, right) -> { /* discard */ };
         core.retro_set_audio_sample(audioCallback);
 
@@ -239,7 +239,7 @@ public class LibretroCoreLinux extends LibretroCore {
         };
         core.retro_set_audio_sample_batch(audioBatchCallback);
 
-        inputPollCallback = () -> { /* состояние уже выставлено server-потоком */ };
+        inputPollCallback = () -> { /* state already set by server thread */ };
         core.retro_set_input_poll(inputPollCallback);
 
         inputStateCallback = (port, device, index, id) -> {
@@ -275,10 +275,10 @@ public class LibretroCoreLinux extends LibretroCore {
         core.retro_set_input_state(inputStateCallback);
     }
 
-    /** Читает HW-кадр из headless GL в fb (RGBA→ARGB, Y-flip по origin). */
+    /** Read HW frame from headless GL into fb (RGBA→ARGB, Y-flip by origin). */
     private void readbackHwFrame(int[] fb, int width, int height) {
         try {
-            // GL-поверхность должна вмещать вьюпорт ядра
+            // GL surface must fit the core viewport
             int surfW = Math.max(width, hwPbufW);
             int surfH = Math.max(height, hwPbufH);
             if (surfW != hwPbufW || surfH != hwPbufH) {
@@ -292,7 +292,7 @@ public class LibretroCoreLinux extends LibretroCore {
             Memory nativePixels = new Memory((long) maxPixels * 4L);
             HeadlessGL.INSTANCE.hlg_read_pixels(glCtx, vp, nativePixels, maxPixels, width, height);
 
-            // Растим GL-хранилище, если ядро рисует в больший вьюпорт (PCSX2/Flycast)
+            // Grow GL storage if core renders to a larger viewport (PCSX2/Flycast)
             int vpW = vp[2] > 0 ? vp[2] : width;
             int vpH = vp[3] > 0 ? vp[3] : height;
             if (vpW > hwPbufW || vpH > hwPbufH) {
@@ -313,11 +313,11 @@ public class LibretroCoreLinux extends LibretroCore {
                 }
             }
         } catch (Throwable t) {
-            Arrays.fill(fb, 0xFF202020); // тёмно-серый — видно, что readback упал
+            Arrays.fill(fb, 0xFF202020); // dark gray — visible when readback failed
         }
     }
 
-    /** Конвертирует software-кадр в ARGB по текущему pixelFormat. */
+    /** Convert software frame to ARGB using current pixelFormat. */
     private void convertSoftwareFrame(int[] fb, Pointer data, int width, int height, long pitch) {
         switch (pixelFormat) {
             case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888 -> {
@@ -351,14 +351,14 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    // ---- Flycast: патчи сломанных под JNA лог-коллбеков ----
-    // NOP-им call-сайты в flycast_libretro.so, которые разыменовывают внутренний
-    // log_cb (JNA отдаёт 0x4-мусор вместо указателя → SIGSEGV). Оффсеты валидны
-    // для сборки flycast_libretro.so в этом workspace (md5 209786943fee54e07b4c0849d84907ad).
-    private static final int FLYCAST_LOG_CALL_OFFSET = 0x39abad;  // call rcx в LogManager::LogWithFullPath (2 б)
-    private static final int FLYCAST_BSS_CALL_1      = 0x397b08;  // call [0x26d82e0] в retro_load_game (6 б)
-    private static final int FLYCAST_BSS_CALL_2      = 0x3985c7;  // call [0x26d82e0] в retro_load_game (6 б)
-    private static final int FLYCAST_BSS_CALL_3      = 0x399f28;  // call [0x26d82e0] в retro_init/other (6 б)
+    
+    // NOP call sites in flycast_libretro.so that dereference the internal
+    // log_cb (JNA passes 0x4 garbage instead of a pointer → SIGSEGV). Offsets valid
+    // for the flycast_libretro.so build in this workspace (md5 209786943fee54e07b4c0849d84907ad).
+    private static final int FLYCAST_LOG_CALL_OFFSET = 0x39abad;  // call rcx in LogManager::LogWithFullPath (2 bytes)
+    private static final int FLYCAST_BSS_CALL_1      = 0x397b08;  // call [0x26d82e0] in retro_load_game (6 bytes)
+    private static final int FLYCAST_BSS_CALL_2      = 0x3985c7;  // call [0x26d82e0] in retro_load_game (6 bytes)
+    private static final int FLYCAST_BSS_CALL_3      = 0x399f28;  // call [0x26d82e0] in retro_init/other (6 bytes)
     private static final byte[] NOP2 = { (byte) 0x90, (byte) 0x90 };
     private static final byte[] NOP6 = { (byte) 0x90, (byte) 0x90, (byte) 0x90,
                                          (byte) 0x90, (byte) 0x90, (byte) 0x90 };
@@ -371,7 +371,7 @@ public class LibretroCoreLinux extends LibretroCore {
         int PROT_EXEC  = 0x4;
     }
 
-    /** Отключает сломанный лог-механизм Flycast. Вызывать ДО retro_init(). */
+    /** Disable Flycast broken logging. Call BEFORE retro_init(). */
     private void disableFlycastLogCall() {
         long baseAddr = 0;
         try {
@@ -424,7 +424,7 @@ public class LibretroCoreLinux extends LibretroCore {
         return sb.toString().trim();
     }
 
-    // ---- Определение ядра по имени файла ----
+    
     private boolean coreNameContains(String needle) {
         return corePath != null
                 && corePath.getFileName().toString().toLowerCase().contains(needle);
@@ -433,13 +433,13 @@ public class LibretroCoreLinux extends LibretroCore {
     private boolean isPcsxRearmedCore() { return coreNameContains("pcsx_rearmed"); }
     private boolean isPpssppCore()      { return coreNameContains("ppsspp"); }
 
-    /** Headless EGL (Mesa) для HW-render ядер. */
+    /** Headless EGL (Mesa) for HW-render cores. */
     private boolean supportsHwRender() { return true; }
 
-    /** PPSSPP на Linux использует GLEW — нужен desktop GL compat, не EGL GLES. */
+    /** PPSSPP on Linux uses GLEW — needs desktop GL compat, not EGL GLES. */
     private static final int HLG_FLAG_COMPAT_PROFILE = 1;
 
-    /** Лениво создаёт/переинициализирует свой GL-инстанс под тип контекста ядра. */
+    /** Lazily create/reinit our GL instance for the core context type. */
     private boolean ensureHeadlessGl(int ctxType) {
         int api, major, minor, flags;
         if (isPpssppCore()) {
@@ -505,7 +505,7 @@ public class LibretroCoreLinux extends LibretroCore {
         registerCoreOption("pcsx_rearmed_gpu_unai_scale_hires", "enabled");
     }
 
-    /** Задаёт каталоги, которые ядра запрашивают через env-коллбек. */
+    /** Set directories cores request via env callback. */
     public void setDirectories(String systemDir, String saveDir) {
         this.systemDir = systemDir;
         this.saveDir = saveDir;
@@ -529,11 +529,11 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     // =====================================================================
-    //  Environment-коллбек
+    
     // =====================================================================
 
     private boolean handleEnvironment(int cmd, Pointer data) {
-        if (cmd == 0x1002f) { // GET_SAVESTATE_CONTEXT и пр. «сырые» запросы
+        if (cmd == 0x1002f) { // GET_SAVESTATE_CONTEXT and other raw requests
             if (data != null) data.setInt(0, 3);
             return true;
         }
@@ -624,11 +624,11 @@ public class LibretroCoreLinux extends LibretroCore {
                 return false;
             }
             case LibretroEnvironment.GET_LOG_INTERFACE -> {
-                if (isFlycastCore()) return false; // Flycast: лог-механизм отключён NOP-патчами
+                if (isFlycastCore()) return false; // Flycast: logging disabled by NOP patches
                 if (data == null) return false;
-                /* Нативный variadic лог-коллбек из headless_gl.so: JNA не умеет
-                 * биндить retro_log_printf_t (variadic), поэтому пишем C-указатель
-                 * напрямую — видны реальные логи ядра, а не "%s %s". */
+                /* Native variadic log callback from headless_gl.so: JNA cannot bind
+                 * retro_log_printf_t (variadic), so we write the C pointer directly —
+                 * real core logs instead of "%s %s". */
                 try {
                     Pointer nativeLogCb = HeadlessGL.INSTANCE.hlg_get_log_cb_ptr();
                     if (nativeLogCb != null && Pointer.nativeValue(nativeLogCb) != 0) {
@@ -723,10 +723,10 @@ public class LibretroCoreLinux extends LibretroCore {
                 }
                 return false;
             }
-            case 51 -> { // GET_INPUT_BITMASKS — JOYPAD_MASK реализован в input_state
+            case 51 -> { // GET_INPUT_BITMASKS — JOYPAD_MASK implemented in input_state
                 return true;
             }
-            case 87 -> { // SET_HW_SHARED_CONTEXT (без experimental-флага)
+            case 87 -> { // SET_HW_SHARED_CONTEXT (without experimental flag)
                 if (supportsHwRender()) {
                     LOGGER.info("Core requested SET_HW_SHARED_CONTEXT — accepting");
                     return true;
@@ -820,7 +820,7 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    /** SET_HW_RENDER: наш GL-инстанс + заполнение retro_hw_render_callback. */
+    /** SET_HW_RENDER: our GL instance + retro_hw_render_callback setup. */
     private boolean handleSetHwRender(Pointer data) {
         int ctxType = data.getInt(0);
         String ctxName = switch (ctxType) {
@@ -844,8 +844,8 @@ public class LibretroCoreLinux extends LibretroCore {
             LOGGER.info("Rejecting {} — no HW render bridge", ctxName);
             return false;
         }
-        // Mesa: OpenGL / OpenGL Core / GLES3 (Vulkan нет). Проверяем ДО init —
-        // не создаём контекст, который сразу отвергнем.
+        // Mesa: OpenGL / OpenGL Core / GLES3 (no Vulkan). Check BEFORE init —
+        // do not create a context we will reject immediately.
         if (ctxType != 1 && ctxType != 3 && ctxType != 4) {
             LOGGER.info("Rejecting {} — only OpenGL contexts supported", ctxName);
             return false;
@@ -857,14 +857,14 @@ public class LibretroCoreLinux extends LibretroCore {
 
         int glMajor = 3;
         int glMinor = switch (ctxType) {
-            case 3 -> 3; // OPENGL_CORE — PCSX2 ждёт 3.3+
+            case 3 -> 3; // OPENGL_CORE — PCSX2 expects 3.3+
             default -> isPpssppCore() ? 3 : 0;
         };
 
         HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
 
-        /* Коллбеки без user-data: пишем нативные указатели из .so —
-         * диспетчеризация на наш инстанс идёт внутри .so через TLS/fallback. */
+        /* Callbacks without user-data: write native pointers from .so —
+         * dispatch to our instance happens inside .so via TLS/fallback. */
         Pointer fbPtr = HeadlessGL.INSTANCE.hlg_get_framebuffer_ptr();
         Pointer procPtr = HeadlessGL.INSTANCE.hlg_get_proc_address_ptr();
         LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
@@ -878,7 +878,7 @@ public class LibretroCoreLinux extends LibretroCore {
         hwContextResetDone = false;
         hwBottomLeftOrigin = data.getByte(34) != 0;
 
-        // Flycast: context_reset на init-потоке. PPSSPP/PCSX2 — на emulator-потоке (см. runFrame).
+        // Flycast: context_reset on init thread. PPSSPP/PCSX2 — on emulator thread (see runFrame).
         if (isFlycastCore()) {
             if (hwContextReset != null && Pointer.nativeValue(hwContextReset) != 0) {
                 LOGGER.info("  Calling context_reset @ {} to init GL function table", hwContextReset);
@@ -898,9 +898,9 @@ public class LibretroCoreLinux extends LibretroCore {
     //  Core options
     // =====================================================================
 
-    /** Ключи/значения переменных ядра — ответы на GET_VARIABLE. */
+    /** Core variable keys/values — answers to GET_VARIABLE. */
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
-    /** Держим Memory живыми: GC не должен освободить строки до чтения ядром. */
+    /** Keep Memory alive: GC must not free strings before the core reads them. */
     private final java.util.List<Memory> allocatedVarMemory = new java.util.ArrayList<>();
 
     private static final int CORE_OPT_VALUE_SIZE = Native.POINTER_SIZE * 2;
@@ -981,7 +981,7 @@ public class LibretroCoreLinux extends LibretroCore {
         if (definitions != null) walkCoreOptionDefinitions(definitions, CORE_OPT_DEF_V2_SIZE);
     }
 
-    /** {@code retro_core_options_v2_intl} → парсим {@code us->definitions}. */
+    /** {@code retro_core_options_v2_intl} → parse {@code us->definitions}. */
     private void handleSetCoreOptionsV2Intl(Pointer data) {
         Pointer usPtr = data.getPointer(0);
         if (usPtr == null) return;
@@ -990,8 +990,8 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private void handleSetVariables(Pointer data) {
-        // retro_variable: { const char* key; const char* value; }, null-key = конец.
-        // value = "описание; opt1|opt2|..." — дефолт берём как последний вариант.
+        // retro_variable: { const char* key; const char* value; }, null key = end.
+        // value = "desc; opt1|opt2|..." — default is the last option.
         long offset = 0;
         while (true) {
             Pointer keyPtr = data.getPointer(offset);
@@ -1014,7 +1014,7 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private boolean handleGetVariable(Pointer data) {
-        // Вся функция под try: Flycast передаёт мусорные указатели во время retro_run
+        // Whole function in try: Flycast passes garbage pointers during retro_run
         try {
             if (data == null) return false;
             if (Pointer.nativeValue(data) == 0) return false;
@@ -1049,15 +1049,15 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             return false;
         } catch (Throwable t) {
-            return false; // любой краш → дефолт ядра
+            return false; // any crash → core default
         }
     }
 
     // =====================================================================
-    //  Загрузка игры и прогон кадров
+    
     // =====================================================================
 
-    /** Максимальный размер ROM для загрузки в память (картриджи; больше → только путь). */
+    /** Max ROM size to load into memory (cartridges; larger → path only). */
     private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
 
     private static boolean isPathOnlyRom(String lowerPath, Path romPath) {
@@ -1075,10 +1075,10 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     /**
-     * Загрузка игры.
+     * Load a game.
      *
-     * @param romPath путь к ROM-файлу
-     * @return true, если ядро приняло игру
+     * @param romPath path to ROM file
+     * @return true if the core accepted the game
      */
     public boolean loadGame(Path romPath) {
         loadedGamePath = romPath.toString();
@@ -1086,8 +1086,8 @@ public class LibretroCoreLinux extends LibretroCore {
         var info = new LibretroBridge.RetroGameInfo();
         info.path = romPath.toAbsolutePath().toString();
 
-        // Диски и большие файлы НЕ читаем в память: ядра (PCSX2/PPSSPP/Flycast)
-        // открывают треки с диска по пути, а multi-GB ISO не влезает в byte[].
+        // Do NOT read discs and large files into memory: cores (PCSX2/PPSSPP/Flycast)
+        // open tracks from disk by path; multi-GB ISO does not fit in byte[].
         String lower = romPath.toString().toLowerCase();
         boolean pathOnly = isPathOnlyRom(lower, romPath);
 
@@ -1127,7 +1127,7 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             audioPacing.reset();
 
-            // Отпускаем НАШ инстанс с потока загрузки — render-поток ядра заберёт его.
+            // Release OUR instance from the load thread — core render thread will take it.
             if (hwRenderActive && glCtx != null) {
                 try {
                     HeadlessGL.INSTANCE.hlg_release(glCtx);
@@ -1158,18 +1158,18 @@ public class LibretroCoreLinux extends LibretroCore {
         }
     }
 
-    /** Прогон одного кадра (вызывается из ThreadedEmulatorRuntime). */
+    /** Run one frame (called from ThreadedEmulatorRuntime). */
     public void runFrame() {
         if (core == null) return;
         if (hwRenderActive && glCtx != null) {
-            // Наш GL-инстанс должен быть current на emulator-потоке
+            // Our GL instance must be current on the emulator thread
             try {
                 if (HeadlessGL.INSTANCE.hlg_make_current(glCtx) != 0 && !hwGpuLoggedOnEmulatorThread) {
                     hwGpuLoggedOnEmulatorThread = true;
                     LOGGER.info("Emulator thread GPU: {}", HeadlessGL.INSTANCE.hlg_get_gpu_info(glCtx));
                 }
             } catch (Throwable ignored) {}
-            // PPSSPP/PCSX2: context_reset строго на emulator-потоке (нужен current GL)
+            // PPSSPP/PCSX2: context_reset strictly on emulator thread (needs current GL)
             if ((isPpssppCore() || isPcsx2Core()) && !hwContextResetDone
                     && hwContextReset != null && Pointer.nativeValue(hwContextReset) != 0) {
                 try {
@@ -1199,9 +1199,9 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     /**
-     * Неблокирующий поллинг кадра: копирует последний кадр в dst.
+     * Non-blocking frame poll: copies the latest frame into dst.
      *
-     * @return true, если был новый кадр
+     * @return true if a new frame was available
      */
     public boolean pollFrame(int[] dst) {
         if (!newFrame) return false;
@@ -1221,7 +1221,7 @@ public class LibretroCoreLinux extends LibretroCore {
     @Override public double getAudioSampleRate() { return audioSampleRate; }
 
     // =====================================================================
-    //  Аудио
+    
     // =====================================================================
 
     private void appendAudio(Pointer data, int samples) {
@@ -1258,15 +1258,15 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     // =====================================================================
-    //  Ввод
+    
     // =====================================================================
 
-    /** Кнопка джойпада (0 = отпущена, 1 = нажата). */
+    /** Joypad button (0 = released, 1 = pressed). */
     public void setButton(int buttonId, boolean pressed) {
         if (buttonId >= 0 && buttonId < 16)
             joypadState.set(buttonId, pressed ? 1 : 0);
-        // Dreamcast-триггеры: L/R дублируем в L2/R2 (цифровые) + аналоговые —
-        // Flycast может запрашивать любой из вариантов для одного физического триггера
+        // Dreamcast triggers: mirror L/R to L2/R2 (digital) + analog —
+        // Flycast may request any variant for one physical trigger
         if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L) {
             joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2, pressed ? 1 : 0);
             triggerState.set(0, pressed ? 32767 : 0);
@@ -1280,9 +1280,9 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     /**
-     * Аналоговый стик.
+     * Analog stick.
      *
-     * @param stick 0 = левый, 1 = правый
+     * @param stick 0 = left, 1 = right
      * @param axis  0 = X, 1 = Y
      * @param value -32768..32767
      */
@@ -1291,7 +1291,7 @@ public class LibretroCoreLinux extends LibretroCore {
         if (idx >= 0 && idx < 4) analogState.set(idx, value);
     }
 
-    /** Reset консоли. */
+    /** Console reset. */
     public void reset() {
         if (core != null) core.retro_reset();
     }
@@ -1363,13 +1363,12 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     // =====================================================================
-    //  Завершение
+    
     // =====================================================================
 
     /**
-     * Контракт multi-instance .so: hlg_free() зовём только после полной
-     * остановки потоков ядра (close() вызывается после остановки
-     * ThreadedEmulatorRuntime — условие выполняется).
+     * Multi-instance .so contract: call hlg_free() only after core threads
+     * fully stopped (close() runs after ThreadedEmulatorRuntime stops — satisfied).
      */
     @Override
     public void close() throws Exception {
@@ -1390,7 +1389,7 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             core = null;
         }
-        // Полностью освобождаем СВОЙ GL-инстанс (раньше синглтон-контекст тёк)
+        // Fully release OUR GL instance (singleton context used to leak)
         if (glCtx != null) {
             try {
                 HeadlessGL.INSTANCE.hlg_free(glCtx);

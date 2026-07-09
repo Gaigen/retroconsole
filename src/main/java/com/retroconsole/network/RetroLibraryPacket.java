@@ -14,7 +14,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** S2C: каталог ядер и ROM с сервера (метаданные, без содержимого файлов). */
+/** S2C: server catalog of cores and ROMs (metadata only, no file contents). */
 public record RetroLibraryPacket(
         BlockPos consolePos,
         List<SystemEntry> systems,
@@ -33,7 +33,7 @@ public record RetroLibraryPacket(
         static final StreamCodec<ByteBuf, List<String>> STR_LIST =
                 ByteBufCodecs.collection(ArrayList::new, ByteBufCodecs.stringUtf8(32));
 
-        /** composite() — максимум 6 полей; собираем из трёх под-кодеков по 3. */
+        /** composite() allows at most 6 fields; split across three 3-field sub-codecs. */
         private record SystemHead(String id, String badge, String tab) {
             static final StreamCodec<ByteBuf, SystemHead> CODEC = StreamCodec.composite(
                     ByteBufCodecs.stringUtf8(32), SystemHead::id,
@@ -147,7 +147,7 @@ public record RetroLibraryPacket(
         return new RetroLibraryPacket(consolePos.immutable(), systems, cores, roms, playerStats);
     }
 
-    /** Санити-проверка при decode (защита от огромных списков). */
+    /** Sanity check on decode (guards against oversized lists). */
     public RetroLibraryPacket {
         if (systems.size() > MAX_SYSTEMS || cores.size() > MAX_CORES || roms.size() > MAX_ROMS
                 || playerStats.size() > MAX_STATS) {

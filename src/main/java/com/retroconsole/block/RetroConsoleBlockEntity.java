@@ -81,21 +81,20 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     }
 
     /**
-     * «Выкл» из TvScreen: очистить romId → setRomId("") сам вызовет
-     * stopEmulator() (автосейв внутри) и разошлёт block update. После этого
-     * ПКМ по блоку снова открывает CoreSelectScreen.
+     * Power off from TvScreen: clear romId — setRomId("") calls stopEmulator()
+     * (autosave inside) and sends a block update. After that, right-click opens CoreSelectScreen again.
      */
     public void powerOff() {
         if (level == null || level.isClientSide()) return;
         setRomId("");
     }
 
-    /** Игрок, выбравший игру (или перезапустивший консоль), — единственный «водитель». */
+    /** The player who selected the game (or restarted the console) is the sole driver. */
     public boolean isControlledBy(ServerPlayer player) {
         return ownerId != null && ownerId.equals(player.getUUID());
     }
 
-    /** Активное libretro-ядро на сервере, или null если эмулятор не запущен. */
+    /** Active libretro core on the server, or null if the emulator is not running. */
     public LibretroCore getCore() {
         if (level == null || level.isClientSide()) return null;
         return ServerConsoles.getCore(worldPosition);
@@ -113,10 +112,6 @@ public class RetroConsoleBlockEntity extends BlockEntity {
             ServerConsoles.stopEmulator(worldPosition);
         }
     }
-
-    // ------------------------------------------------------------------
-    // Реестр консолей (ConsoleRegistry)
-    // ------------------------------------------------------------------
 
     @Override
     public void onLoad() {
@@ -142,10 +137,6 @@ public class RetroConsoleBlockEntity extends BlockEntity {
             stopEmulator();
         }
     }
-
-    // ------------------------------------------------------------------
-    // NBT / синхронизация
-    // ------------------------------------------------------------------
 
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {

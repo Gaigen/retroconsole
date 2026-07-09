@@ -7,7 +7,6 @@ import com.retroconsole.library.ArtFiles;
 import com.retroconsole.library.GameSystem;
 import com.retroconsole.library.RomLibrary;
 import com.retroconsole.platform.RetroConsolePaths;
-import com.retroconsole.server.ServerArt;
 import com.retroconsole.server.ServerConsoles;
 import com.retroconsole.server.ServerPlayStats;
 import net.minecraft.core.BlockPos;
@@ -26,10 +25,10 @@ import java.util.function.Consumer;
 @EventBusSubscriber(modid = RetroConsole.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class NetworkHandler {
 
-    /** Дистанция управления консолью (ввод, стики, сейвы, выкл, выбор игры) — как у контейнеров. */
+    /** Control distance (input, saves, power off, game pick) — container-like. */
     private static final double CONTROL_DISTANCE_SQ = 8.0 * 8.0;
 
-    /** Дистанция подписки на видеопоток — экран телевизора видно издалека. */
+    /** View distance for world TV frame streaming. */
     private static final double VIEW_DISTANCE_SQ = 64.0 * 64.0;
 
     private NetworkHandler() {}
@@ -38,10 +37,8 @@ public final class NetworkHandler {
     public static void registerPackets(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar r = event.registrar("1");
 
-        // Client-bound.
-        // ВАЖНО: только лямбды, не method references! Ссылка вида
-        // ClientPacketHandlers::handleFrame заставила бы JVM загрузить
-        // клиентский класс уже при регистрации — краш dedicated server.
+        // Client-bound. Lambdas only — method refs to ClientPacketHandlers would
+        // load client classes during registration and crash the dedicated server.
         r.playToClient(RetroFramePacket.TYPE, RetroFramePacket.STREAM_CODEC,
                 (pkt, ctx) -> ClientPacketHandlers.handleFrame(pkt, ctx));
         r.playToClient(RetroAudioPayload.TYPE, RetroAudioPayload.STREAM_CODEC,
@@ -55,7 +52,6 @@ public final class NetworkHandler {
         r.playToClient(RetroArtPacket.TYPE, RetroArtPacket.STREAM_CODEC,
                 (pkt, ctx) -> ClientPacketHandlers.handleArt(pkt, ctx));
 
-        // Server-bound
         r.playToServer(RetroInputPacket.TYPE, RetroInputPacket.STREAM_CODEC,
                 NetworkHandler::handleInput);
         r.playToServer(RetroAnalogPacket.TYPE, RetroAnalogPacket.STREAM_CODEC,
@@ -72,19 +68,12 @@ public final class NetworkHandler {
                 NetworkHandler::handleLibraryRequest);
     }
 
-    // --- Server-bound handlers ---
-
     private static void handleInput(RetroInputPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
                 console -> ServerConsoles.handleInput(pkt.pos(), pkt.buttonId(), pkt.pressed())));
     }
 
-    /**
-     * Полное аналоговое состояние геймпада. enqueueWork обязателен:
-     * доступ к level.getBlockEntity() с сетевого потока небезопасен.
-     * Дальше ввод пишется в lock-free AtomicIntegerArray моста —
-     * задержка максимум один тик.
-     */
+    /** Full analog pad state; enqueueWork required for block entity access. */
     private static void handleAnalog(RetroAnalogPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(), console -> {
             var core = console.getCore();
@@ -100,21 +89,15 @@ public final class NetworkHandler {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
             if (pkt.watching()) {
-                // Подписка — только вблизи консоли.
                 if (!isNear(player, pkt.pos(), VIEW_DISTANCE_SQ)) return;
                 ServerConsoles.addViewer(pkt.pos(), player.getUUID());
             } else {
-                // Отписку разрешаем с любой дистанции: игрок мог уже отойти.
                 ServerConsoles.removeViewer(pkt.pos(), player.getUUID());
             }
         });
     }
 
-    /**
-     * Клиент выбрал core + ROM → передаём в block entity (запуск эмулятора).
-     * Проверки «управляет ли игрок» здесь нет — водителя ещё не существует,
-     * его назначает selectGame.
-     */
+    /** Core + ROM pick — no controller check yet; selectGame assigns the driver. */
     private static void handleCoreSelect(RetroCoreSelectPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
@@ -131,17 +114,13 @@ public final class NetworkHandler {
                 console -> ServerConsoles.handleSaveState(pkt.pos(), pkt.slot(), pkt.save(), pkt.auto())));
     }
 
-    /**
-     * «Выкл» из TvScreen: гасим консоль ЧЕРЕЗ block entity, чтобы очистился
-     * romId (иначе следующий ПКМ по блоку откроет TvScreen мёртвой консоли).
-     * Автосейв произойдёт внутри ServerConsoles.stopEmulator().
-     */
+    /** Power off via block entity so romId clears; auto-save runs in stopEmulator(). */
     private static void handlePowerOff(RetroPowerOffPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
                 RetroConsoleBlockEntity::powerOff));
     }
 
-    /** Клиент открыл меню выбора игры — отдаём каталог с диска сервера. */
+    /** Client opened game picker — send server disk catalog + art. */
     private static void handleLibraryRequest(RetroLibraryRequestPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
@@ -159,25 +138,19 @@ public final class NetworkHandler {
             for (RetroLibraryPacket.SystemEntry s : library.systems()) {
                 folders.add(s.folder());
             }
-            var images = ServerArt.loadForFolders(folders);
+            var images = ArtFiles.loadPacketEntries(folders);
             if (!images.isEmpty()) {
                 PacketDistributor.sendToPlayer(player, new RetroArtPacket(pkt.consolePos(), images));
             }
         });
     }
 
-    // --- Общий анти-чит для управляющих пакетов ---
-
     private static boolean isNear(ServerPlayer player, BlockPos pos, double distSq) {
         return player.distanceToSqr(
                 pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) <= distSq;
     }
 
-    /**
-     * Выполнить action, если: отправитель — игрок рядом с консолью (#1),
-     * по позиции реально стоит консоль (#2) и именно этот игрок ей
-     * управляет (#3). Иначе пакет молча игнорируется.
-     */
+    /** Run action only if player is near, block is a console, and player controls it. */
     private static void withControlledConsole(IPayloadContext ctx, BlockPos pos,
                                               Consumer<RetroConsoleBlockEntity> action) {
         if (!(ctx.player() instanceof ServerPlayer player)) return;

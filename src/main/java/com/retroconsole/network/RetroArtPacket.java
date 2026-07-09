@@ -10,7 +10,7 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import java.util.ArrayList;
 import java.util.List;
 
-/** S2C: обложки консолей art/{folder}.png с диска сервера. */
+/** S2C: console art covers art/{folder}.png from server disk. */
 public record RetroArtPacket(BlockPos consolePos, List<ArtEntry> images) implements CustomPacketPayload {
 
     static final int MAX_IMAGES = 32;

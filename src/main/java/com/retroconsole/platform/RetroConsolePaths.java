@@ -59,7 +59,7 @@ public final class RetroConsolePaths {
 
     private static final Map<String, Path> CACHE = new ConcurrentHashMap<>();
 
-    /** Подпапки roms/ для встроенных систем — создаём при старте, чтобы было куда класть игры. */
+    /** Default roms/ subfolders for built-in systems; created at startup. */
     private static final List<String> DEFAULT_ROM_FOLDERS = List.of(
             "nes", "snes", "gb", "gba", "genesis", "sms",
             "ps1", "ps2", "psp", "dreamcast", "segacd", "saturn");
@@ -80,12 +80,12 @@ public final class RetroConsolePaths {
         return ensureDir("saves", ModConfig.SAVE_DIR.get());
     }
 
-    /** Обложки карточек консолей в меню: config/retroconsole/art/{folder}.png */
+    /** Console card art in the menu: config/retroconsole/art/{folder}.png */
     public static Path artDir() {
         return ensureDir("art", "config/retroconsole/art");
     }
 
-    /** Per-player сейвы и серверная статистика: saves/players/{uuid}/ */
+    /** Per-player saves and server stats: saves/players/{uuid}/ */
     public static Path playersSaveDir() {
         Path p = saveDir().resolve("players").toAbsolutePath().normalize();
         try {

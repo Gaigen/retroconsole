@@ -21,8 +21,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Реестр игровых систем: встроенные + config/retroconsole/systems.json
- * + автоматические «папка = вкладка» из подпапок roms/.
+ * Game system registry: built-ins + config/retroconsole/systems.json
+ * + automatic "folder = tab" from roms/ subfolders.
  */
 public final class GameSystem {
 
@@ -73,7 +73,7 @@ public final class GameSystem {
         finishRegistry();
     }
 
-    /** Каталог с dedicated server: встроенные системы + метаданные с сервера (без client systems.json). */
+    /** Catalog from dedicated server: built-ins + server metadata (no client systems.json). */
     public static synchronized void applyServerCatalog(List<RetroLibraryPacket.SystemEntry> entries) {
         REGISTRY.clear();
         registerBuiltins();
@@ -123,7 +123,7 @@ public final class GameSystem {
     }
 
     private static void finishRegistry() {
-        OTHER = new GameSystem("OTHER", "?", "Другое", "Неопознанные", "other",
+        OTHER = new GameSystem("OTHER", "?", "Other", "Unknown", "other",
                 0xFF808080, List.of(), List.of(), false);
         REGISTRY.add(OTHER);
     }

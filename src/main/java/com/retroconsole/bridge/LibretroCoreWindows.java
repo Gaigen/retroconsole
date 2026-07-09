@@ -14,11 +14,11 @@ import java.nio.file.Paths;
 
 /** JNA interface to .libheadless_gl.dll — headless WGL contexts on Windows (multi-instance). */
 interface HeadlessGLWin extends com.sun.jna.Library {
-    // --- инстансы ---
+    
     Pointer hlg_create();
     void    hlg_free(Pointer h);
 
-    // --- контекстные функции (первый параметр — handle инстанса) ---
+    // Context functions (first parameter is instance handle)
     int     hlg_init_ex(Pointer h, int api, int major, int minor, int flags);
     void    hlg_destroy(Pointer h);
     int     hlg_make_current(Pointer h);
@@ -28,7 +28,7 @@ interface HeadlessGLWin extends com.sun.jna.Library {
     void    hlg_debug_fbo(Pointer h);
     String  hlg_get_gpu_info(Pointer h);
 
-    // --- процессные (без handle) ---
+    // Process-wide (no handle)
     void    hlg_dump_hw_render(Pointer data, int size);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
@@ -44,17 +44,17 @@ interface HeadlessGLWin extends com.sun.jna.Library {
 /**
  * Windows implementation of {@link LibretroCore}.
  *
- * <p>ПОТОКИ: HW-render libretro-ядра требуют, чтобы ВСЯ работа с ядром и
- * GL-контекстом шла на ОДНОМ потоке (retro_init, retro_load_game,
- * context_reset, retro_run, retro_unload_game, retro_deinit, context_destroy).
- * Весь жизненный цикл ядра гоняется через один retro-core-поток инстанса.
+ * <p>THREADING: HW-render libretro cores require ALL core and GL-context work
+ * on a SINGLE thread (retro_init, retro_load_game, context_reset, retro_run,
+ * retro_unload_game, retro_deinit, context_destroy). The entire core lifecycle
+ * runs on one per-instance retro-core thread.
  *
- * <p>GL: нативная DLL мультиинстансная — hlg_create()/hlg_free() создают
- * независимые инстансы (своё скрытое окно + HGLRC + offscreen FBO на каждый).
- * Несколько HW-render консолей могут работать ОДНОВРЕМЕННО, каждая на своём
- * retro-core-потоке. get_current_framebuffer/get_proc_address у libretro не
- * имеют user-data, поэтому DLL диспетчеризует их через thread-local: 
- * hlg_make_current(handle) привязывает инстанс к текущему потоку.
+ * <p>GL: the native DLL is multi-instance — hlg_create()/hlg_free() create
+ * independent instances (own hidden window + HGLRC + offscreen FBO each).
+ * Multiple HW-render consoles can run simultaneously, each on its own
+ * retro-core thread. libretro get_current_framebuffer/get_proc_address have
+ * no user-data, so the DLL dispatches them via thread-local:
+ * hlg_make_current(handle) binds the instance to the current thread.
  */
 public class LibretroCoreWindows extends LibretroCore {
 
@@ -64,16 +64,16 @@ public class LibretroCoreWindows extends LibretroCore {
     private static final java.util.List<Object> PINNED_CALLBACKS = new java.util.ArrayList<>();
 
     /**
-     * Пин JNA-библиотеки headless GL НАВСЕГДА: она патчит ntdll, и если GC
-     * соберёт NativeLibrary и Windows выгрузит DLL — jmp-хуки в ntdll будут
-     * указывать в выгруженную память и уронят весь процесс.
+     * Pin the headless GL JNA library forever: it patches ntdll, and if GC
+     * collects NativeLibrary and Windows unloads the DLL, jmp hooks in ntdll
+     * would point into unloaded memory and crash the entire process.
      */
     private static volatile HeadlessGLWin HEADLESS_GL;
 
     /**
-     * Точечные переопределения опций по имени ядра (подстрока имени DLL).
-     * ВАЖНО: точные ключи/значения сверяйте по логу
-     * "Core queried option (no override): ..." — имена меняются между сборками.
+     * Per-core option overrides by DLL name substring.
+     * IMPORTANT: verify exact keys/values against the log
+     * "Core queried option (no override): ..." — names vary between builds.
      */
     private static final java.util.Map<String, java.util.Map<String, String>> CORE_OVERRIDES =
             buildCoreOverrides();
@@ -91,18 +91,14 @@ public class LibretroCoreWindows extends LibretroCore {
         return java.util.Map.copyOf(all);
     }
 
-    /** Диагностика: печатаем каждый уникальный запрошенный ключ опции один раз. */
+    /** Diagnostic: log each unique queried option key once. */
     private final java.util.Set<String> loggedOptionKeys =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    // ======================================================================
-    // ===== ЕДИНСТВЕННЫЙ ПОТОК, ВЛАДЕЮЩИЙ ЯДРОМ И GL-КОНТЕКСТОМ =============
-    // ======================================================================
-
     /**
-     * Идентификация по ССЫЛКЕ на поток, а не по имени: с несколькими
-     * консолями имя "retro-core-thread" было бы у всех одинаковым, и задача
-     * инстанса A могла бы выполниться инлайн на потоке инстанса B.
+     * Identify by thread reference, not name: with multiple consoles the name
+     * "retro-core-thread" would be the same for all, and instance A's task could
+     * run inline on instance B's thread.
      */
     private volatile Thread coreThreadRef;
 
@@ -114,7 +110,7 @@ public class LibretroCoreWindows extends LibretroCore {
                 return t;
             });
 
-    /** Выполнить задачу на потоке-владельце ядра и дождаться результата. */
+    /** Run a task on the core-owning thread and wait for the result. */
     private <T> T onCoreThread(java.util.concurrent.Callable<T> task) {
         if (Thread.currentThread() == coreThreadRef) {
             try { return task.call(); }
@@ -131,10 +127,6 @@ public class LibretroCoreWindows extends LibretroCore {
             throw new RuntimeException(e);
         }
     }
-
-    // ======================================================================
-    // ===== ПУБЛИЧНЫЕ МЕТОДЫ — делегируют на coreThread ====================
-    // ======================================================================
 
     void loadNative() {
         onCoreThread(() -> { loadNativeImpl(); return null; });
@@ -176,12 +168,8 @@ public class LibretroCoreWindows extends LibretroCore {
         }
     }
 
-    // setButton / setAnalog / pollFrame НЕ трогают GL — их можно звать с
-    // игрового потока Minecraft (потокобезопасны через атомики + frameLock).
-
-    // ======================================================================
-    // ===== HW render state ================================================
-    // ======================================================================
+    // setButton / setAnalog / pollFrame do not touch GL — safe to call from
+    // the Minecraft game thread (thread-safe via atomics + frameLock).
 
     private boolean hwRenderActive = false;
     private boolean hwGpuLoggedOnEmulatorThread = false;
@@ -194,24 +182,20 @@ public class LibretroCoreWindows extends LibretroCore {
     private int hwFrameH = 0;
     private Memory hwReadbackBuf = null;
     private int hwReadbackCap = 0;
-    private int[] hwReadbackInts = new int[0];   // bulk-скретч (перф!)
+    private int[] hwReadbackInts = new int[0];   // bulk scratch buffer (perf)
     private Pointer hwContextReset = null;
     private Pointer hwContextDestroy = null;
     private boolean hwContextResetDone = false;
     private int hwGlMajor = 3;
     private int hwGlMinor = 3;
-    // Реально прочитанные размеры кадра (viewport ядра), а не заявленная геометрия.
+    // Actual frame dimensions read back (core viewport), not declared geometry.
     private volatile int hwActualW = 0;
     private volatile int hwActualH = 0;
-    // Версия GL, запрошенная ядром в SET_HW_RENDER.
+    // GL version requested by the core in SET_HW_RENDER.
     private int hwReqGlMajor = 3;
     private int hwReqGlMinor = 3;
 
-    // ======================================================================
-    // ===== Per-instance headless GL =======================================
-    // ======================================================================
-
-    /** Handle инстанса в мультиинстансной DLL (hlg_create/hlg_free). */
+    /** Instance handle in the multi-instance DLL (hlg_create/hlg_free). */
     private Pointer hlgHandle;
     private final Hlg hlgAdapter = new Hlg();
 
@@ -240,11 +224,11 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     /**
-     * Адаптер со СТАРЫМИ именами методов поверх handle-API — остальной код
-     * файла зовёт headlessGl().hlg_xxx(...) как раньше.
+     * Adapter with legacy method names over the handle API — rest of the file
+     * calls headlessGl().hlg_xxx(...) as before.
      */
     private Hlg headlessGl() {
-        rawHlg(); // бросит исключение, если DLL недоступна (для supportsHwRender)
+        rawHlg(); // throws if DLL unavailable (for supportsHwRender)
         return hlgAdapter;
     }
 
@@ -324,11 +308,11 @@ public class LibretroCoreWindows extends LibretroCore {
     private boolean ensureHeadlessGl(int ctxType, int reqMajor, int reqMinor) {
         boolean gles = (ctxType == 2 || ctxType == 4);
         int api = gles ? 1 : 0;
-        // core-профиль только для OPENGL_CORE (3); для OPENGL (1) — compatibility.
+        // Core profile only for OPENGL_CORE (3); for OPENGL (1) — compatibility.
         int flags = (ctxType == 3) ? 0 : 1;
         int major = reqMajor > 0 ? reqMajor : 3;
         int minor = reqMinor >= 0 ? reqMinor : 0;
-        // Для core-профиля версия обязана быть >= 3.2; поднимаем до 3.3.
+        // For core profile, version must be >= 3.2; bump to 3.3.
         if (!gles && flags == 0 && (major < 3 || (major == 3 && minor < 3))) {
             major = 3;
             minor = 3;
@@ -338,8 +322,8 @@ public class LibretroCoreWindows extends LibretroCore {
         int profileKey = (api & 0xFF) | ((flags & 0xFF) << 8)
                 | ((minor & 0xFF) << 16) | ((major & 0xFF) << 24);
 
-        // ВАЖНО: даже при совпадении profileKey проверяем, что контекст реально
-        // доступен ЭТОМУ потоку — C-сторона могла быть пересоздана/захвачена.
+        // IMPORTANT: even when profileKey matches, verify the context is actually
+        // available to this thread — C side may have been recreated or taken over.
         if (headlessGlReady && headlessGlApi == profileKey
                 && headlessGl().hlg_make_current() != 0) {
             return true;
@@ -399,7 +383,7 @@ public class LibretroCoreWindows extends LibretroCore {
         try {
             headlessGl().hlg_make_current();
             if (isPcsx2Core()) {
-                // LRPS2 context_destroy может зависнуть на MTGS — отпускаем GL и идём в retro_deinit.
+                // LRPS2 context_destroy may hang on MTGS — release GL and proceed to retro_deinit.
                 LOGGER.info("PCSX2: skipping context_destroy (detach headless GL only)");
                 try { headlessGl().hlg_release(); } catch (Throwable ignored) {}
             } else {
@@ -414,10 +398,6 @@ public class LibretroCoreWindows extends LibretroCore {
             hwContextDestroy = null;
         }
     }
-
-    // ======================================================================
-    // ===== Общее состояние ================================================
-    // ======================================================================
 
     private boolean coreInitialized;
     private LibretroBridge core;
@@ -446,12 +426,12 @@ public class LibretroCoreWindows extends LibretroCore {
         return coreName().contains("flycast");
     }
 
-    /** Flycast/PPSSPP синхронизируют FPS через audio-pacing; PCSX2 — нет (bulk batch в конце retro_run). */
+    /** Flycast/PPSSPP sync FPS via audio pacing; PCSX2 does not (bulk batch at end of retro_run). */
     private boolean usesAudioPacing() {
         return isFlycastCore() || coreName().contains("ppsspp");
     }
 
-    /** Оверрайды опций для текущего ядра (или пустая карта). */
+    /** Option overrides for the current core (or empty map). */
     private java.util.Map<String, String> currentOverrides() {
         String n = coreName();
         for (var e : CORE_OVERRIDES.entrySet()) {
@@ -465,10 +445,6 @@ public class LibretroCoreWindows extends LibretroCore {
             PINNED_CALLBACKS.add(ref);
         }
     }
-
-    // ======================================================================
-    // ===== loadNativeImpl (на retro-core-потоке) ==========================
-    // ======================================================================
 
     private void loadNativeImpl() {
         if (core != null) return;
@@ -532,20 +508,20 @@ public class LibretroCoreWindows extends LibretroCore {
                     hwFramePending = true;
                     return;
                 }
-                // >>> ФИКС: софт-рендер (например, PPSSPP-фоллбек без HW GL) может
-                // отдавать кадр другого размера, чем заявленная геометрия
-                // (480x272 вместо 960x540). HW-путь обновляет width/height в
-                // drainHwFrame(), а софт-путь этого не делал — клиент
-                // интерпретировал буфер 480x272 как 960x540 -> "двойная" картинка.
+                // FIX: software render (e.g. PPSSPP fallback without HW GL) may deliver
+                // a frame of a different size than declared geometry
+                // (480x272 instead of 960x540). The HW path updates width/height in
+                // drainHwFrame(), but the software path did not — the client
+                // interpreted a 480x272 buffer as 960x540 -> "doubled" image.
                 if (this.width != w || this.height != h) {
                     LOGGER.info("Software frame size changed: {}x{} -> {}x{}",
                             this.width, this.height, w, h);
                     this.width = w;
                     this.height = h;
                 }
-                // <<< конец фикса
+                // end of fix
 
-                // === SOFTWARE-путь: bulk-чтение построчно (одно JNI на строку, не на пиксель) ===
+                // SOFTWARE path: bulk row read (one JNI per row, not per pixel)
                 switch (pixelFormat) {
                     case LibretroBridge.RETRO_PIXEL_FORMAT_XRGB8888: {
                         int stride = (int) (pitch / 4);
@@ -671,7 +647,7 @@ public class LibretroCoreWindows extends LibretroCore {
     private final Object frameLock = new Object();
     private volatile boolean newFrame = false;
 
-    // Скретч-буферы для bulk-чтения software-кадра (без per-pixel JNI).
+    // Scratch buffers for bulk software frame read (no per-pixel JNI).
     private int[] swRowInts = new int[0];
     private short[] swRowShorts = new short[0];
 
@@ -682,7 +658,7 @@ public class LibretroCoreWindows extends LibretroCore {
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
 
-    /** Flycast/PPSSPP синхронизируют время по потреблению audio samples. */
+    /** Flycast/PPSSPP sync timing via audio sample consumption. */
     private final AudioPacing audioPacing = new AudioPacing(44100);
 
     private static final int AUDIO_RING_CAP = 48000 * 2;
@@ -698,18 +674,14 @@ public class LibretroCoreWindows extends LibretroCore {
     private int coreOptionsVersion = 2;
     private boolean audioBufferStatusRequested = false;
 
-    // ======================================================================
-    // ===== environment callback ===========================================
-    // ======================================================================
-
     private boolean handleEnvironment(int cmd, Pointer data) {
-        // Гасим по СЫРОМУ коду (в switch по нормализованному base не попадают):
-        if (cmd == 0x10031) { // GET_FASTFORWARDING — шлётся каждый кадр
+        // Handle by raw code (switch on normalized base won't catch these):
+        if (cmd == 0x10031) { // GET_FASTFORWARDING — sent every frame
             if (data != null) data.setByte(0, (byte) 0);
             return true;
         }
-        if (cmd == 0x800004) return true; // приватная cmd Flycast
-        // GET_AUDIO_VIDEO_ENABLE (47|EXPERIMENTAL) — LRPS2 глушит SPU2 без явного «audio on».
+        if (cmd == 0x800004) return true; // private Flycast cmd
+        // GET_AUDIO_VIDEO_ENABLE (47|EXPERIMENTAL) — LRPS2 mutes SPU2 without explicit "audio on".
         if (cmd == 0x1002f) {
             if (data != null) data.setInt(0, 3);
             return true;
@@ -757,19 +729,19 @@ public class LibretroCoreWindows extends LibretroCore {
                 }
                 return true;
             case LibretroEnvironment.SET_SYSTEM_AV_INFO:
-                // PPSSPP/PCSX2 отдают реальный размер И FPS именно здесь.
+                // PPSSPP/PCSX2 report actual size and FPS here.
                 if (data != null) {
                     int w = data.getInt(0);   // geometry.base_width
                     int h = data.getInt(4);   // geometry.base_height
-                    // retro_system_timing.fps: double по офсету 24
-                    // (geometry 20 байт + выравнивание double до 8).
+                    // retro_system_timing.fps: double at offset 24
+                    // (geometry 20 bytes + double alignment to 8).
                     double fps = data.getDouble(24);
                     if (w > 0 && h > 0) {
                         this.width = w;
                         this.height = h;
                     }
-                    // КРИТИЧНО для PAL-игр PS2: ядро меняет 59.94 -> 50.0 именно
-                    // здесь. Без этого FrameSender гонит PAL-игру на ~20% быстрее.
+                    // CRITICAL for PAL PS2 games: core changes 59.94 -> 50.0 here.
+                    // Without this FrameSender runs PAL games ~20% too fast.
                     if (fps > 1.0 && fps < 1000.0) this.timingFps = fps;
                     double sr = data.getDouble(32);
                     if (sr > 8000.0 && sr < 384000.0) this.audioSampleRate = sr;
@@ -870,9 +842,9 @@ public class LibretroCoreWindows extends LibretroCore {
                     LOGGER.debug("Native log cb unavailable: {}", t.getMessage());
                 }
                 return false;
-            case 38:      // GET_USERNAME — отдаём «нет имени»
+            case 38:      // GET_USERNAME — return "no username"
                 return false;
-            case 60:      // SET_MESSAGE_EXT — принимаем, но игнорируем OSD
+            case 60:      // SET_MESSAGE_EXT — accept but ignore OSD
                 return true;
             case 45:
             case 0x1002e:
@@ -903,8 +875,8 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     /**
-     * SET_HW_RENDER: запоминаем указатели и заполняем структуру.
-     * context_reset вызывается в loadGameImpl после успешного retro_load_game.
+     * SET_HW_RENDER: store pointers and fill the struct.
+     * context_reset is called in loadGameImpl after successful retro_load_game.
      */
     private boolean handleSetHwRender(Pointer data) {
         if (data == null) return false;
@@ -947,7 +919,7 @@ public class LibretroCoreWindows extends LibretroCore {
             data.setPointer(0x10, fbPtr);
             data.setPointer(0x18, procPtr);
             data.setByte(0x22, (byte) 1);              // bottom_left_origin
-            data.setInt(0x24, hwGlMajor);              // фактически созданная версия
+            data.setInt(0x24, hwGlMajor);              // actually created version
             data.setInt(0x28, hwGlMinor);
 
             hwContextResetDone = false;
@@ -1015,7 +987,7 @@ public class LibretroCoreWindows extends LibretroCore {
         int semi = value.indexOf(';');
         if (semi < 0) return "";
         String opts = value.substring(semi + 1).trim();
-        // В v1-формате "desc; opt1|opt2|..." дефолт — ПЕРВАЯ опция, не последняя.
+        // In v1 format "desc; opt1|opt2|..." default is first option, not last.
         int pipe = opts.indexOf('|');
         if (pipe < 0) return opts;
         return opts.substring(0, pipe).trim();
@@ -1044,15 +1016,15 @@ public class LibretroCoreWindows extends LibretroCore {
     private void parseV2Defs(Pointer data) {
         // data = retro_core_options_v2*: { categories*, definitions* }
         Pointer defs = data.getPointer(Native.POINTER_SIZE);
-        if (defs == null) defs = data.getPointer(0); // fallback для нестандартных сборок
+        if (defs == null) defs = data.getPointer(0); // fallback for non-standard builds
         if (defs == null) return;
         parseV1Structs(defs, true);
     }
 
     private void parseV2Intl(Pointer data) {
         // data = retro_core_options_v2_intl*: { us*, local* }.
-        // PCSX2 объявляет опции ТОЛЬКО через intl-вариант — если его не парсить,
-        // coreOptions остаётся пустым и GET_VARIABLE("pcsx2_bios") вернёт false
+        // PCSX2 declares options ONLY via the intl variant — if not parsed,
+        // coreOptions stays empty and GET_VARIABLE("pcsx2_bios") returns false
         // -> "Could not find any valid PS2 BIOS File" -> retro_load_game = false.
         Pointer us = data.getPointer(0);
         if (us != null) {
@@ -1126,10 +1098,6 @@ public class LibretroCoreWindows extends LibretroCore {
 
     public boolean isCoreLoaded() { return core != null; }
 
-    // ======================================================================
-    // ===== loadGameImpl (на retro-core-потоке) ============================
-    // ======================================================================
-
     private volatile int width;
     private volatile int height;
     private volatile double timingFps = 60.0;
@@ -1200,8 +1168,8 @@ public class LibretroCoreWindows extends LibretroCore {
         core.retro_get_system_av_info(avInfo);
         this.width = avInfo.geometry.base_width;
         this.height = avInfo.geometry.base_height;
-        // PPSSPP на старте отдаёт 0x0; реальный размер придёт позже через
-        // SET_SYSTEM_AV_INFO. Дефолт PSP, чтобы текстура не была 0x0 -> краш.
+        // PPSSPP reports 0x0 at startup; real size arrives later via
+        // SET_SYSTEM_AV_INFO. PSP default so texture is not 0x0 -> crash.
         if (this.width <= 0 || this.height <= 0) {
             this.width = 480;
             this.height = 272;
@@ -1244,7 +1212,7 @@ public class LibretroCoreWindows extends LibretroCore {
     @Override public int getWidth()  { return width; }
     @Override public int getHeight() { return height; }
 
-    /** Точный FPS ядра (59.94 для PSP) — для пейсинга внешнего цикла FrameSender. */
+    /** Exact core FPS (59.94 for PSP) — for pacing in external FrameSender loop. */
     @Override public double getTimingFps() { return timingFps; }
 
     @Override public boolean prefersAvLockstep() { return isPcsx2Core(); }
@@ -1261,7 +1229,7 @@ public class LibretroCoreWindows extends LibretroCore {
         }
     }
 
-    /** До dst.length сэмплов interleaved-стерео 16-bit; возвращает число short'ов. */
+    /** Up to dst.length interleaved stereo 16-bit samples; returns short count. */
     @Override
     public int readAudio(short[] dst, int maxShorts) {
         synchronized (audioLock) {
@@ -1323,7 +1291,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private void drainHwFrame() {
         synchronized (frameLock) {
-            if (newFrame) return; // предыдущий кадр не забрали — readback не нужен
+            if (newFrame) return; // previous frame not consumed — no readback needed
         }
         boolean pending; int w, h;
         synchronized (frameLock) {
@@ -1357,7 +1325,7 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             hwActualW = aw;
             hwActualH = ah;
-            // Bulk-чтение всего кадра одним JNI-вызовом вместо getInt() на пиксель.
+            // Bulk-read entire frame in one JNI call instead of getInt() per pixel.
             if (hwReadbackInts.length < len) hwReadbackInts = new int[len];
             hwReadbackBuf.read(0, hwReadbackInts, 0, len);
             synchronized (frameLock) {
@@ -1373,10 +1341,6 @@ public class LibretroCoreWindows extends LibretroCore {
             LOGGER.warn("HW readback failed: {}", t.getMessage());
         }
     }
-
-    // ======================================================================
-    // ===== runFrameImpl (на retro-core-потоке) ============================
-    // ======================================================================
 
     private void runFrameImpl() {
         if (core != null && gameLoaded) {
@@ -1405,7 +1369,7 @@ public class LibretroCoreWindows extends LibretroCore {
                 this, pendingBatteryRomPath, java.nio.file.Path.of(saveDir));
     }
 
-    // ----- pollFrame / input: с любого потока, GL не трогают --------------
+    // pollFrame / input: callable from any thread; does not touch GL.
 
     @Override
     public boolean pollFrame(int[] dst) {
@@ -1503,10 +1467,6 @@ public class LibretroCoreWindows extends LibretroCore {
         data.write(0, sram, 0, (int) Math.min(sram.length, size));
         return true;
     }
-
-    // ======================================================================
-    // ===== closeImpl (на retro-core-потоке) ===============================
-    // ======================================================================
 
     private void closeImpl() {
         if (core == null) return;

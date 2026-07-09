@@ -20,33 +20,33 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Клиентские экраны консолей.
+ * Client-side console screens.
  *
- * Архитектура "последний кадр побеждает":
+ * "Last frame wins" architecture:
  *
- * - submitFrame() — вызывается с СЕТЕВОГО потока. Кадр приходит УЖЕ в ABGR
- *   (RetroFramePacket.decompressFrameAbgr) и кладётся в PENDING-слот.
- *   Если рендер не успел забрать предыдущий кадр, тот молча затирается.
+ * - submitFrame() — called from the NETWORK thread. Frame arrives already in ABGR
+ *   (RetroFramePacket.decompressFrameAbgr) and goes into the PENDING slot.
+ *   If render did not pick up the previous frame, it is silently overwritten.
  *
- * - uploadPendingFrame() — только рендер-поток (изнутри getScreen()).
- *   Забирает кадр из слота и заливает в текстуру одним bulk-копированием
- *   + glTexSubImage2D. Массив кадра переходит во владение entry (lastAbgr)
- *   БЕЗ копирования: submitFrame каждый раз приносит новый массив,
- *   никто его после этого не мутирует.
+ * - uploadPendingFrame() — render thread only (from inside getScreen()).
+ *   Takes the frame from the slot and uploads to texture with one bulk copy
+ *   + glTexSubImage2D. Frame array moves into entry ownership (lastAbgr)
+ *   WITHOUT copying: submitFrame brings a new array each time and nobody
+ *   mutates it afterward.
  */
 public final class ClientConsoles {
     private ClientConsoles() {}
 
-    /** Кадр, ожидающий заливки. Пиксели уже в формате ABGR (GL RGBA little-endian). */
+    /** Frame waiting for upload. Pixels already in ABGR (GL RGBA little-endian). */
     private record PendingFrame(int[] abgr, int width, int height) {}
 
-    /** Экран консоли: текстура + персистентный staging-буфер. Живёт до dispose() или смены разрешения. */
+    /** Console screen: texture + persistent staging buffer. Lives until dispose() or resize. */
     public static final class ScreenEntry {
         private final DynamicTexture tex;
         private final ResourceLocation id;
         private final int width;
         private final int height;
-        private final IntBuffer staging; // direct-память, переиспользуется каждый кадр
+        private final IntBuffer staging; // direct memory, reused every frame
         private int[] lastAbgr;
 
         private ScreenEntry(BlockPos pos, int width, int height) {
@@ -70,28 +70,23 @@ public final class ClientConsoles {
         public int[] lastAbgr() { return lastAbgr; }
     }
 
-    /** PENDING пишется с сетевого потока, читается с рендера — обязательно concurrent. */
+    /** PENDING written from network thread, read from render — must be concurrent. */
     private static final Map<BlockPos, PendingFrame> PENDING = new ConcurrentHashMap<>();
-    /** SCREENS трогается только с рендер-потока; concurrent — дешёвая страховка. */
+    /** SCREENS touched only from render thread; concurrent map is cheap insurance. */
     private static final Map<BlockPos, ScreenEntry> SCREENS = new ConcurrentHashMap<>();
 
     private static final Map<BlockPos, int[]> GRID_CACHE = new HashMap<>();
     /**
-     * БАГФИКС: раньше кэш чистился по ++frameCounter % 60 — это счётчик ВЫЗОВОВ,
-     * а не кадров: N блоков экрана = N инкрементов за кадр, кэш сбрасывался
-     * в N раз чаще. Теперь по времени.
+     * BUGFIX: cache was cleared by ++frameCounter % 60 — a call counter, not frames:
+     * N screen blocks = N increments per frame, cache reset N times too often. Now time-based.
      */
     private static final long GRID_CACHE_TTL_NS = 2_000_000_000L;
     private static long gridCacheClearedNs = System.nanoTime();
 
-    // ------------------------------------------------------------------
-    // Сетевой поток
-    // ------------------------------------------------------------------
-
     /**
-     * Принять кадр с сетевого потока. Массив уже в ABGR и переходит
-     * во владение ClientConsoles — вызывающий его больше не трогает.
-     * Старый непоказанный кадр молча затирается.
+     * Accept a frame from the network thread. Array is already ABGR and ownership
+     * transfers to ClientConsoles — caller must not touch it afterward.
+     * Unshown previous frame is silently overwritten.
      */
     public static void submitFrame(BlockPos pos, int[] abgr, int width, int height) {
         if (abgr == null || width <= 0 || height <= 0) return;
@@ -99,13 +94,9 @@ public final class ClientConsoles {
         PENDING.put(pos.immutable(), new PendingFrame(abgr, width, height));
     }
 
-    // ------------------------------------------------------------------
-    // Рендер-поток
-    // ------------------------------------------------------------------
-
     /**
-     * Получить экран консоли. Перед возвратом заливает свежий кадр, если он есть.
-     * Повторные вызовы в том же кадре рендера бесплатны (PENDING уже пуст).
+     * Get console screen. Uploads a fresh frame before return if one is pending.
+     * Repeated calls in the same render frame are free (PENDING already empty).
      */
     public static ScreenEntry getScreen(BlockPos consolePos) {
         if (consolePos == null) return null;
@@ -114,13 +105,13 @@ public final class ClientConsoles {
         return SCREENS.get(pos);
     }
 
-    /** Без заливки кадра — можно с любого потока (миниатюры при выходе). */
+    /** Without frame upload — callable from any thread (thumbnails on exit). */
     public static ScreenEntry peekScreen(BlockPos consolePos) {
         if (consolePos == null) return null;
         return SCREENS.get(consolePos.immutable());
     }
 
-    /** Только рендер-поток. Забирает последний кадр из слота и заливает в текстуру. */
+    /** Render thread only. Takes latest frame from slot and uploads to texture. */
     private static void uploadPendingFrame(BlockPos pos) {
         if (!RenderSystem.isOnRenderThread()) return;
 
@@ -142,9 +133,8 @@ public final class ClientConsoles {
         entry.staging.clear();
         entry.staging.put(f.abgr(), 0, n);
         entry.staging.flip();
-        // ОПТИМИЗАЦИЯ: раньше здесь был Arrays.copyOf(f.abgr(), n) — ~11 МБ
-        // лишних аллокаций на КАЖДЫЙ кадр при 1920x1440. Массив принадлежит
-        // исключительно PendingFrame, его никто не мутирует — забираем как есть.
+        // OPTIMIZATION: Arrays.copyOf(f.abgr(), n) here was ~11 MB extra alloc per frame
+        // at 1920x1440. Array belongs solely to PendingFrame and is not mutated — take as-is.
         entry.lastAbgr = f.abgr();
 
         GlStateManager._bindTexture(entry.tex.getId());
@@ -159,7 +149,7 @@ public final class ClientConsoles {
                 MemoryUtil.memAddress(entry.staging));
     }
 
-    /** Вызывать с рендер-потока (через enqueueWork из обработчика stop-пакета). */
+    /** Call from render thread (via enqueueWork from stop-packet handler). */
     public static void dispose(BlockPos pos) {
         pos = pos.immutable();
         PENDING.remove(pos);

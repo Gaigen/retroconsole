@@ -105,7 +105,7 @@ public final class SaveStateManager {
         }
     }
 
-    /** Автосейв, иначе ручной слот 0 (F5). */
+    /** Autosave first, otherwise manual slot 0 (F5). */
     public static boolean loadAutoOrSlot(LibretroCore core, String romId, Path romPath, PlayerPaths paths) {
         if (loadAuto(core, romId, paths)) return true;
         return load(core, romPath, paths, 0);

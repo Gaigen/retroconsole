@@ -5,7 +5,7 @@ import com.retroconsole.network.RetroArtPacket;
 import java.util.HashMap;
 import java.util.Map;
 
-/** Кэш обложек art/, полученных с сервера (в память, без записи на диск клиента). */
+/** In-memory cache of art/ covers received from the server (not written to client disk). */
 public final class ClientArtCache {
 
     private static final Map<String, byte[]> BY_FOLDER = new HashMap<>();

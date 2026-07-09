@@ -63,10 +63,6 @@ public class RetroConsoleBlock extends BaseEntityBlock {
         return new RetroConsoleBlockEntity(pos, state);
     }
 
-    // ------------------------------------------------------------------
-    // Клик
-    // ------------------------------------------------------------------
-
     @Override
     protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level,
                                                BlockPos pos, Player player,
@@ -97,10 +93,6 @@ public class RetroConsoleBlock extends BaseEntityBlock {
                 serverPlayer, new RetroOpenScreenPacket(pos, console.getRomId()));
         return ItemInteractionResult.SUCCESS;
     }
-
-    // ------------------------------------------------------------------
-    // Реестр консолей + линковка экранов
-    // ------------------------------------------------------------------
 
     @Override
     public void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
@@ -149,10 +141,6 @@ public class RetroConsoleBlock extends BaseEntityBlock {
             }
         }
     }
-
-    // ------------------------------------------------------------------
-    // Прочее
-    // ------------------------------------------------------------------
 
     @Override
     protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {

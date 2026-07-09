@@ -6,7 +6,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** C2S: выбор core + ROM для консоли (запускает эмулятор). */
+/** C2S: select core + ROM for a console (starts the emulator). */
 public record RetroCoreSelectPacket(
         BlockPos pos,
         String coreName,

@@ -6,7 +6,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** S2C: порция PCM-аудио консоли. */
+/** S2C: chunk of console PCM audio. */
 public record RetroAudioPayload(BlockPos pos, int sampleRate, byte[] pcm)
         implements CustomPacketPayload {
 

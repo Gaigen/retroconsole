@@ -29,22 +29,21 @@ public class ServerConsoles {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("RetroConsole-Server");
 
-    /** Радиус для служебных уведомлений (stop-пакет — дёшево, можно широко). */
+    /** Radius for service notifications (stop packet is cheap, can be wide). */
     private static final int NOTIFY_DISTANCE = 256;
-    /** Радиус, в котором игрок видит экран ТВ в мире и получает видеокадры. */
+    /** Radius where players see the in-world TV screen and receive video frames. */
     private static final int VIDEO_DISTANCE = 48;
-    /** Радиус слышимости консоли. */
+    /** Console audio hearing radius. */
     private static final int AUDIO_DISTANCE = 32;
 
-    // ConcurrentHashMap: мутации идут с server thread, а читают их
-    // FrameSender-потоки — обычный HashMap здесь был бы гонкой.
+    // ConcurrentHashMap: mutations on server thread, reads from FrameSender threads.
     private static final ConcurrentHashMap<BlockPos, Entry> ENTRIES = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, Set<UUID>> VIEWERS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, FrameSenderThread> FRAME_SENDERS = new ConcurrentHashMap<>();
 
     private static CoreManager coreManager;
 
-    /** Фоновый shutdown ядра — не блокирует server thread при ломании блока. */
+    /** Background core shutdown — does not block server thread when breaking the block. */
     private static final java.util.concurrent.ExecutorService SHUTDOWN_EXECUTOR =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "retro-console-shutdown");
@@ -233,10 +232,6 @@ public class ServerConsoles {
         LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, pos, ok);
     }
 
-    // ------------------------------------------------------------------
-    // Зрители
-    // ------------------------------------------------------------------
-
     public static void addViewer(BlockPos pos, UUID playerId) {
         VIEWERS.computeIfAbsent(pos.immutable(), k -> ConcurrentHashMap.newKeySet()).add(playerId);
     }
@@ -246,14 +241,14 @@ public class ServerConsoles {
         if (viewers != null) viewers.remove(playerId);
     }
 
-    /** Убрать игрока из зрителей ВСЕХ консолей (дисконнект/смена мира). */
+    /** Remove player from viewers of ALL consoles (disconnect / dimension change). */
     public static void removeViewerEverywhere(UUID playerId) {
         for (Set<UUID> viewers : VIEWERS.values()) {
             viewers.remove(playerId);
         }
     }
 
-    /** Снимок зрителей консоли — читается FrameSender-потоком. */
+    /** Snapshot of console viewers — read by FrameSender thread. */
     public static Set<UUID> viewers(BlockPos pos) {
         Set<UUID> v = VIEWERS.get(pos.immutable());
         return v != null ? v : Set.of();
@@ -266,30 +261,29 @@ public class ServerConsoles {
         return coreManager.getCores().stream().map(CoreManager.CoreInfo::name).toList();
     }
 
-    /** Радиус видимости экрана ТВ в мире (видеокадры). */
+    /** In-world TV screen visibility radius (video frames). */
     public static int videoDistance() { return VIDEO_DISTANCE; }
 
-    /** Радиус слышимости консоли (аудиопакеты). */
+    /** Console audio hearing radius (audio packets). */
     public static int audioDistance() { return AUDIO_DISTANCE; }
 
     /**
-     * ОПТИМИЗАЦИЯ: раньше stopAll ждал до 15 с ПОСЛЕДОВАТЕЛЬНО на КАЖДОЕ
-     * ядро (4 консоли = до минуты на выходе из мира). Теперь:
-     * 1) всем сендерам сначала сигнал, потом join'ы (идут параллельно);
-     * 2) автосейв КАЖДОЙ игры (раньше stopAll не сейвил вообще —
-     *    сейвил только stopEmulator);
-     * 3) ядра закрываются параллельно с ОБЩИМ дедлайном 20 с.
+     * OPTIMIZATION: stopAll used to wait up to 15s SEQUENTIALLY per core (4 consoles =
+     * up to a minute on world exit). Now:
+     * 1) signal all senders first, then join (in parallel);
+     * 2) autosave EVERY game (stopAll previously saved nothing — only stopEmulator did);
+     * 3) cores close in parallel with a shared 20s deadline.
      */
     public static void stopAll() {
         LOGGER.info("stopAll(): shutting down {} emulator(s)", ENTRIES.size());
 
-        // 1. Сендеры: сигнал всем сразу, потом ожидание.
+        // 1. Senders: signal all, then wait.
         List<FrameSenderThread> senders = new ArrayList<>(FRAME_SENDERS.values());
         FRAME_SENDERS.clear();
         for (FrameSenderThread sender : senders) sender.stopSender();
         for (FrameSenderThread sender : senders) sender.stopAndJoin();
 
-        // 2. Остановка эмуляторов + автосейв.
+        // 2. Stop emulators + autosave.
         List<Entry> entries = new ArrayList<>(ENTRIES.values());
         ENTRIES.clear();
         VIEWERS.clear();
@@ -311,7 +305,7 @@ public class ServerConsoles {
             return;
         }
 
-        // 3. Параллельное закрытие ядер с общим дедлайном.
+        // 3. Parallel core shutdown with shared deadline.
         java.util.concurrent.ExecutorService pool =
                 java.util.concurrent.Executors.newFixedThreadPool(
                         Math.min(runtimes.size(), 4), r2 -> {

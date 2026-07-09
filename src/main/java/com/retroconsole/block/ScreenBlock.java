@@ -17,7 +17,7 @@ public class ScreenBlock extends BaseEntityBlock {
 
     public static final MapCodec<ScreenBlock> CODEC = simpleCodec(ScreenBlock::new);
 
-    /** Радиус привязки экрана к консоли. Единый для всех поисков/сканов. */
+    /** Screen-to-console link radius; shared by all lookups and scans. */
     public static final int LINK_RADIUS = 16;
 
     public ScreenBlock(Properties properties) {
@@ -47,9 +47,8 @@ public class ScreenBlock extends BaseEntityBlock {
     }
 
     /**
-     * ОПТИМИЗАЦИЯ: раньше здесь был скан 33^3 ≈ 36000 позиций через
-     * getBlockEntity на КАЖДУЮ установку экрана. Теперь ближайшая консоль
-     * берётся из ConsoleRegistry за O(число консолей).
+     * OPTIMIZATION: this used to scan 33³ ≈ 36000 positions with getBlockEntity on
+     * every screen placement. Nearest console now comes from ConsoleRegistry in O(consoles).
      */
     private static void linkToNearestConsole(Level level, BlockPos pos) {
         if (level.getBlockEntity(pos) instanceof ScreenBlockEntity screen) {
@@ -60,7 +59,7 @@ public class ScreenBlock extends BaseEntityBlock {
         }
     }
 
-    /** БАГФИКС: без loot table блок не дропался; дропаем сам блок напрямую. */
+    /** BUGFIX: without a loot table the block did not drop; drop the block directly. */
     @Override
     protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
         return List.of(new ItemStack(this));
