@@ -21,7 +21,6 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.level.storage.loot.LootParams;
-import net.minecraft.world.level.storage.loot.parameters.LootContextParams;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
@@ -144,13 +143,7 @@ public class RetroConsoleBlock extends BaseEntityBlock {
 
     @Override
     protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
-        ItemStack stack = new ItemStack(this);
-        if (builder.getOptionalParameter(LootContextParams.BLOCK_ENTITY)
-                instanceof RetroConsoleBlockEntity console
-                && (!console.getRomId().isEmpty() || !console.getCoreName().isEmpty())) {
-            console.saveToItem(stack, builder.getLevel().registryAccess());
-        }
-        return List.of(stack);
+        return List.of(new ItemStack(this));
     }
 
     @Override
