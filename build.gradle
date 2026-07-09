@@ -126,7 +126,7 @@ tasks.register('buildHeadlessGL', Exec) {
 }
 
 tasks.register('copyHeadlessGLToResources', Copy) {
-    description = 'Copy headless GL native lib to resources for jar bundling'
+    description = 'Rebuild native lib for THIS OS and copy into src/main/resources/natives (dev/release prep)'
     group = 'native'
     onlyIf { isLinux || isWindows }
     dependsOn 'buildHeadlessGL'
@@ -141,7 +141,5 @@ tasks.register('copyHeadlessGLToResources', Copy) {
     }
 }
 
-// Auto-build native lib before Java compilation (Linux only — Windows skips)
-tasks.named('processResources').configure {
-    dependsOn 'copyHeadlessGLToResources'
-}
+// Release jar bundles BOTH natives from src/main/resources/natives/ (committed in git).
+// Run copyHeadlessGLToResources on each OS once before release — do not auto-overwrite on every build.

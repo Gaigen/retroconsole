@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -78,6 +79,26 @@ public final class RetroConsolePaths {
 
     public static Path saveDir() {
         return ensureDir("saves", ModConfig.SAVE_DIR.get());
+    }
+
+    /**
+     * Resolve a catalog {@code romId} (path relative to {@link #romsDir()}) to a file.
+     * Rejects path traversal ({@code ..}) and paths that escape the roms root.
+     */
+    public static Optional<Path> resolveRomFile(String romId) {
+        if (romId == null || romId.isBlank()) {
+            return Optional.empty();
+        }
+        Path romsRoot = romsDir().toAbsolutePath().normalize();
+        Path resolved = romsRoot.resolve(romId.replace('\\', '/')).normalize();
+        if (!resolved.startsWith(romsRoot)) {
+            LOGGER.warn("Rejected romId outside roms dir: {}", romId);
+            return Optional.empty();
+        }
+        if (!Files.isRegularFile(resolved)) {
+            return Optional.empty();
+        }
+        return Optional.of(resolved);
     }
 
     /** Console card art in the menu: config/retroconsole/art/{folder}.png */

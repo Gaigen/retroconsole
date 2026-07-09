@@ -96,8 +96,8 @@ public class ServerConsoles {
         var coreInfo = coreManager.findCore(coreName);
         if (coreInfo == null) { LOGGER.error("Core not found: {}", coreName); return; }
 
-        Path romPath = RetroConsolePaths.romsDir().resolve(romId).normalize();
-        if (!romPath.toFile().exists()) { LOGGER.error("ROM not found: {}", romPath); return; }
+        Path romPath = RetroConsolePaths.resolveRomFile(romId).orElse(null);
+        if (romPath == null) { LOGGER.error("ROM rejected or not found: {}", romId); return; }
 
         PlayerPaths playerPaths = ownerId != null
                 ? PlayerPaths.forPlayer(ownerId)
