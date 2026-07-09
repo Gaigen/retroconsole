@@ -74,7 +74,7 @@ public class CoreSelectScreen extends Screen {
     private int popupScroll;
 
     public CoreSelectScreen(BlockPos consolePos) {
-        super(Component.literal("Retro Console"));
+        super(ModTexts.c("gui.title"));
         this.consolePos = consolePos;
     }
 
@@ -89,27 +89,27 @@ public class CoreSelectScreen extends Screen {
 
         backBtn = addRenderableWidget(Button.builder(Component.literal("⌂"), b -> {
             view = View.CARDS;
-            modeBtn.setMessage(Component.literal(viewLabel()));
+            modeBtn.setMessage(viewLabel());
             blip(1.2f);
         }).pos(10, 22).size(20, 18).build());
 
-        searchBox = new EditBox(font, 36, 24, 140, 16, Component.literal("Поиск"));
-        searchBox.setHint(Component.literal("Поиск…"));
+        searchBox = new EditBox(font, 36, 24, 140, 16, ModTexts.c("gui.search"));
+        searchBox.setHint(ModTexts.c("gui.search.hint"));
         searchBox.setResponder(s -> refreshShown());
         addRenderableWidget(searchBox);
 
-        modeBtn = addRenderableWidget(Button.builder(Component.literal(viewLabel()), b -> {
+        modeBtn = addRenderableWidget(Button.builder(viewLabel(), b -> {
             view = switch (view) {
                 case CARDS -> View.LIST;
                 case LIST -> View.MANUAL;
                 case MANUAL -> View.CARDS;
             };
-            b.setMessage(Component.literal(viewLabel()));
+            b.setMessage(viewLabel());
             blip(1.2f);
             refreshShown();
         }).pos(width - 148, 22).size(64, 18).build());
 
-        folderBtn = addRenderableWidget(Button.builder(Component.literal("Папка"),
+        folderBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.folder"),
                         b -> Util.getPlatform().openFile(RomLibrary.ensureDir(currentFolder()).toFile()))
                 .pos(width - 80, 22).size(44, 18).build());
         folderBtn.active = !serverLibrary;
@@ -117,11 +117,11 @@ public class CoreSelectScreen extends Screen {
         addRenderableWidget(Button.builder(Component.literal("?"), b -> showHelp = !showHelp)
                 .pos(width - 32, 22).size(20, 18).build());
 
-        pickCoreBtn = addRenderableWidget(Button.builder(Component.literal("Ядро…"),
+        pickCoreBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.core_picker"),
                         b -> { if (selectedRom != null) { showCorePicker = true; pickerScroll = 0; } })
                 .pos(width - 86, height - 51).size(76, 18).build());
 
-        startBtn = addRenderableWidget(Button.builder(Component.literal("▶ Запустить"),
+        startBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.start"),
                         b -> startEmulator())
                 .pos(width / 2 - 60, height - 26).size(120, 20).build());
 
@@ -134,12 +134,11 @@ public class CoreSelectScreen extends Screen {
         }
     }
 
-    /** Вызывается из ClientPacketHandlers при получении каталога с сервера. */
+    /** Called from ClientPacketHandlers when the server catalog arrives. */
     public void onServerLibraryReceived(RetroLibraryPacket pkt) {
         if (!pkt.consolePos().equals(consolePos)) return;
         if (!libraryLoading) return;
         lib.loadFromNetwork(pkt);
-        ClientPlayStatsCache.apply(pkt.playerStats());
         libraryLoading = false;
         onLibraryReady();
     }
@@ -165,11 +164,13 @@ public class CoreSelectScreen extends Screen {
         refreshShown();
     }
 
-    private String viewLabel() {
-        return switch (view) { case CARDS -> "Консоли"; case LIST -> "Список"; case MANUAL -> "Ручной"; };
+    private Component viewLabel() {
+        return switch (view) {
+            case CARDS -> ModTexts.c("gui.view.cards");
+            case LIST -> ModTexts.c("gui.view.list");
+            case MANUAL -> ModTexts.c("gui.view.manual");
+        };
     }
-
-    // ---------- данные ----------
 
     private void rebuildTabs() {
         tabs.clear();
@@ -209,7 +210,7 @@ public class CoreSelectScreen extends Screen {
         return null;
     }
 
-    /** Ядро для игры: выбор игрока для файла → выбор для системы → приоритеты системы. */
+    /** Core for a game: per-file player choice → per-system choice → system priorities. */
     private RomLibrary.Core coreFor(RomLibrary.Rom rom) {
         if (rom == null) return null;
         RomLibrary.Core c = coreById(overrides.get(rom.id()));
@@ -261,7 +262,7 @@ public class CoreSelectScreen extends Screen {
         blip(1.2f);
     }
 
-    /** Геометрия попапа: [x, y, w, h, видимых строк]. */
+    /** Popup geometry: [x, y, w, h, visible rows]. */
     private int[] popupGeom() {
         int w = Math.min(width - 60, 440);
         int visible = Math.max(3, Math.min(Math.max(popupRoms.size(), 1), (height - 140) / ITEM_H));
@@ -280,8 +281,8 @@ public class CoreSelectScreen extends Screen {
         g.fill(x, y, x + w, y + 2, popupSystem.color);
 
         long total = popupRoms.stream().mapToLong(r -> PlayStats.playtimeSec(r.id())).sum();
-        g.drawString(font, "§l" + popupSystem.fullName, x + 12, y + 10, 0xFFFFFF);
-        String hdr = popupRoms.size() + " " + plural(popupRoms.size())
+        g.drawString(font, "§l" + ModTexts.fullName(popupSystem), x + 12, y + 10, 0xFFFFFF);
+        String hdr = popupRoms.size() + " " + ModTexts.gamesWord(popupRoms.size())
                 + (total > 0 ? " • " + PlayStats.formatPlaytime(total) : "");
         g.drawString(font, hdr, x + w - font.width(hdr) - 12, y + 10, 0x9098A0);
 
@@ -310,22 +311,20 @@ public class CoreSelectScreen extends Screen {
         }
         if (popupRoms.isEmpty())
             g.drawCenteredString(font, serverLibrary
-                            ? "На сервере нет игр в roms/" + popupSystem.folder
-                            : "Пусто. Закиньте игры в roms/" + popupSystem.folder,
+                            ? ModTexts.s("empty.popup.server", popupSystem.folder)
+                            : ModTexts.s("empty.popup.local", popupSystem.folder),
                     x + w / 2, listY + 16, 0x808890);
 
         RomLibrary.Core core = coreFor(selectedRom);
         boolean hasSave = selectedRom != null && SaveStates.hasSave(selectedRom.id());
-        String foot = selectedRom == null ? "§8Esc — закрыть"
+        String foot = selectedRom == null ? ModTexts.s("popup.close")
                 : core != null ? (hasSave
-                    ? "§aEnter — продолжить §8• Shift+Enter — новая игра §8• ★ ПКМ • Esc — закрыть"
-                    : "§aEnter / двойной клик — запуск §8• ★ ПКМ • Esc — закрыть")
-                : "§6Enter — выбрать ядро §8• Esc — закрыть";
+                    ? ModTexts.s("popup.continue")
+                    : ModTexts.s("popup.launch"))
+                : ModTexts.s("popup.pick_core");
         g.drawString(font, foot, x + 12, y + h - 16, 0xFFFFFF);
         g.pose().popPose();
     }
-
-    // ---------- рендер ----------
 
     private int listTop() { return view == View.LIST ? 70 : 48; }
     private int listHeight() { return ((height - listTop() - 58) / ITEM_H) * ITEM_H; }
@@ -355,16 +354,16 @@ public class CoreSelectScreen extends Screen {
         g.fill(0, 45, width, 46, COL_EDGE);
         g.drawString(font, "§lRETRO CONSOLE", 10, 8, 0xFFE0E0E0);
         if (libraryLoading) {
-            g.drawCenteredString(font, "Загрузка библиотеки с сервера…", width / 2, height / 2, 0xC0C8D0);
+            g.drawCenteredString(font, ModTexts.s("gui.loading"), width / 2, height / 2, 0xC0C8D0);
             for (Renderable renderable : this.renderables) {
                 renderable.render(g, mx, my, pt);
             }
             return;
         }
         if (cards) {
-            String stats = lib.roms.size() + " " + plural(lib.roms.size())
-                    + " • " + lib.cores.size() + " ядер";
-            if (serverLibrary) stats += " §8(сервер)";
+            String stats = lib.roms.size() + " " + ModTexts.gamesWord(lib.roms.size())
+                    + " • " + lib.cores.size() + " " + ModTexts.coresWord(lib.cores.size());
+            if (serverLibrary) stats += " " + ModTexts.s("gui.server_tag");
             g.drawString(font, "§8" + stats, 110, 8, 0xFFFFFF);
         }
 
@@ -399,8 +398,6 @@ public class CoreSelectScreen extends Screen {
         g.fill(8, top - 3, width - 8, top - 2, COL_EDGE);
     }
 
-    // ---------- карточки ----------
-
     private void renderCards(GuiGraphics g, int mx, int my) {
         if (heroRom != null) renderHero(g, mx, my);
         if (tabs.isEmpty()) {
@@ -430,11 +427,11 @@ public class CoreSelectScreen extends Screen {
         g.fill(x, y, x + w, y + artH, dim(s.color, 0.15f));
         g.fill(x, y + artH, x + w, y + artH + 2, s.color);
 
-        g.drawString(font, font.plainSubstrByWidth(s.tab, w - 12), x + 6, y + artH + 6, 0xFFFFFF);
+        g.drawString(font, font.plainSubstrByWidth(ModTexts.tab(s), w - 12), x + 6, y + artH + 6, 0xFFFFFF);
         long played = lib.roms.stream().filter(r -> r.system() == s)
                 .mapToLong(r -> PlayStats.playtimeSec(r.id())).sum();
-        String info = games + " " + plural(games)
-                + (hasCore ? "" : "  §6нет ядра")
+        String info = games + " " + ModTexts.gamesWord(games)
+                + (hasCore ? "" : ModTexts.s("card.no_core"))
                 + (played > 0 ? "  §8" + PlayStats.formatPlaytime(played) : "");
         g.drawString(font, font.plainSubstrByWidth(info, w - 12), x + 6, y + artH + 16, 0x9098A0);
     }
@@ -449,16 +446,16 @@ public class CoreSelectScreen extends Screen {
         g.fill(x + 4, y + 4, x + 4 + tw, y + h - 4, dim(heroRom.system().color, 0.15f));
 
         int tx = x + tw + 14;
-        g.drawString(font, "§8ПРОДОЛЖИТЬ", tx, y + 9, 0xFFFFFF);
+        g.drawString(font, ModTexts.s("hero.continue_label"), tx, y + 9, 0xFFFFFF);
         g.drawString(font, "§l" + font.plainSubstrByWidth(heroRom.displayName(), w - tw - 60),
                 tx, y + 22, hover ? 0x80FF90 : 0xFFFFFF);
-        String line = heroRom.system().fullName;
+        String line = ModTexts.fullName(heroRom.system());
         long pt = PlayStats.playtimeSec(heroRom.id());
-        if (pt > 0) line += " • наиграно " + PlayStats.formatPlaytime(pt);
+        if (pt > 0) line += ModTexts.s("hero.played") + PlayStats.formatPlaytime(pt);
         long st = SaveStates.saveTime(heroRom.id());
-        if (st > 0) line += " §a• сохранение " + PlayStats.formatAgo(st);
+        if (st > 0) line += ModTexts.s("hero.save") + PlayStats.formatAgo(st);
         g.drawString(font, font.plainSubstrByWidth(line, w - tw - 60), tx, y + 38, 0x9098A0);
-        g.drawString(font, "§8клик — продолжить • Shift+клик — новая игра", tx, y + 52, 0x707880);
+        g.drawString(font, ModTexts.s("hero.hint"), tx, y + 52, 0x707880);
 
         g.pose().pushPose();
         g.pose().translate(x + w - 24, y + h / 2f - 8, 0);
@@ -467,7 +464,7 @@ public class CoreSelectScreen extends Screen {
         g.pose().popPose();
     }
 
-    /** Текстуры поверх кнопок — без повторного затемняющего renderBackground из super.render(). */
+    /** Card textures over buttons — no extra dimming renderBackground from super.render(). */
     private void renderCardTextures(GuiGraphics g) {
         if (heroRom != null) {
             int x = 10, y = 54, h = 68, tw = 84;
@@ -508,9 +505,7 @@ public class CoreSelectScreen extends Screen {
         g.disableScissor();
     }
 
-    // ---------- вкладки и списки ----------
-
-    private List<int[]> tabRects() { // [x, w, index] ; index -1 = «Все»
+    private List<int[]> tabRects() { // [x, w, index]; index -1 = "All"
         boolean counts = tabCountsFit();
         List<int[]> out = new ArrayList<>();
         int x = 10;
@@ -530,10 +525,12 @@ public class CoreSelectScreen extends Screen {
     }
 
     private String tabLabel(GameSystem s, boolean counts) {
-        if (s == null) return counts ? "Все (" + lib.roms.size() + ")" : "Все";
-        if (!counts) return s.tab;
+        if (s == null) {
+            return ModTexts.tabLabel(null, counts, lib.roms.size());
+        }
+        if (!counts) return ModTexts.tab(s);
         long n = lib.roms.stream().filter(r -> r.system() == s).count();
-        return n > 0 ? s.tab + " (" + n + ")" : s.tab;
+        return ModTexts.tabLabel(s, true, n);
     }
 
     private void renderTabs(GuiGraphics g, int mx, int my) {
@@ -594,7 +591,7 @@ public class CoreSelectScreen extends Screen {
         renderScrollbar(g, x + w, top, viewH, shown.size(), scrollRoms);
 
         if (shown.isEmpty()) {
-            String hint = !searchBox.getValue().isEmpty() ? "Ничего не найдено"
+            String hint = !searchBox.getValue().isEmpty() ? ModTexts.s("gui.no_results")
                     : activeTab != null ? emptyTabHint(activeTab)
                     : emptyLibraryHint();
             g.drawCenteredString(font, hint, x + w / 2, top + 24, 0x808890);
@@ -619,8 +616,8 @@ public class CoreSelectScreen extends Screen {
         renderScrollbar(g, x + w, top, viewH, lib.cores.size(), scrollCores);
         if (lib.cores.isEmpty())
             g.drawCenteredString(font, serverLibrary
-                            ? "На сервере нет ядер в config/retroconsole/cores"
-                            : "Положите ядра (.dll/.so) в cores",
+                            ? ModTexts.s("empty.cores.server")
+                            : ModTexts.s("empty.cores.local"),
                     x + w / 2, top + 24, 0x808890);
     }
 
@@ -636,54 +633,28 @@ public class CoreSelectScreen extends Screen {
         if (selectedRom != null) {
             g.fill(8, y, 11, y + 20, selectedRom.system().color);
             String left = "§l" + selectedRom.displayName() + "§r  §7"
-                    + selectedRom.system().fullName + " • " + formatSize(selectedRom.size());
+                    + ModTexts.fullName(selectedRom.system()) + " • " + formatSize(selectedRom.size());
             long pt = PlayStats.playtimeSec(selectedRom.id());
             if (pt > 0) left += " • " + PlayStats.formatPlaytime(pt);
             long st = SaveStates.saveTime(selectedRom.id());
-            if (st > 0) left += " §a• сохр. " + PlayStats.formatAgo(st);
+            if (st > 0) left += ModTexts.s("info.save_short") + PlayStats.formatAgo(st);
             g.drawString(font, font.plainSubstrByWidth(left, rightLimit - 230), 16, y + 6, 0xFFFFFF);
             String right = ready ? "§a" + core.displayName()
-                    : view == View.MANUAL ? "§6выберите ядро слева"
-                    : "§6нажмите «Ядро…» и выберите, чем запускать";
+                    : view == View.MANUAL ? ModTexts.s("info.pick_core_manual")
+                    : ModTexts.s("info.pick_core_list");
             g.drawString(font, font.plainSubstrByWidth(right, 220),
                     rightLimit - Math.min(220, font.width(right)), y + 6, 0xFFFFFF);
         } else {
-            g.drawString(font, "§8Выберите игру — ↑↓, вкладки — ←→, запуск — Enter, ПКМ — избранное",
+            g.drawString(font, ModTexts.s("info.hint"),
                     16, y + 6, 0xFFFFFF);
         }
     }
-
-    // ---------- оверлеи ----------
 
     private void renderHelp(GuiGraphics g) {
         g.pose().pushPose();
         g.pose().translate(0, 0, 400);
         g.fill(0, 0, width, height, 0xB0000000);
-        String[] lines = serverLibrary ? new String[]{
-                "§e§lСПРАВКА", "",
-                "§6Каталог§r — с диска сервера (roms/, cores/,",
-                "systems.json, art/*.png). Клиентские ROM",
-                "и локальные обложки не используются.", "",
-                "§6Ядро§r подбирается автоматически; если нет —",
-                "кнопка «Ядро…» (выбор хранится локально).", "",
-                "§6Управление§r — ↑↓ выбор, Enter — запуск,",
-                "ПКМ — избранное ★ (локально у вас).", "",
-                "§8Клик или Esc — закрыть",
-        } : new String[]{
-                "§e§lСПРАВКА", "",
-                "§6Игры§r — в config/retroconsole/roms",
-                "Можно по папкам (nes, ps2, dreamcast…) — своя",
-                "папка станет своей вкладкой и карточкой.",
-                "Образы дисков распознаются автоматически.", "",
-                "§6Ядра§r — *_libretro.dll (.so) в cores. Ядро",
-                "подбирается само; если нет — кнопка «Ядро…»",
-                "(выбор запоминается).", "",
-                "§6Свои системы§r — systems.json, обложки —",
-                "art/<папка>.png.", "",
-                "§6Управление§r — ↑↓ выбор, ←→ вкладки, Enter —",
-                "запуск, ПКМ — избранное ★, ⚠ — не своя папка.", "",
-                "§8Клик или Esc — закрыть",
-        };
+        String[] lines = ModTexts.helpLines(serverLibrary);
         int w = 0;
         for (String l : lines) w = Math.max(w, font.width(l));
         int cardW = w + 32, cardH = lines.length * 12 + 24;
@@ -698,7 +669,7 @@ public class CoreSelectScreen extends Screen {
         g.pose().popPose();
     }
 
-    /** Геометрия окна выбора ядра: [x, y, w, h, видимых строк]. */
+    /** Core picker window geometry: [x, y, w, h, visible rows]. */
     private int[] pickerGeom() {
         int w = 240;
         for (RomLibrary.Core c : lib.cores) w = Math.max(w, font.width(c.displayName()) + 48);
@@ -717,7 +688,7 @@ public class CoreSelectScreen extends Screen {
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF3C4250);
         g.fill(x, y, x + w, y + h, COL_PANEL_2);
 
-        String title = "Чем запускать: §e" + (selectedRom != null ? selectedRom.displayName() : "");
+        String title = ModTexts.s("picker.title", selectedRom != null ? selectedRom.displayName() : "");
         g.drawString(font, font.plainSubstrByWidth(title, w - 24), x + 12, y + 9, 0xFFFFFF);
 
         RomLibrary.Core current = coreFor(selectedRom);
@@ -735,10 +706,10 @@ public class CoreSelectScreen extends Screen {
                     isCur ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8);
         }
         if (lib.cores.size() > visible) {
-            String more = "колесо — прокрутка";
+            String more = ModTexts.s("picker.scroll");
             g.drawString(font, more, x + w - font.width(more) - 10, y + h - 14, 0x707880);
         }
-        g.drawString(font, "§8Esc или клик мимо — отмена", x + 12, y + h - 14, 0xFFFFFF);
+        g.drawString(font, ModTexts.s("picker.cancel"), x + 12, y + h - 14, 0xFFFFFF);
         g.pose().popPose();
     }
 
@@ -750,8 +721,6 @@ public class CoreSelectScreen extends Screen {
         g.fill(x + 2, top, x + 5, top + viewH, 0x30FFFFFF);
         g.fill(x + 2, barY, x + 5, barY + barH, 0xC0AAAAAA);
     }
-
-    // ---------- ввод ----------
 
     @Override
     public boolean mouseClicked(double mx, double my, int button) {
@@ -859,7 +828,7 @@ public class CoreSelectScreen extends Screen {
                 int idx = (int) ((my - top + scrollRoms) / ITEM_H);
                 if (idx >= 0 && idx < shown.size()) {
                     RomLibrary.Rom rom = shown.get(idx);
-                    if (button == 1) {                       // ПКМ — избранное
+                    if (button == 1) {                       // RMB — favorite
                         PlayStats.toggleFavorite(rom.id());
                         blip(1.2f);
                         refreshShown();
@@ -978,8 +947,6 @@ public class CoreSelectScreen extends Screen {
     @Override
     public boolean isPauseScreen() { return false; }
 
-    // ---------- prefs / утилиты ----------
-
     private void blip(float pitch) {
         Minecraft.getInstance().getSoundManager().play(
                 SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_HAT, pitch));
@@ -994,7 +961,7 @@ public class CoreSelectScreen extends Screen {
         Properties p = new Properties();
         RomLibrary.loadProps(p, ClientPlayerData.uiFile());
         try { view = View.valueOf(p.getProperty("view", "CARDS")); } catch (Exception ignored) {}
-        modeBtn.setMessage(Component.literal(viewLabel()));
+        modeBtn.setMessage(viewLabel());
         String rom = p.getProperty("rom");
         if (rom != null) lib.roms.stream().filter(r -> r.id().equals(rom)).findFirst()
                 .ifPresent(r -> selectedRom = r);
@@ -1037,21 +1004,14 @@ public class CoreSelectScreen extends Screen {
 
     private String emptyLibraryHint() {
         return serverLibrary
-                ? "На сервере нет ROM/ядер — положите файлы в config/retroconsole/ на сервере"
-                : "Закиньте ядра в cores и игры в roms — кнопка «Папка»";
+                ? ModTexts.s("empty.library.server")
+                : ModTexts.s("empty.library.local");
     }
 
     private String emptyTabHint(GameSystem tab) {
         return serverLibrary
-                ? "На сервере нет игр в roms/" + tab.folder
-                : "Пусто. Закиньте игры в roms/" + tab.folder + " — кнопка «Папка»";
-    }
-
-    private static String plural(long n) {
-        long m10 = n % 10, m100 = n % 100;
-        if (m10 == 1 && m100 != 11) return "игра";
-        if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return "игры";
-        return "игр";
+                ? ModTexts.s("empty.tab.server", tab.folder)
+                : ModTexts.s("empty.tab.local", tab.folder);
     }
 
     private static int dim(int color, float f) {

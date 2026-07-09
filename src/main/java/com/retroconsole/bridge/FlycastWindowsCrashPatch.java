@@ -9,21 +9,21 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 
 /**
- * Flycast Windows crash patch — bisect по одному ff15 call site.
+ * Flycast Windows crash patch — bisect one ff15 call site at a time.
  *
- * <p>Открой этот файл, в {@link #applyEnabledSites} раскомментируй нужные {@code patchSite(...)}.
- * Пересобери: {@code gradlew compileJava}, перезапусти клиент.
+ * <p>Open this file and uncomment the desired {@code patchSite(...)} calls in
+ * {@link #applyEnabledSites}. Rebuild with {@code gradlew compileJava}, then restart the client.
  *
- * <p>RVA из audit (flycast v7ec978e):
+ * <p>RVAs from audit (flycast v7ec978e):
  * <ul>
- *   <li>668b6, 668d6, 668f6, 66921, 6699b, 669c7 → env slot 0x7a34a8 (ломают CUE если все)</li>
- *   <li>669b0 → log slot 0x7a34a0 (кандидат против краша без env)</li>
+ *   <li>668b6, 668d6, 668f6, 66921, 6699b, 669c7 → env slot 0x7a34a8 (break CUE if all patched)</li>
+ *   <li>669b0 → log slot 0x7a34a0 (candidate against crash without env)</li>
  * </ul>
  */
 public final class FlycastWindowsCrashPatch {
     private static final Logger LOGGER = LoggerFactory.getLogger("FlycastCrashPatch");
 
-    /** false = патч полностью выключен (как закомментированный apply в LibretroCoreWindows). */
+    /** false = patch fully disabled (same as commented apply in LibretroCoreWindows). */
     private static final boolean ENABLED = true;
 
     /** true = xor eax,eax (ret false); false = 6× NOP. */
@@ -50,7 +50,7 @@ public final class FlycastWindowsCrashPatch {
             (byte) 0x90, (byte) 0x90, (byte) 0x90
     };
 
-    /** После {@code Native.load}, до {@code retro_set_environment}. */
+    /** After {@code Native.load}, before {@code retro_set_environment}. */
     public static void apply(Path corePath) {
         if (corePath == null || !ENABLED) {
             LOGGER.info("FlycastWindowsCrashPatch: disabled");
@@ -74,19 +74,17 @@ public final class FlycastWindowsCrashPatch {
         }
     }
 
-    // ========================================================================
-    // БИСЕКТ — раскомментируй patchSite для нужного RVA (можно несколько)
-    // ========================================================================
+    // BISECT — uncomment patchSite for the RVA you want (multiple allowed)
     private static int applyEnabledSites(Pointer imageBase, long baseAddr, byte[] patch) {
         int n = 0;
-        // if (patchSite(imageBase, baseAddr, 0x668b6L, patch)) n++; // → 0x7a34a8 env таймер
-        // if (patchSite(imageBase, baseAddr, 0x669b0L, patch)) n++; // → 0x7a34a0 log таймер
+        // if (patchSite(imageBase, baseAddr, 0x668b6L, patch)) n++; // → 0x7a34a8 env timer
+        // if (patchSite(imageBase, baseAddr, 0x669b0L, patch)) n++; // → 0x7a34a0 log timer
 
-        // if (patchSite(imageBase, baseAddr, 0x668d6L, patch)) n++; // → 0x7a34a8 env дало краш по адресу
-        // if (patchSite(imageBase, baseAddr, 0x6699bL, patch)) n++; // → 0x7a34a8 env лог крайне интересный + краш по адресу
-        // if (patchSite(imageBase, baseAddr, 0x669c7L, patch)) n++; // → 0x7a34a8 env лог покрупнее + адрес
+        // if (patchSite(imageBase, baseAddr, 0x668d6L, patch)) n++; // → 0x7a34a8 env caused crash at address
+        // if (patchSite(imageBase, baseAddr, 0x6699bL, patch)) n++; // → 0x7a34a8 env log very interesting + crash at address
+        // if (patchSite(imageBase, baseAddr, 0x669c7L, patch)) n++; // → 0x7a34a8 env larger log + address
 
-        if (patchSite(imageBase, baseAddr, 0x668f6L, patch)) n++; // → 0x7a34a8 env дает картинку
+        if (patchSite(imageBase, baseAddr, 0x668f6L, patch)) n++; // → 0x7a34a8 env gives picture
 
 
 

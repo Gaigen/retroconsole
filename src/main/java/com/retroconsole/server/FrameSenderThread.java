@@ -20,15 +20,14 @@ import java.util.UUID;
  * Sends libretro emulator frames and audio over the network at the core's
  * native frame rate, independent of Minecraft's {@code ServerTickEvent}.
  *
- * <p>ВАЖНО: видео и аудио отправляются ТОЛЬКО реальным получателям:
- * игрокам, открывшим экран консоли ({@link ServerConsoles#viewers}), и
- * игрокам рядом с блоком ТВ. Если получателей нет — кадр не поллится
- * вообще (эмулятор продолжает тикать, но мы не тратим ни readback, ни
- * сеть, ни аллокации на клиенте).
+ * <p>IMPORTANT: video and audio are sent ONLY to real recipients: players who
+ * opened the console screen ({@link ServerConsoles#viewers}) and players near the
+ * TV block. With no recipients, frames are not polled at all (the emulator keeps
+ * ticking, but we spend no readback, network, or client allocations).
  *
- * <p>ОПТИМИЗАЦИЯ: кадр сжимается ОДИН раз и один пакет шлётся всем
- * (как уже было сделано с RetroAudioPayload). Игрокам в мире (не в TvScreen)
- * уходит уменьшенная копия — блоку ТВ в мире полное разрешение не нужно.
+ * <p>OPTIMIZATION: each frame is compressed once and one packet is sent to all
+ * (same approach as RetroAudioPayload). World viewers (not in TvScreen) get a
+ * downscaled copy — the in-world TV block does not need full resolution.
  */
 public class FrameSenderThread extends Thread {
 
@@ -36,12 +35,11 @@ public class FrameSenderThread extends Thread {
     private static final long BATTERY_AUTOSAVE_NS = 30L * 1_000_000_000L;
 
     /**
-     * Ширина кадра для игроков, которые видят экран в мире, но НЕ открыли
-     * TvScreen. Полное разрешение (например 1920x1440 у PSP/PS2 на HW-рендере)
-     * им не нужно: экономит трафик, deflate на сервере и аллокации на клиенте,
-     * а заодно уводит пакет подальше от лимита custom payload (~1 МиБ).
-     * Побочка: при входе/выходе из TvScreen разрешение меняется и текстура
-     * на клиенте пересоздаётся — это штатный путь ресайза в ClientConsoles.
+     * Frame width for players who see the in-world screen but have NOT opened TvScreen.
+     * Full resolution (e.g. 1920×1440 on PSP/PS2 HW render) is unnecessary: saves bandwidth,
+     * server deflate work, and client allocations, and keeps custom payloads under ~1 MiB.
+     * Side effect: entering/leaving TvScreen changes resolution and the client texture is
+     * recreated — normal resize path in ClientConsoles.
      */
     private static final int WORLD_MAX_WIDTH = 480;
 
@@ -61,8 +59,8 @@ public class FrameSenderThread extends Thread {
         this.consolePos = consolePos;
         this.threaded = threaded;
         this.runtime = runtime;
-        // Сразу правильный размер: pollFrame с пустым массивом вернул бы false,
-        // и логика ресайза никогда бы не сработала.
+        // Size buffer up front: pollFrame with an empty array would return false
+        // and the resize logic would never run.
         int w = Math.max(1, runtime.getWidth());
         int h = Math.max(1, runtime.getHeight());
         this.buf = new int[w * h];
@@ -93,17 +91,16 @@ public class FrameSenderThread extends Thread {
 
                 List<ServerPlayer> players = snapshotPlayers(server);
 
-                // --- АУДИО: ринг сливаем каждый тик (иначе переполнится),
-                // но отправляем только тем, кто может слышать.
+                // Audio: drain the ring every tick (otherwise it overflows), but send only to listeners.
                 int n = runtime.readAudio(audioChunk);
                 List<ServerPlayer> audioTo = recipients(players, ServerConsoles.audioDistance());
                 if (n > 0 && !audioTo.isEmpty()) {
                     dispatchAudio(server, n, audioTo);
                 }
 
-                // --- ВИДЕО: нет получателей — кадр даже не поллим.
-                // newFrame остаётся true, и drainHwFrame перестаёт делать
-                // readback (см. скип в LibretroCoreWindows.drainHwFrame).
+                // Video: no recipients — do not even poll a frame.
+                // newFrame stays true and drainHwFrame skips readback
+                // (see skip in LibretroCoreWindows.drainHwFrame).
                 List<ServerPlayer> videoTo = recipients(players, ServerConsoles.videoDistance());
                 if (videoTo.isEmpty()) continue;
 
@@ -122,7 +119,7 @@ public class FrameSenderThread extends Thread {
         }
     }
 
-    /** PCSX2: ждём кадр от эмулятора, сливаем весь PCM этого retro_run. */
+    /** PCSX2: wait for a frame from the emulator, drain all PCM for this retro_run. */
     private void runLockstepFrame() throws InterruptedException {
         while (running && !threaded.hasNewFrame()) {
             Thread.sleep(1, 0);
@@ -133,8 +130,7 @@ public class FrameSenderThread extends Thread {
 
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (!canSendToServer(server)) {
-            // ОБЯЗАТЕЛЬНО сбрасываем флаг кадра и сливаем аудио-ринг,
-            // иначе внешний while превратится в busy-loop.
+            // Must clear the frame flag and drain the audio ring, or the outer loop becomes a busy-loop.
             threaded.pollFrame(buf);
             drainAudioRing();
             return;
@@ -144,7 +140,7 @@ public class FrameSenderThread extends Thread {
         List<ServerPlayer> videoTo = recipients(players, ServerConsoles.videoDistance());
         List<ServerPlayer> audioTo = recipients(players, ServerConsoles.audioDistance());
 
-        // Аудио этого retro_run сливаем всегда (ринг не резиновый).
+        // Drain this retro_run's audio always (the ring is not elastic).
         int avail = runtime.getAudioAvailable();
         if (avail > audioChunk.length) {
             audioChunk = new short[avail];
@@ -152,7 +148,7 @@ public class FrameSenderThread extends Thread {
         int n = avail > 0 ? runtime.readAudio(audioChunk, avail) : 0;
 
         if (videoTo.isEmpty()) {
-            // Кадр никому не нужен: сбрасываем флаг и выходим.
+            // Nobody needs the frame: clear the flag and exit.
             threaded.pollFrame(buf);
             if (n > 0 && !audioTo.isEmpty()) dispatchAudio(server, n, audioTo);
             return;
@@ -169,8 +165,8 @@ public class FrameSenderThread extends Thread {
     }
 
     /**
-     * Поллит кадр, при смене разрешения ресайзит буфер и репуллит.
-     * @return true если в {@link #buf} лежит валидный кадр.
+     * Polls a frame; on resolution change resizes the buffer and repolls.
+     * @return true if {@link #buf} holds a valid frame.
      */
     private boolean pollFrameResized() {
         if (!threaded.pollFrame(buf)) return false;
@@ -185,13 +181,9 @@ public class FrameSenderThread extends Thread {
         return true;
     }
 
-    // ------------------------------------------------------------------
-    // Получатели
-    // ------------------------------------------------------------------
-
     /**
-     * Игроки, которым нужен поток: смотрят TvScreen или стоят в радиусе.
-     * Раньше это были две копипаст-функции videoRecipients/audioRecipients.
+     * Players who need the stream: watching TvScreen or standing within range.
+     * Previously duplicated as videoRecipients/audioRecipients.
      */
     private List<ServerPlayer> recipients(List<ServerPlayer> players, int distance) {
         Set<UUID> viewers = ServerConsoles.viewers(consolePos);
@@ -207,11 +199,7 @@ public class FrameSenderThread extends Thread {
         return out;
     }
 
-    // ------------------------------------------------------------------
-    // Отправка
-    // ------------------------------------------------------------------
-
-    /** Interleaved stereo 16-bit LE — без downmix в mono (меньше артефактов). */
+    /** Interleaved stereo 16-bit LE — no downmix to mono (fewer artifacts). */
     private void dispatchAudio(MinecraftServer server, int nShorts, List<ServerPlayer> recipients) {
         if (nShorts <= 0 || !canSendToServer(server)) return;
         byte[] pcm = new byte[nShorts * 2];
@@ -231,12 +219,12 @@ public class FrameSenderThread extends Thread {
     }
 
     /**
-     * ОПТИМИЗАЦИЯ (был TODO(perf)): пакет собирается и сжимается ОДИН раз
-     * на всех получателей. Раньше RetroFramePacket.create (конвертация RGB +
-     * deflate полного кадра) вызывался в цикле на КАЖДОГО игрока.
+     * OPTIMIZATION (was TODO(perf)): packet is built and compressed once for all
+     * recipients. RetroFramePacket.create (RGB conversion + full-frame deflate)
+     * used to run in a per-player loop.
      *
-     * Зрители TvScreen получают полное разрешение, остальные (видят блок
-     * ТВ в мире) — даунскейл до WORLD_MAX_WIDTH.
+     * <p>TvScreen viewers get full resolution; others (in-world TV block) are
+     * downscaled to WORLD_MAX_WIDTH.
      */
     private void sendVideoFrame(MinecraftServer server, int w, int h, List<ServerPlayer> recipients) {
         if (!canSendToServer(server)) return;
@@ -270,7 +258,7 @@ public class FrameSenderThread extends Thread {
                 downscale(buf, w, h, sw, sh);
                 worldPacket = RetroFramePacket.create(consolePos, scaledBuf, sw, sh);
             } else {
-                // Кадр и так маленький — шарим уже собранный пакет.
+                // Frame is already small — reuse the packet we already built.
                 worldPacket = fullPacket != null
                         ? fullPacket
                         : RetroFramePacket.create(consolePos, buf, w, h);
@@ -282,7 +270,7 @@ public class FrameSenderThread extends Thread {
         }
     }
 
-    /** Nearest neighbor — дёшево и достаточно для экрана-блока в мире. */
+    /** Nearest neighbor — cheap and sufficient for the in-world screen block. */
     private void downscale(int[] src, int w, int h, int sw, int sh) {
         if (scaledBuf.length < sw * sh) {
             scaledBuf = new int[sw * sh];
@@ -297,17 +285,13 @@ public class FrameSenderThread extends Thread {
         }
     }
 
-    /** Слить аудио-ринг без отправки (чтобы не переполнялся). */
+    /** Drain the audio ring without sending (prevents overflow). */
     private void drainAudioRing() {
         int avail = runtime.getAudioAvailable();
         if (avail <= 0) return;
         if (avail > audioChunk.length) audioChunk = new short[avail];
         runtime.readAudio(audioChunk, avail);
     }
-
-    // ------------------------------------------------------------------
-    // Служебное
-    // ------------------------------------------------------------------
 
     private void maybeAutosaveBattery() {
         long now = System.nanoTime();

@@ -8,7 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
-/** Пути к сейв-стейтам и миниатюрам. Слоты F5/F6 — через {@link SaveFiles}, автосейв — по romId. */
+/** Paths to save states and thumbnails. F5/F6 slots via {@link SaveFiles}; autosave by romId. */
 public final class SaveStates {
 
     private static final int DEFAULT_SLOT = 0;
@@ -18,7 +18,7 @@ public final class SaveStates {
 
     private SaveStates() {}
 
-    /** Каталог сейвов текущего локального игрока (как на сервере в SP). */
+    /** Save directory for the current local player (same as on the server in SP). */
     public static Path saveRoot() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.player != null) {
@@ -43,7 +43,7 @@ public final class SaveStates {
         return Path.of(romId.replace('\\', '/'));
     }
 
-    /** Ручной сейв (F5/F6), слот 0 — совпадает с {@link SaveFiles}. */
+    /** Manual save (F5/F6), slot 0 — matches {@link SaveFiles}. */
     public static Path stateFor(String romId) {
         return stateFor(romId, DEFAULT_SLOT);
     }
@@ -52,12 +52,12 @@ public final class SaveStates {
         return SaveFiles.saveStatePath(saveRoot(), romPath(romId), slot);
     }
 
-    /** Автосейв при закрытии TvScreen. */
+    /** Autosave when closing TvScreen. */
     public static Path autoFor(String romId) {
         return SaveFiles.autoStatePath(saveRoot(), romId);
     }
 
-    /** Миниатюра для библиотеки — локально у клиента, per-player. */
+    /** Library thumbnail — local on the client, per player. */
     public static Path thumbFor(String romId) {
         return ClientPlayerData.thumbsDir().resolve(romId.replace('\\', '/') + ".png");
     }
@@ -66,7 +66,7 @@ public final class SaveStates {
         return Files.exists(stateFor(romId)) || Files.exists(autoFor(romId));
     }
 
-    /** Время последнего сохранения (epoch сек) или 0. */
+    /** Last save time (epoch seconds) or 0. */
     public static long saveTime(String romId) {
         long t = 0;
         for (Path p : new Path[]{stateFor(romId), autoFor(romId)}) {

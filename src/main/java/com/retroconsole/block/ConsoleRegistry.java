@@ -9,15 +9,14 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Серверный реестр позиций консолей по измерениям.
+ * Server-side registry of console positions per dimension.
  *
- * Заменяет сканирование 33^3 ≈ 36000 getBlockEntity() в
- * ScreenBlock.linkToNearestConsole: поиск ближайшей консоли теперь
- * O(число консолей).
+ * <p>Replaces scanning 33³ ≈ 36000 getBlockEntity() calls in
+ * ScreenBlock.linkToNearestConsole: nearest-console lookup is now O(consoles).
  *
- * Наполнение: RetroConsoleBlock.onPlace и RetroConsoleBlockEntity.onLoad
- * (загрузка чанка). Очистка: RetroConsoleBlock.onRemove,
- * RetroConsoleBlockEntity.onChunkUnloaded/setRemoved и ServerStoppingEvent
+ * <p>Populated by RetroConsoleBlock.onPlace and RetroConsoleBlockEntity.onLoad
+ * (chunk load). Cleared by RetroConsoleBlock.onRemove,
+ * RetroConsoleBlockEntity.onChunkUnloaded/setRemoved, and ServerStoppingEvent
  * (ServerTickHandler).
  */
 public final class ConsoleRegistry {
@@ -38,12 +37,12 @@ public final class ConsoleRegistry {
         if (set != null) set.remove(pos.immutable());
     }
 
-    /** Ближайшая консоль в радиусе, null если нет. */
+    /** Nearest console within radius, or null if none. */
     public static BlockPos nearestWithin(Level level, BlockPos from, int radius) {
         return nearestWithin(level, from, radius, null);
     }
 
-    /** То же, но с исключением позиции (для перепривязки при ломании консоли). */
+    /** Same as above, but excludes one position (when relinking screens after breaking a console). */
     public static BlockPos nearestWithin(Level level, BlockPos from, int radius, BlockPos exclude) {
         Set<BlockPos> set = CONSOLES.get(level.dimension());
         if (set == null) return null;
@@ -61,7 +60,7 @@ public final class ConsoleRegistry {
         return best;
     }
 
-    /** Вызывается на ServerStoppingEvent — чтобы позиции не пережили мир. */
+    /** Called on ServerStoppingEvent so positions do not outlive the world. */
     public static void clear() {
         CONSOLES.clear();
     }

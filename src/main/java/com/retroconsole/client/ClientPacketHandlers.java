@@ -10,19 +10,17 @@ import net.minecraft.client.Minecraft;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 /**
- * Клиентские хендлеры S2C-пакетов. Класс намеренно изолирован от
- * NetworkHandler: он импортирует client-only классы (Minecraft, экраны),
- * и его загрузка на dedicated server уронила бы сервер.
- * NetworkHandler ссылается сюда только через лямбды.
+ * Client-side S2C packet handlers. Isolated from NetworkHandler because it imports
+ * client-only classes (Minecraft, screens); loading it on a dedicated server would crash.
+ * NetworkHandler references this class only via lambdas.
  */
 public final class ClientPacketHandlers {
 
     private ClientPacketHandlers() {}
 
     /**
-     * Всё на сетевом потоке: распаковка СРАЗУ в ABGR (один попиксельный
-     * проход) + submitFrame. enqueueWork для кадров НЕ используется —
-     * очередь рендера не растёт.
+     * All on the network thread: decompress straight to ABGR (single pixel pass) + submitFrame.
+     * enqueueWork is NOT used for frames — avoids growing the render queue.
      */
     public static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
         int[] frame = pkt.decompressFrameAbgr();
@@ -43,9 +41,9 @@ public final class ClientPacketHandlers {
     }
 
     /**
-     * Пара к серверному клику в RetroConsoleBlock.useItemOn: сервер решает,
-     * что консоль готова (или перезапущена с автосейва), клиент только
-     * открывает нужный экран. Пустой romId = меню выбора игры.
+     * Pairs with the server click in RetroConsoleBlock.useItemOn: the server decides
+     * the console is ready (or restarted from autosave); the client only opens the screen.
+     * Empty romId = game picker menu.
      */
     public static void handleOpenScreen(RetroOpenScreenPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {

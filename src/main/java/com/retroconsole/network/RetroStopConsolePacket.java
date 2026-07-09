@@ -5,7 +5,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** S2C: консоль остановлена — сброс видео-текстуры и OpenAL-источника. */
+/** S2C: console stopped — reset video texture and OpenAL source. */
 public record RetroStopConsolePacket(BlockPos pos) implements CustomPacketPayload {
 
     public static final Type<RetroStopConsolePacket> TYPE = RetroPackets.type("stop_console");

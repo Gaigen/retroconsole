@@ -6,7 +6,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** C2S: нажатие/отпускание кнопки консоли на заданной позиции. */
+/** C2S: press/release a console button at the given position. */
 public record RetroInputPacket(
         BlockPos pos,
         int buttonId,

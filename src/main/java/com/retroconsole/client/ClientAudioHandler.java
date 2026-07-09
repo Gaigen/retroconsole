@@ -27,15 +27,15 @@ public final class ClientAudioHandler {
                 .computeIfAbsent(pos, p -> {
                     RetroAudioPlayer player = new RetroAudioPlayer(
                             p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5);
-                    player.setGain(SoundPrefs.volume()); // сохранённая громкость для новых источников
+                    player.setGain(SoundPrefs.volume()); // saved volume for new sources
                     return player;
                 })
                 .feed(payload.sampleRate(), payload.pcm()));
     }
 
     /**
-     * Живое применение громкости (слайдер в TvScreen). Персист — отдельно,
-     * через SoundPrefs.setVolume(): не пишем на диск на каждый пиксель драга.
+     * Live volume from the TvScreen slider. Persistence is separate via
+     * SoundPrefs.setVolume() — do not write to disk on every drag pixel.
      */
     public static void setVolume(float volume) {
         AUDIO_EXEC.execute(() -> PLAYERS.values().forEach(p -> p.setGain(volume)));

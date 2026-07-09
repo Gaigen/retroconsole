@@ -6,9 +6,9 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 /**
- * C2S: игрок нажал «Выкл» в TvScreen. Сервер останавливает эмуляцию через
- * block entity (romId=""), что даёт автосейв в ServerConsoles.stopEmulator()
- * и RetroStopConsolePacket клиентам.
+ * C2S: player pressed Power Off in TvScreen. Server stops emulation via
+ * block entity (romId=""), which autosaves in ServerConsoles.stopEmulator()
+ * and sends RetroStopConsolePacket to clients.
  */
 public record RetroPowerOffPacket(BlockPos pos) implements CustomPacketPayload {
 

@@ -1,13 +1,13 @@
 package com.retroconsole.client.library;
 
 import com.retroconsole.client.ClientLibraryCache;
-import com.retroconsole.client.ClientPlayStatsCache;
+import com.retroconsole.client.ModTexts;
 import com.retroconsole.library.RomLibrary;
 
 import java.nio.file.Path;
 import java.util.Properties;
 
-/** Личная статистика игрока: наиграно, запуски, избранное. */
+/** Per-player stats: playtime, launches, favorites (local file; playtime from server in MP). */
 public final class PlayStats {
 
     private static final Properties P = new Properties();
@@ -37,17 +37,17 @@ public final class PlayStats {
     }
 
     public static long playtimeSec(String romId) {
-        return useServer() ? ClientPlayStatsCache.playtimeSec(romId)
+        return useServer() ? ClientLibraryCache.playtimeSec(romId)
                 : getLong(romId + ".playtime");
     }
 
     public static int launches(String romId) {
-        return useServer() ? ClientPlayStatsCache.launches(romId)
+        return useServer() ? ClientLibraryCache.launches(romId)
                 : (int) getLong(romId + ".launches");
     }
 
     public static long lastPlayed(String romId) {
-        return useServer() ? ClientPlayStatsCache.lastPlayed(romId)
+        return useServer() ? ClientLibraryCache.lastPlayed(romId)
                 : getLong(romId + ".lastPlayed");
     }
     public static boolean favorite(String romId) { return "1".equals(props().getProperty(romId + ".fav")); }
@@ -72,9 +72,9 @@ public final class PlayStats {
         save();
     }
 
-    /** id последней запускавшейся игры или null. */
+    /** Last launched rom id, or null. */
     public static String lastPlayedRomId() {
-        if (useServer()) return ClientPlayStatsCache.lastPlayedRomId();
+        if (useServer()) return ClientLibraryCache.lastPlayedRomId();
         String best = null;
         long bestT = 0;
         for (String key : props().stringPropertyNames())
@@ -87,16 +87,18 @@ public final class PlayStats {
 
     public static String formatPlaytime(long sec) {
         if (sec <= 0) return "";
-        if (sec < 3600) return Math.max(1, sec / 60) + " мин";
+        if (sec < 3600) return ModTexts.s("time.minutes", Math.max(1, sec / 60));
         long h = sec / 3600, m = (sec % 3600) / 60;
-        return h < 10 && m > 0 ? h + " ч " + m + " мин" : h + " ч";
+        return h < 10 && m > 0
+                ? ModTexts.s("time.hours_minutes", h, m)
+                : ModTexts.s("time.hours", h);
     }
 
     public static String formatAgo(long epochSec) {
         long days = (System.currentTimeMillis() / 1000 - epochSec) / 86400;
-        if (days <= 0) return "сегодня";
-        if (days == 1) return "вчера";
-        if (days < 30) return days + " дн. назад";
-        return (days / 30) + " мес. назад";
+        if (days <= 0) return ModTexts.s("time.today");
+        if (days == 1) return ModTexts.s("time.yesterday");
+        if (days < 30) return ModTexts.s("time.days_ago", days);
+        return ModTexts.s("time.months_ago", days / 30);
     }
 }

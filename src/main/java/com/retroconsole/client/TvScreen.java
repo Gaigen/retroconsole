@@ -34,15 +34,15 @@ import java.util.List;
  * Fullscreen GUI for viewing and playing a retro console game.
  * Input bindings live in {@link ModKeys} and are resolved via {@link RetroInputBindings}.
  *
- * Нижняя панель: «Выкл» (стоп консоли + выход в CoreSelectScreen), «? Управление»
- * (оверлей справки), название игры по центру, слайдер громкости справа.
+ * <p>Bottom bar: power-off (stops console and returns to CoreSelectScreen), help overlay
+ * toggle, game title centered, volume slider on the right.
  */
 public class TvScreen extends Screen {
 
-    /** Высота нижней панели. Единственный источник правды для лейаута. */
+    /** Bottom bar height; single source of truth for layout. */
     private static final int BAR_HEIGHT = 24;
 
-    // Цвета в стиле CoreSelectScreen — единый вид UI.
+    // Colors matching CoreSelectScreen for a consistent UI look.
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE = 0xFF2A2F3A;
 
@@ -67,13 +67,13 @@ public class TvScreen extends Screen {
     private short sentLx, sentLy, sentRx, sentRy;
 
     public TvScreen(BlockPos consolePos, String romId) {
-        super(Component.literal("Retro Console"));
+        super(ModTexts.c("gui.title"));
         this.consolePos = consolePos;
         this.romId = romId != null ? romId : "";
         this.displayName = prettyName(this.romId);
     }
 
-    /** «nes/Super_Game.nes» → «Super Game». Пока romId — единственный источник имени. */
+    /** {@code nes/Super_Game.nes} → {@code Super Game}. romId is the only name source for now. */
     private static String prettyName(String romId) {
         if (romId == null || romId.isEmpty()) return "";
         String name = romId.replace('\\', '/');
@@ -84,36 +84,30 @@ public class TvScreen extends Screen {
         return name.replace('_', ' ');
     }
 
-    // ------------------------------------------------------------------
-    // Лейаут панели
-    // ------------------------------------------------------------------
-
     @Override
     protected void init() {
-        // init() вызывается и при ресайзе окна: виджеты пересоздаются,
-        // состояние (showHints) живёт в полях. addViewer на сервере — Set,
-        // повторный RetroViewPacket(true) безвреден.
+        // init() also runs on window resize: widgets are recreated while state
+        // (showHints) lives in fields. Server addViewer is a Set, so a repeat
+        // RetroViewPacket(true) is harmless.
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, true));
 
         int y = this.height - BAR_HEIGHT + 3;
         int h = BAR_HEIGHT - 6;
 
-        // --- левая сторона ---
         int barLeft = 4;
-        barLeft = addLeft(Button.builder(Component.literal("Выкл"), b -> {
+        barLeft = addLeft(Button.builder(ModTexts.c("tv.power_off"), b -> {
             blip(0.8f);
             powerOffToMenu();
         }), barLeft, y, 48, h);
-        barLeft = addLeft(Button.builder(Component.literal("? Управление"), b -> {
+        barLeft = addLeft(Button.builder(ModTexts.c("tv.controls"), b -> {
             blip(1.2f);
             showHints = !showHints;
         }), barLeft, y, 88, h);
-        // Новые левые кнопки (ачивки и т.п.) добавлять здесь: barLeft = addLeft(...)
+        // Add new left-side buttons here: barLeft = addLeft(...)
 
-        // --- правая сторона ---
         int barRight = this.width - 4;
         barRight = addRight(new VolumeSlider(0, y, 110, h, SoundPrefs.volume()), barRight);
-        // Новые правые виджеты добавлять здесь: barRight = addRight(...)
+        // Add new right-side widgets here: barRight = addRight(...)
     }
 
     private int addLeft(Button.Builder builder, int x, int y, int w, int h) {
@@ -127,15 +121,11 @@ public class TvScreen extends Screen {
         return widget.getX() - 4;
     }
 
-    // ------------------------------------------------------------------
-    // Рендер
-    // ------------------------------------------------------------------
-
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // Порядок важен: фон → кадр ТВ → панель → виджеты → оверлей справки.
-        // super.render() не используется: он повторно рисует затемняющий фон
-        // поверх кадра (тот же приём, что в CoreSelectScreen).
+        // Order matters: background → TV frame → bar → widgets → help overlay.
+        // super.render() is not used: it redraws the dimming background over the
+        // frame (same approach as CoreSelectScreen).
         renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         renderTvFrame(guiGraphics);
         renderBar(guiGraphics);
@@ -147,8 +137,8 @@ public class TvScreen extends Screen {
 
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // ОПТИМИЗАЦИЯ: ванильный renderBackground рисует мир + блюр каждый кадр.
-        // За кадром ТВ этого всё равно не видно — просто чёрная заливка.
+        // OPTIMIZATION: vanilla renderBackground draws the world + blur every frame.
+        // That is hidden behind the TV frame anyway — use a plain black fill.
         guiGraphics.fill(0, 0, this.width, this.height, 0xFF000000);
     }
 
@@ -167,11 +157,10 @@ public class TvScreen extends Screen {
             int drawY = (screenH - drawH) / 2;
 
             guiGraphics.blit(entry.id(), drawX, drawY, 0, 0, drawW, drawH, drawW, drawH);
-            // ОПТИМИЗАЦИЯ: snapshotThumb здесь больше НЕ вызывается —
-            // раньше это был abgr.clone() (~11 МБ) на КАЖДЫЙ render().
-            // Миниатюра снимается один раз в removed().
+            // OPTIMIZATION: snapshotThumb is no longer called here — it used to be
+            // abgr.clone() (~11 MB) on EVERY render(). Thumbnail is captured once in removed().
         } else {
-            String noSignal = "No Signal";
+            String noSignal = ModTexts.s("gui.no_signal");
             guiGraphics.drawCenteredString(this.font, noSignal, this.width / 2, screenH / 2, 0xFFFFFF);
         }
     }
@@ -180,7 +169,7 @@ public class TvScreen extends Screen {
         guiGraphics.fill(0, this.height - BAR_HEIGHT, this.width, this.height, COL_PANEL_2);
         guiGraphics.fill(0, this.height - BAR_HEIGHT, this.width, this.height - BAR_HEIGHT + 1, COL_EDGE);
         if (!displayName.isEmpty()) {
-            // Не наезжаем на кнопки слева (144) и слайдер справа (114).
+            // Leave room for left buttons (144px) and right slider (114px).
             int avail = Math.max(40, this.width - 2 * 160);
             String title = this.font.plainSubstrByWidth(displayName, avail);
             guiGraphics.drawCenteredString(this.font, title,
@@ -188,13 +177,9 @@ public class TvScreen extends Screen {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Оверлей справки по управлению
-    // ------------------------------------------------------------------
-
     private void renderHintsOverlay(GuiGraphics g) {
         List<String> left = new ArrayList<>();
-        left.add("§6Кнопки");
+        left.add(ModTexts.s("tv.hints.buttons"));
         left.add(line(ModKeys.BTN_A, "A"));
         left.add(line(ModKeys.BTN_B, "B"));
         left.add(line(ModKeys.BTN_X, "X"));
@@ -207,18 +192,18 @@ public class TvScreen extends Screen {
         left.add(line(ModKeys.BTN_R3, "R3"));
 
         List<String> right = new ArrayList<>();
-        right.add("§6Направления");
+        right.add(ModTexts.s("tv.hints.directions"));
         right.add(keysLine(ModKeys.DPAD_UP, ModKeys.DPAD_DOWN, ModKeys.DPAD_LEFT, ModKeys.DPAD_RIGHT, "D-Pad"));
         right.add(stickLine(RetroInputBindings.LEFT_STICK, "L-Stick"));
         right.add(stickLine(RetroInputBindings.RIGHT_STICK, "R-Stick"));
         right.add("");
-        right.add("§6Система");
+        right.add(ModTexts.s("tv.hints.system"));
         right.add(line(ModKeys.BTN_START, "Start"));
         right.add(line(ModKeys.BTN_SELECT, "Select"));
-        right.add("§eF5§r — сохранить");
-        right.add("§eF6§r — загрузить");
-        right.add("§eF1§r — эта справка");
-        right.add("§eEsc§r — выход");
+        right.add(ModTexts.s("tv.hints.save"));
+        right.add(ModTexts.s("tv.hints.load"));
+        right.add(ModTexts.s("tv.hints.help"));
+        right.add(ModTexts.s("tv.hints.exit"));
 
         int colW1 = 0;
         int colW2 = 0;
@@ -239,7 +224,7 @@ public class TvScreen extends Screen {
         g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, 0xFF3C4250);
         g.fill(x, y, x + cardW, y + cardH, COL_PANEL_2);
 
-        g.drawString(font, "§e§lУПРАВЛЕНИЕ", x + pad, y + pad, 0xFFFFFF);
+        g.drawString(font, ModTexts.s("tv.hints.title"), x + pad, y + pad, 0xFFFFFF);
         int ty = y + pad + 14;
         for (int i = 0; i < left.size(); i++) {
             g.drawString(font, left.get(i), x + pad, ty + i * 12, 0xE0E0E0);
@@ -247,13 +232,13 @@ public class TvScreen extends Screen {
         for (int i = 0; i < right.size(); i++) {
             g.drawString(font, right.get(i), x + pad + colW1 + gap, ty + i * 12, 0xE0E0E0);
         }
-        g.drawString(font, "§8Клавиши меняются в Настройки → Управление. F1 или клик — закрыть",
+        g.drawString(font, ModTexts.s("tv.hints.footer"),
                 x + pad, y + cardH - 12 - 2, 0xFFFFFF);
         g.pose().popPose();
     }
 
     private static String line(KeyMapping key, String action) {
-        return "§e" + key.getTranslatedKeyMessage().getString() + "§r — " + action;
+        return ModTexts.s("tv.hint.bind", key.getTranslatedKeyMessage().getString(), action);
     }
 
     private static String stickLine(RetroInputBindings.StickBind stick, String label) {
@@ -262,16 +247,13 @@ public class TvScreen extends Screen {
 
     private static String keysLine(KeyMapping up, KeyMapping down, KeyMapping left, KeyMapping right,
                                    String label) {
-        return "§e" + up.getTranslatedKeyMessage().getString()
-                + "/" + down.getTranslatedKeyMessage().getString()
-                + "/" + left.getTranslatedKeyMessage().getString()
-                + "/" + right.getTranslatedKeyMessage().getString()
-                + "§r — " + label;
+        return ModTexts.s("tv.hint.sticks",
+                up.getTranslatedKeyMessage().getString(),
+                down.getTranslatedKeyMessage().getString(),
+                left.getTranslatedKeyMessage().getString(),
+                right.getTranslatedKeyMessage().getString(),
+                label);
     }
-
-    // ------------------------------------------------------------------
-    // Слайдер громкости
-    // ------------------------------------------------------------------
 
     private static class VolumeSlider extends AbstractSliderButton {
         VolumeSlider(int x, int y, int w, int h, double initial) {
@@ -281,25 +263,21 @@ public class TvScreen extends Screen {
 
         @Override
         protected void updateMessage() {
-            setMessage(Component.literal("Громкость: " + (int) Math.round(value * 100) + "%"));
+            setMessage(ModTexts.c("tv.volume", (int) Math.round(value * 100)));
         }
 
         @Override
         protected void applyValue() {
-            // Живое применение при перетаскивании; на диск не пишем.
+            // Apply live while dragging; do not persist to disk yet.
             ClientAudioHandler.setVolume((float) value);
         }
 
         @Override
         public void onRelease(double mouseX, double mouseY) {
             super.onRelease(mouseX, mouseY);
-            SoundPrefs.setVolume((float) value); // сохраняем один раз, при отпускании
+            SoundPrefs.setVolume((float) value); // persist once on release
         }
     }
-
-    // ------------------------------------------------------------------
-    // Жизненный цикл / статистика
-    // ------------------------------------------------------------------
 
     @Override
     public void tick() {
@@ -317,20 +295,15 @@ public class TvScreen extends Screen {
         if (!romId.isEmpty()) {
             PlayStats.addPlaytime(romId, (Util.getMillis() - lastFlush) / 1000);
             lastFlush = Util.getMillis();
-            // Миниатюра снимается ОДИН раз здесь, а не каждый кадр.
-            // removed() выполняется синхронно внутри setScreen — до того, как
-            // придёт stop-пакет и dispose() удалит ScreenEntry, так что
-            // peekScreen ещё видит последний кадр.
+            // Thumbnail is captured ONCE here, not every frame.
+            // removed() runs synchronously inside setScreen — before the stop packet
+            // arrives and dispose() removes ScreenEntry, so peekScreen still sees the last frame.
             ClientConsoles.ScreenEntry entry = ClientConsoles.peekScreen(consolePos);
             if (entry != null) snapshotThumb(entry);
             saveThumbnail();
         }
         super.removed();
     }
-
-    // ------------------------------------------------------------------
-    // Ввод
-    // ------------------------------------------------------------------
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
@@ -339,8 +312,8 @@ public class TvScreen extends Screen {
                 showHints = false;
                 return true;
             }
-            // БАГФИКС: раньше было minecraft.setScreen(null) — оно НЕ вызывает
-            // onClose(), и терялись автосейв, release-all и RetroViewPacket(false).
+            // BUGFIX: minecraft.setScreen(null) used to skip onClose(), losing
+            // autosave, release-all, and RetroViewPacket(false).
             this.onClose();
             return true;
         }
@@ -381,7 +354,7 @@ public class TvScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (super.mouseClicked(mouseX, mouseY, button)) return true; // кнопки панели работают и при открытой справке
+        if (super.mouseClicked(mouseX, mouseY, button)) return true; // bar buttons work even with help open
         if (showHints) {
             showHints = false;
             return true;
@@ -392,9 +365,9 @@ public class TvScreen extends Screen {
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         boolean handled = super.mouseReleased(mouseX, mouseY, button);
-        // БАГФИКС: после клика виджет остаётся сфокусированным, и Enter/Space
-        // «нажимали» бы кнопку вместо Start/игры. Сбрасываем фокус после отпускания
-        // (не в mouseClicked — иначе сломается перетаскивание слайдера).
+        // BUGFIX: after a click the widget stays focused and Enter/Space would
+        // activate the button instead of Start/game input. Clear focus on release
+        // (not in mouseClicked — that would break slider dragging).
         setFocused(null);
         return handled;
     }
@@ -422,7 +395,7 @@ public class TvScreen extends Screen {
         return 0;
     }
 
-    /** Один пакет со всеми осями — только при изменении состояния. */
+    /** One packet with all axes — only when stick state changes. */
     private void sendAnalogIfChanged() {
         short lx = stickToX(leftStick);
         short ly = stickToY(leftStick);
@@ -436,14 +409,10 @@ public class TvScreen extends Screen {
         PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, lx, ly, rx, ry));
     }
 
-    // ------------------------------------------------------------------
-    // Выключение и закрытие
-    // ------------------------------------------------------------------
-
     /**
-     * «Выкл»: остановить консоль на сервере и выйти в меню выбора игры.
-     * Автосейв делает сервер внутри ServerConsoles.stopEmulator(), поэтому
-     * RetroSaveStatePacket отсюда не шлём (Entry к его приходу уже нет).
+     * Power off: stop the server console and return to the game picker.
+     * Autosave is handled server-side in ServerConsoles.stopEmulator(), so we do
+     * not send RetroSaveStatePacket from here (the Entry is gone by then).
      */
     private void powerOffToMenu() {
         if (closed) return;
@@ -452,7 +421,7 @@ public class TvScreen extends Screen {
         sendAnalogZeros();
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
         PacketDistributor.sendToServer(new RetroPowerOffPacket(consolePos));
-        // setScreen вызовет removed(): playtime и тамбнейл сохранятся.
+        // setScreen triggers removed(): playtime and thumbnail are saved.
         Minecraft.getInstance().setScreen(new CoreSelectScreen(consolePos));
     }
 
@@ -480,10 +449,6 @@ public class TvScreen extends Screen {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Тамбнейлы
-    // ------------------------------------------------------------------
-
     private void snapshotThumb(ClientConsoles.ScreenEntry entry) {
         int[] abgr = entry.lastAbgr();
         if (abgr == null) return;
@@ -492,7 +457,7 @@ public class TvScreen extends Screen {
         if (w <= 0 || h <= 0 || abgr.length < w * h) return;
         thumbW = w;
         thumbH = h;
-        thumbPixels = abgr.clone(); // один раз при закрытии — не горячий путь
+        thumbPixels = abgr.clone(); // once on close — not a hot path
     }
 
     private void saveThumbnail() {
@@ -513,10 +478,6 @@ public class TvScreen extends Screen {
             TextureCache.invalidate(thumb);
         } catch (Exception ignored) {}
     }
-
-    // ------------------------------------------------------------------
-    // Утилиты
-    // ------------------------------------------------------------------
 
     private void blip(float pitch) {
         Minecraft.getInstance().getSoundManager().play(

@@ -6,7 +6,7 @@ import com.retroconsole.platform.RetroConsolePaths;
 
 import java.nio.file.Path;
 
-/** Клиентская обёртка: пишет PNG через {@link ArtFiles} и сбрасывает кэш текстур. */
+/** Client wrapper: writes PNGs via {@link ArtFiles} and invalidates the texture cache. */
 public final class ArtGenerator {
 
     private ArtGenerator() {}

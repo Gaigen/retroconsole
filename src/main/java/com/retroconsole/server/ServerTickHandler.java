@@ -34,9 +34,9 @@ public class ServerTickHandler {
     }
 
     /**
-     * ОПТИМИЗАЦИЯ: раньше метод принимал сырой кадр и вызывал
-     * RetroFramePacket.create (конвертация + deflate) на КАЖДОГО игрока.
-     * Теперь пакет собирается один раз в FrameSenderThread.sendVideoFrame.
+     * OPTIMIZATION: this method used to accept a raw frame and call
+     * RetroFramePacket.create (convert + deflate) for EVERY player.
+     * The packet is now built once in FrameSenderThread.sendVideoFrame.
      */
     public static void sendFrameToPlayer(ServerPlayer player, RetroFramePacket packet) {
         PacketDistributor.sendToPlayer(player, packet);

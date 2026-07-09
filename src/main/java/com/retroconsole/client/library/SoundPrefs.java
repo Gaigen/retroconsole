@@ -7,11 +7,11 @@ import java.util.Locale;
 import java.util.Properties;
 
 /**
- * Звуковые настройки игрока (пока только громкость консолей).
- * Хранится в players/<uuid>/sound.properties.
+ * Player sound settings (console volume only for now).
+ * Stored in players/<uuid>/sound.properties.
  *
- * ВАЖНО: отдельный файл, а не ui.properties — CoreSelectScreen.savePrefs()
- * пересобирает ui.properties с нуля и затёр бы чужие ключи.
+ * Separate file from ui.properties — CoreSelectScreen.savePrefs() rebuilds
+ * ui.properties from scratch and would wipe foreign keys.
  */
 public final class SoundPrefs {
 
@@ -28,7 +28,7 @@ public final class SoundPrefs {
 
     private static synchronized Properties props() {
         Path file = file();
-        if (!loaded || !file.equals(loadedFile)) { // перечитываем при смене игрока (см. PlayStats)
+        if (!loaded || !file.equals(loadedFile)) { // reload when player changes (see PlayStats)
             P.clear();
             RomLibrary.loadProps(P, file);
             loaded = true;
@@ -37,7 +37,7 @@ public final class SoundPrefs {
         return P;
     }
 
-    /** Громкость консолей 0..1. По умолчанию 1.0. */
+    /** Console volume 0..1. Default 1.0. */
     public static synchronized float volume() {
         try {
             float v = Float.parseFloat(props().getProperty("volume", "1.0"));

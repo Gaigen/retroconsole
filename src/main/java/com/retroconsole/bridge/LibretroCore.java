@@ -119,24 +119,24 @@ public abstract class LibretroCore implements AutoCloseable {
         return !isPcsx2Core() && getSerializeSize() > 0;
     }
 
-    /** До dst.length сэмплов interleaved-стерео 16-bit; возвращает число short'ов. */
+    /** Up to dst.length interleaved stereo 16-bit samples; returns number of shorts. */
     public int readAudio(short[] dst) { return readAudio(dst, dst.length); }
 
-    /** То же, но не более maxShorts сэмплов за вызов (для lockstep A/V). */
+    /** Same, but at most maxShorts samples per call (for lockstep A/V). */
     public int readAudio(short[] dst, int maxShorts) { return 0; }
 
-    /** Сэмплов interleaved-стерео 16-bit в буфере (для lockstep A/V). */
+    /** Interleaved stereo 16-bit samples in buffer (for lockstep A/V). */
     public int getAudioAvailable() { return 0; }
 
-    /** Частота PCM, Гц. */
+    /** PCM sample rate, Hz. */
     public double getAudioSampleRate() { return 48000.0; }
 
-    /** Точный FPS ядра — для пейсинга FrameSender. */
+    /** Exact core FPS — for FrameSender pacing. */
     public double getTimingFps() { return 60.0; }
 
     /**
-     * PCSX2 отдаёт весь PCM одним batch в конце retro_run — аудио и видео
-     * нужно слать вместе. Остальные ядра (PSP, PS1, …) — потоковый звук.
+     * PCSX2 delivers all PCM in one batch at end of retro_run — audio and video
+     * must be sent together. Other cores (PSP, PS1, …) stream audio.
      */
     public boolean prefersAvLockstep() { return false; }
 

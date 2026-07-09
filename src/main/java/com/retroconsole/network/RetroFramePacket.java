@@ -15,16 +15,14 @@ import java.util.zip.Inflater;
  * Packet sent from server to client carrying a compressed emulator frame.
  * The frame is stored as compressed RGB bytes (3 bytes per pixel, no alpha).
  *
- * <p>БАГФИКС (утечка нативной памяти): раньше на каждый кадр создавались
- * new Deflater()/new Inflater() и НИКОГДА не вызывался end().
- * DeflaterOutputStream.close() не освобождает ВНЕШНИЙ deflater, а финализация
- * у них ленивая — при 60 fps нативная память росла, и в heap-дампе этого не
- * видно. Теперь: один Deflater/Inflater на поток (ThreadLocal) + reset()
- * между кадрами. То же с временными byte[]-буферами.
+ * <p>BUGFIX (native memory leak): previously each frame created new Deflater()/Inflater()
+ * without ever calling end(). DeflaterOutputStream.close() does not release the external
+ * deflater, and finalization is lazy — at 60 fps native memory grew without showing in
+ * heap dumps. Now: one Deflater/Inflater per thread (ThreadLocal) + reset() between frames.
+ * Same for temporary byte[] buffers.
  *
- * <p>ОПТИМИЗАЦИЯ: distribute-декомпрессия выдаёт сразу ABGR (формат GL RGBA
- * little-endian) — второй попиксельный проход в ClientConsoles.submitFrame
- * больше не нужен.
+ * <p>OPTIMIZATION: decompression outputs ABGR directly (GL RGBA little-endian) — no second
+ * per-pixel pass in ClientConsoles.submitFrame.
  */
 public record RetroFramePacket(
         BlockPos pos,
@@ -35,14 +33,14 @@ public record RetroFramePacket(
 
     public static final Type<RetroFramePacket> TYPE = RetroPackets.type("frame");
 
-    /** Санити-предел: кадров больше 4K не бывает, всё прочее — мусор в пакете. */
+    /** Sanity cap: frames larger than 4K are invalid packet data. */
     private static final int MAX_DIM = 4096;
 
     private static final ThreadLocal<Deflater> DEFLATER =
             ThreadLocal.withInitial(() -> new Deflater(Deflater.BEST_SPEED));
     private static final ThreadLocal<Inflater> INFLATER =
             ThreadLocal.withInitial(Inflater::new);
-    /** RGB-буфер на поток: FrameSender сжимает, network thread распаковывает — не пересекаются. */
+    /** Per-thread RGB buffer: FrameSender compresses, network thread decompresses — no overlap. */
     private static final ThreadLocal<byte[]> RGB_BUF =
             ThreadLocal.withInitial(() -> new byte[0]);
     private static final ThreadLocal<byte[]> CHUNK =
@@ -59,8 +57,8 @@ public record RetroFramePacket(
                         throw new DecoderException("Bad frame size " + width + "x" + height);
                     }
                     int length = buf.readVarInt();
-                    // БАГФИКС: раньше new byte[length] без проверки — злонамеренный
-                    // или битый пакет мог заказать гигабайтную аллокацию.
+                    // BUGFIX: previously new byte[length] without bounds — malicious or corrupt
+                    // packets could request gigabyte allocations.
                     long max = (long) width * height * 3 + 1024;
                     if (length < 0 || length > max || length > buf.readableBytes()) {
                         throw new DecoderException("Bad frame payload length " + length);
@@ -107,10 +105,9 @@ public record RetroFramePacket(
     }
 
     /**
-     * Распаковать кадр сразу в ABGR (GL RGBA little-endian) для ClientConsoles.
-     * Возвращает null при ошибке. Недостающие пиксели (смена разрешения
-     * в полёте) заполняются непрозрачным чёрным. Inflate жёстко ограничен
-     * ожидаемым размером кадра — «zip-бомба» не раздуется.
+     * Decompress frame straight to ABGR (GL RGBA little-endian) for ClientConsoles.
+     * Returns null on error. Missing pixels (mid-flight resolution change) are filled
+     * opaque black. Inflate is capped at the expected frame size — no zip-bomb expansion.
      */
     public int[] decompressFrameAbgr() {
         int pixelCount = width * height;
@@ -125,7 +122,7 @@ public record RetroFramePacket(
         try {
             while (got < expected && !inflater.finished()) {
                 int n = inflater.inflate(rgb, got, expected - got);
-                if (n == 0) break; // needsInput / battered stream — обрезанный кадр
+                if (n == 0) break; // needsInput / truncated stream
                 got += n;
             }
         } catch (DataFormatException e) {

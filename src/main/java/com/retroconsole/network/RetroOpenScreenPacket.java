@@ -6,7 +6,7 @@ import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
-/** S2C: открыть GUI телевизора (пустой romId = меню выбора игры). */
+/** S2C: open the TV GUI (empty romId = game picker menu). */
 public record RetroOpenScreenPacket(BlockPos pos, String romId) implements CustomPacketPayload {
 
     public static final Type<RetroOpenScreenPacket> TYPE = RetroPackets.type("open_screen");
