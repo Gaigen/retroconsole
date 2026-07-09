@@ -34,7 +34,6 @@ public class CoreSelectScreen extends Screen {
 
     private enum View { CARDS, LIST, MANUAL }
 
-    private static final Path ART_DIR = ArtGenerator.ART_DIR;
     private static final int ITEM_H = 16;
     private static final int CARD_H = 88;
 
@@ -138,7 +137,9 @@ public class CoreSelectScreen extends Screen {
     /** Вызывается из ClientPacketHandlers при получении каталога с сервера. */
     public void onServerLibraryReceived(RetroLibraryPacket pkt) {
         if (!pkt.consolePos().equals(consolePos)) return;
+        if (!libraryLoading) return;
         lib.loadFromNetwork(pkt);
+        ClientPlayStatsCache.apply(pkt.playerStats());
         libraryLoading = false;
         onLibraryReady();
     }
@@ -158,7 +159,9 @@ public class CoreSelectScreen extends Screen {
         heroRom = heroId == null ? null
                 : lib.roms.stream().filter(r -> r.id().equals(heroId)).findFirst().orElse(null);
         if (heroRom != null) TextureCache.invalidate(SaveStates.thumbFor(heroRom.id()));
-        for (GameSystem s : tabs) ArtGenerator.ensure(s);
+        if (!serverLibrary) {
+            for (GameSystem s : tabs) ArtGenerator.ensure(s);
+        }
         refreshShown();
     }
 
@@ -486,7 +489,9 @@ public class CoreSelectScreen extends Screen {
             int y = top + (i / cols) * (CARD_H + 8) - (int) scrollCards;
             if (y + CARD_H < top - 4 || y > height) continue;
             int artH = CARD_H - 26;
-            TextureCache.Tex art = TextureCache.get(ART_DIR.resolve(s.folder + ".png"));
+            TextureCache.Tex art = serverLibrary
+                    ? ClientArtCache.get(s.folder)
+                    : TextureCache.get(ArtGenerator.artDir().resolve(s.folder + ".png"));
             if (art != null) {
                 g.blit(art.location(), x, y, cw, artH, 0f, 0f,
                         art.width(), art.height(), art.width(), art.height());
@@ -654,7 +659,17 @@ public class CoreSelectScreen extends Screen {
         g.pose().pushPose();
         g.pose().translate(0, 0, 400);
         g.fill(0, 0, width, height, 0xB0000000);
-        String[] lines = {
+        String[] lines = serverLibrary ? new String[]{
+                "§e§lСПРАВКА", "",
+                "§6Каталог§r — с диска сервера (roms/, cores/,",
+                "systems.json, art/*.png). Клиентские ROM",
+                "и локальные обложки не используются.", "",
+                "§6Ядро§r подбирается автоматически; если нет —",
+                "кнопка «Ядро…» (выбор хранится локально).", "",
+                "§6Управление§r — ↑↓ выбор, Enter — запуск,",
+                "ПКМ — избранное ★ (локально у вас).", "",
+                "§8Клик или Esc — закрыть",
+        } : new String[]{
                 "§e§lСПРАВКА", "",
                 "§6Игры§r — в config/retroconsole/roms",
                 "Можно по папкам (nes, ps2, dreamcast…) — своя",

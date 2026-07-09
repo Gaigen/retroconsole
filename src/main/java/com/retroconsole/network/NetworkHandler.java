@@ -3,8 +3,13 @@ package com.retroconsole.network;
 import com.retroconsole.RetroConsole;
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.client.ClientPacketHandlers;
+import com.retroconsole.library.ArtFiles;
+import com.retroconsole.library.GameSystem;
 import com.retroconsole.library.RomLibrary;
+import com.retroconsole.platform.RetroConsolePaths;
+import com.retroconsole.server.ServerArt;
 import com.retroconsole.server.ServerConsoles;
+import com.retroconsole.server.ServerPlayStats;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -14,6 +19,8 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.Consumer;
 
 @EventBusSubscriber(modid = RetroConsole.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
@@ -45,6 +52,8 @@ public final class NetworkHandler {
                 (pkt, ctx) -> ClientPacketHandlers.handleOpenScreen(pkt, ctx));
         r.playToClient(RetroLibraryPacket.TYPE, RetroLibraryPacket.STREAM_CODEC,
                 (pkt, ctx) -> ClientPacketHandlers.handleLibrary(pkt, ctx));
+        r.playToClient(RetroArtPacket.TYPE, RetroArtPacket.STREAM_CODEC,
+                (pkt, ctx) -> ClientPacketHandlers.handleArt(pkt, ctx));
 
         // Server-bound
         r.playToServer(RetroInputPacket.TYPE, RetroInputPacket.STREAM_CODEC,
@@ -141,8 +150,19 @@ public final class NetworkHandler {
                     instanceof RetroConsoleBlockEntity)) return;
             RomLibrary lib = new RomLibrary();
             lib.scan();
-            PacketDistributor.sendToPlayer(player,
-                    RetroLibraryPacket.from(pkt.consolePos(), lib));
+            ArtFiles.ensureForSystems(RetroConsolePaths.artDir(), GameSystem.all());
+            var stats = ServerPlayStats.exportFor(player.getUUID());
+            RetroLibraryPacket library = RetroLibraryPacket.from(pkt.consolePos(), lib, stats);
+            PacketDistributor.sendToPlayer(player, library);
+
+            Set<String> folders = new HashSet<>();
+            for (RetroLibraryPacket.SystemEntry s : library.systems()) {
+                folders.add(s.folder());
+            }
+            var images = ServerArt.loadForFolders(folders);
+            if (!images.isEmpty()) {
+                PacketDistributor.sendToPlayer(player, new RetroArtPacket(pkt.consolePos(), images));
+            }
         });
     }
 

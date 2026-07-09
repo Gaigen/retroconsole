@@ -1,11 +1,13 @@
 package com.retroconsole.client.library;
 
+import com.retroconsole.client.ClientLibraryCache;
+import com.retroconsole.client.ClientPlayStatsCache;
 import com.retroconsole.library.RomLibrary;
 
 import java.nio.file.Path;
 import java.util.Properties;
 
-/** Личная статистика игрока: наиграно, запуски, избранное. Хранится локально у клиента. */
+/** Личная статистика игрока: наиграно, запуски, избранное. */
 public final class PlayStats {
 
     private static final Properties P = new Properties();
@@ -30,9 +32,24 @@ public final class PlayStats {
         RomLibrary.saveProps(props(), ClientPlayerData.statsFile(), "retroconsole play stats");
     }
 
-    public static long playtimeSec(String romId) { return getLong(romId + ".playtime"); }
-    public static int launches(String romId)     { return (int) getLong(romId + ".launches"); }
-    public static long lastPlayed(String romId)  { return getLong(romId + ".lastPlayed"); }
+    private static boolean useServer() {
+        return ClientLibraryCache.useServerLibrary();
+    }
+
+    public static long playtimeSec(String romId) {
+        return useServer() ? ClientPlayStatsCache.playtimeSec(romId)
+                : getLong(romId + ".playtime");
+    }
+
+    public static int launches(String romId) {
+        return useServer() ? ClientPlayStatsCache.launches(romId)
+                : (int) getLong(romId + ".launches");
+    }
+
+    public static long lastPlayed(String romId) {
+        return useServer() ? ClientPlayStatsCache.lastPlayed(romId)
+                : getLong(romId + ".lastPlayed");
+    }
     public static boolean favorite(String romId) { return "1".equals(props().getProperty(romId + ".fav")); }
 
     public static void toggleFavorite(String romId) {
@@ -42,12 +59,14 @@ public final class PlayStats {
     }
 
     public static void onLaunch(String romId) {
+        if (useServer()) return;
         props().setProperty(romId + ".launches", String.valueOf(launches(romId) + 1));
         props().setProperty(romId + ".lastPlayed", String.valueOf(System.currentTimeMillis() / 1000));
         save();
     }
 
     public static void addPlaytime(String romId, long seconds) {
+        if (useServer()) return;
         if (seconds <= 0) return;
         props().setProperty(romId + ".playtime", String.valueOf(playtimeSec(romId) + seconds));
         save();
@@ -55,6 +74,7 @@ public final class PlayStats {
 
     /** id последней запускавшейся игры или null. */
     public static String lastPlayedRomId() {
+        if (useServer()) return ClientPlayStatsCache.lastPlayedRomId();
         String best = null;
         long bestT = 0;
         for (String key : props().stringPropertyNames())

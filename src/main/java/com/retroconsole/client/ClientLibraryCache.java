@@ -26,6 +26,8 @@ public final class ClientLibraryCache {
     public static void request(BlockPos consolePos) {
         BlockPos key = consolePos.immutable();
         READY.remove(key);
+        ClientPlayStatsCache.clear();
+        ClientArtCache.clear();
         PacketDistributor.sendToServer(new RetroLibraryRequestPacket(key));
     }
 

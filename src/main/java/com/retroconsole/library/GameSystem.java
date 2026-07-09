@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retroconsole.network.RetroLibraryPacket;
 import com.retroconsole.platform.RetroConsolePaths;
 
 import java.io.Reader;
@@ -67,6 +68,34 @@ public final class GameSystem {
 
     public static synchronized void reload() {
         REGISTRY.clear();
+        registerBuiltins();
+        loadJson();
+        finishRegistry();
+    }
+
+    /** Каталог с dedicated server: встроенные системы + метаданные с сервера (без client systems.json). */
+    public static synchronized void applyServerCatalog(List<RetroLibraryPacket.SystemEntry> entries) {
+        REGISTRY.clear();
+        registerBuiltins();
+        for (RetroLibraryPacket.SystemEntry e : entries) {
+            if (isBuiltinId(e.id())) continue;
+            REGISTRY.removeIf(s -> s.id.equalsIgnoreCase(e.id()));
+            REGISTRY.add(fromEntry(e));
+        }
+        finishRegistry();
+    }
+
+    static GameSystem fromEntry(RetroLibraryPacket.SystemEntry e) {
+        return new GameSystem(e.id(), e.badge(), e.tab(), e.fullName(), e.folder(),
+                e.color(), e.exts(), e.coreHints(), e.custom());
+    }
+
+    public static RetroLibraryPacket.SystemEntry toEntry(GameSystem s) {
+        return new RetroLibraryPacket.SystemEntry(s.id, s.badge, s.tab, s.fullName, s.folder,
+                s.color, s.exts, s.coreHints, s.custom);
+    }
+
+    private static void registerBuiltins() {
         builtin("NES", "NES", "NES", "Nintendo NES", "nes", 0xFFE05050,
                 List.of(".nes"), List.of("fceumm", "nestopia", "mesen", "quicknes"));
         builtin("SNES", "SNES", "SNES", "Super Nintendo", "snes", 0xFF9070E0,
@@ -91,10 +120,18 @@ public final class GameSystem {
                 List.of(), List.of("genesis_plus_gx", "picodrive"));
         builtin("SATURN", "SAT", "Saturn", "Sega Saturn", "saturn", 0xFF7858B0,
                 List.of(), List.of("mednafen_saturn", "beetle_saturn", "kronos", "yabause"));
-        loadJson();
+    }
+
+    private static void finishRegistry() {
         OTHER = new GameSystem("OTHER", "?", "Другое", "Неопознанные", "other",
                 0xFF808080, List.of(), List.of(), false);
         REGISTRY.add(OTHER);
+    }
+
+    private static boolean isBuiltinId(String id) {
+        if (id == null) return false;
+        for (GameSystem s : REGISTRY) if (!s.custom && s.id.equalsIgnoreCase(id)) return true;
+        return false;
     }
 
     private static void builtin(String id, String badge, String tab, String full, String folder,
