@@ -286,7 +286,7 @@ public final class RomLibrary {
 
     /** Заполнить каталог из S2C-пакета (мультиплеер / dedicated server). */
     public void loadFromNetwork(RetroLibraryPacket pkt) {
-        GameSystem.reload();
+        GameSystem.applyServerCatalog(pkt.systems());
         cores.clear();
         roms.clear();
         for (RetroLibraryPacket.CoreEntry c : pkt.cores()) {

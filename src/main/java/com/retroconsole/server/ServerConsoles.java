@@ -58,7 +58,8 @@ public class ServerConsoles {
             int[] buf,
             String coreName,
             String romId,
-            UUID ownerId
+            UUID ownerId,
+            long startedAtMillis
     ) {}
 
     public static void init() {
@@ -127,8 +128,12 @@ public class ServerConsoles {
         FrameSenderThread sender = new FrameSenderThread(pos, threaded, runtime);
         sender.start();
 
-        ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId, ownerId));
+        ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId, ownerId,
+                System.currentTimeMillis()));
         FRAME_SENDERS.put(pos, sender);
+        if (ownerId != null) {
+            ServerPlayStats.onLaunch(ownerId, romId);
+        }
         LOGGER.info("Started {} emulator at {} ({}x{}, owner={}, loadAuto={})",
                 coreName, pos, w, h, ownerId, loadAuto);
     }
@@ -144,6 +149,10 @@ public class ServerConsoles {
         if (sender != null) sender.stopAndJoin();
         if (e != null) {
             LOGGER.info("stopEmulator({}): core={}, rom={}", pos, e.coreName(), e.romId());
+            if (e.ownerId() != null) {
+                long sec = Math.max(0, (System.currentTimeMillis() - e.startedAtMillis()) / 1000);
+                ServerPlayStats.addPlaytime(e.ownerId(), e.romId(), sec);
+            }
             e.threaded().stop();
             boolean saved = SaveStateManager.saveAuto(
                     e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
@@ -286,6 +295,10 @@ public class ServerConsoles {
         VIEWERS.clear();
         List<LibretroRuntime> runtimes = new ArrayList<>(entries.size());
         for (Entry e : entries) {
+            if (e.ownerId() != null) {
+                long sec = Math.max(0, (System.currentTimeMillis() - e.startedAtMillis()) / 1000);
+                ServerPlayStats.addPlaytime(e.ownerId(), e.romId(), sec);
+            }
             e.threaded().stop();
             boolean saved = SaveStateManager.saveAuto(
                     e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());

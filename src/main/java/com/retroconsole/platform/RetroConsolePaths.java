@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -58,6 +59,11 @@ public final class RetroConsolePaths {
 
     private static final Map<String, Path> CACHE = new ConcurrentHashMap<>();
 
+    /** Подпапки roms/ для встроенных систем — создаём при старте, чтобы было куда класть игры. */
+    private static final List<String> DEFAULT_ROM_FOLDERS = List.of(
+            "nes", "snes", "gb", "gba", "genesis", "sms",
+            "ps1", "ps2", "psp", "dreamcast", "segacd", "saturn");
+
     public static Path coresDir() {
         return ensureDir("cores", ModConfig.CORES_DIR.get());
     }
@@ -72,6 +78,22 @@ public final class RetroConsolePaths {
 
     public static Path saveDir() {
         return ensureDir("saves", ModConfig.SAVE_DIR.get());
+    }
+
+    /** Обложки карточек консолей в меню: config/retroconsole/art/{folder}.png */
+    public static Path artDir() {
+        return ensureDir("art", "config/retroconsole/art");
+    }
+
+    /** Per-player сейвы и серверная статистика: saves/players/{uuid}/ */
+    public static Path playersSaveDir() {
+        Path p = saveDir().resolve("players").toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(p);
+        } catch (Exception ex) {
+            LOGGER.error("Failed to create players save directory at {}: {}", p, ex.getMessage());
+        }
+        return p;
     }
 
     /** PCSX2 needs its BIOS under {@code system/pcsx2/bios} — see
@@ -122,8 +144,30 @@ public final class RetroConsolePaths {
 
     /** One-shot: make sure every RetroConsole-controlled directory exists. */
     public static void ensureAllExist() {
-        coresDir(); romsDir(); systemDir(); saveDir(); pcsx2BiosDir(); pcsx2MemcardsDir(); dreamcastDir();
+        coresDir();
+        romsDir();
+        artDir();
+        systemDir();
+        saveDir();
+        playersSaveDir();
+        ensureDefaultRomFolders();
+        pcsx2BiosDir();
+        pcsx2MemcardsDir();
+        dreamcastDir();
         logPathsSummary();
+    }
+
+    private static void ensureDefaultRomFolders() {
+        Path roms = romsDir();
+        for (String folder : DEFAULT_ROM_FOLDERS) {
+            Path p = roms.resolve(folder).toAbsolutePath().normalize();
+            if (!p.startsWith(roms.toAbsolutePath().normalize())) continue;
+            try {
+                Files.createDirectories(p);
+            } catch (Exception ex) {
+                LOGGER.warn("Failed to create roms/{}: {}", folder, ex.getMessage());
+            }
+        }
     }
 
     /** Print a one-line summary of the resolved paths. Safe to call once ModConfig
@@ -135,8 +179,10 @@ public final class RetroConsolePaths {
             LOGGER.info("RetroConsole paths:");
             LOGGER.info("  cores      -> {}", coresDir().toAbsolutePath().normalize());
             LOGGER.info("  roms       -> {}", romsDir().toAbsolutePath().normalize());
+            LOGGER.info("  art        -> {}", artDir().toAbsolutePath().normalize());
             LOGGER.info("  system     -> {}", systemDir().toAbsolutePath().normalize());
             LOGGER.info("  saves      -> {}", saveDir().toAbsolutePath().normalize());
+            LOGGER.info("  players    -> {} (per-player saves + playstats)", playersSaveDir().toAbsolutePath().normalize());
             LOGGER.info("  pcsx2/bios -> {}", pcsx2BiosDir().toAbsolutePath().normalize());
             LOGGER.info("  pcsx2/mcd  -> {} (PS2 memory cards)", pcsx2MemcardsDir().toAbsolutePath().normalize());
             LOGGER.info("  dc/        -> {} (Dreamcast BIOS / shared VMU)", dreamcastDir().toAbsolutePath().normalize());

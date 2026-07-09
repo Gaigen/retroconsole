@@ -1,5 +1,6 @@
 package com.retroconsole.client;
 
+import com.retroconsole.network.RetroArtPacket;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
 import com.retroconsole.network.RetroLibraryPacket;
@@ -56,7 +57,17 @@ public final class ClientPacketHandlers {
         });
     }
 
+    public static void handleArt(RetroArtPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> ClientArtCache.apply(pkt));
+    }
+
     public static void handleLibrary(RetroLibraryPacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> ClientLibraryCache.onReceived(pkt));
+        ctx.enqueueWork(() -> {
+            ClientLibraryCache.onReceived(pkt);
+            if (Minecraft.getInstance().screen instanceof CoreSelectScreen screen
+                    && screen.consolePos().equals(pkt.consolePos())) {
+                screen.onServerLibraryReceived(pkt);
+            }
+        });
     }
 }
