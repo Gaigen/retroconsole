@@ -1,5 +1,7 @@
 package com.retroconsole.client.library;
 
+import com.retroconsole.library.RomLibrary;
+
 import java.nio.file.Path;
 import java.util.Properties;
 

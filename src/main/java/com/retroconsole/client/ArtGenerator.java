@@ -1,7 +1,7 @@
 package com.retroconsole.client;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.retroconsole.client.library.GameSystem;
+import com.retroconsole.library.GameSystem;
 import net.minecraft.util.FastColor;
 
 import java.nio.file.Files;

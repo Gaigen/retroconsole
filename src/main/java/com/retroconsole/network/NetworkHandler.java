@@ -3,11 +3,13 @@ package com.retroconsole.network;
 import com.retroconsole.RetroConsole;
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.client.ClientPacketHandlers;
+import com.retroconsole.library.RomLibrary;
 import com.retroconsole.server.ServerConsoles;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
@@ -41,6 +43,8 @@ public final class NetworkHandler {
                 (pkt, ctx) -> ClientPacketHandlers.handleStopConsole(pkt, ctx));
         r.playToClient(RetroOpenScreenPacket.TYPE, RetroOpenScreenPacket.STREAM_CODEC,
                 (pkt, ctx) -> ClientPacketHandlers.handleOpenScreen(pkt, ctx));
+        r.playToClient(RetroLibraryPacket.TYPE, RetroLibraryPacket.STREAM_CODEC,
+                (pkt, ctx) -> ClientPacketHandlers.handleLibrary(pkt, ctx));
 
         // Server-bound
         r.playToServer(RetroInputPacket.TYPE, RetroInputPacket.STREAM_CODEC,
@@ -55,6 +59,8 @@ public final class NetworkHandler {
                 NetworkHandler::handleSaveState);
         r.playToServer(RetroPowerOffPacket.TYPE, RetroPowerOffPacket.STREAM_CODEC,
                 NetworkHandler::handlePowerOff);
+        r.playToServer(RetroLibraryRequestPacket.TYPE, RetroLibraryRequestPacket.STREAM_CODEC,
+                NetworkHandler::handleLibraryRequest);
     }
 
     // --- Server-bound handlers ---
@@ -124,6 +130,20 @@ public final class NetworkHandler {
     private static void handlePowerOff(RetroPowerOffPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
                 RetroConsoleBlockEntity::powerOff));
+    }
+
+    /** Клиент открыл меню выбора игры — отдаём каталог с диска сервера. */
+    private static void handleLibraryRequest(RetroLibraryRequestPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer player)) return;
+            if (!isNear(player, pkt.consolePos(), CONTROL_DISTANCE_SQ)) return;
+            if (!(player.level().getBlockEntity(pkt.consolePos())
+                    instanceof RetroConsoleBlockEntity)) return;
+            RomLibrary lib = new RomLibrary();
+            lib.scan();
+            PacketDistributor.sendToPlayer(player,
+                    RetroLibraryPacket.from(pkt.consolePos(), lib));
+        });
     }
 
     // --- Общий анти-чит для управляющих пакетов ---

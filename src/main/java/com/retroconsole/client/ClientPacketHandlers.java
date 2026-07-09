@@ -2,6 +2,7 @@ package com.retroconsole.client;
 
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
+import com.retroconsole.network.RetroLibraryPacket;
 import com.retroconsole.network.RetroOpenScreenPacket;
 import com.retroconsole.network.RetroStopConsolePacket;
 import net.minecraft.client.Minecraft;
@@ -53,5 +54,9 @@ public final class ClientPacketHandlers {
                 Minecraft.getInstance().setScreen(new TvScreen(pkt.pos(), pkt.romId()));
             }
         });
+    }
+
+    public static void handleLibrary(RetroLibraryPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> ClientLibraryCache.onReceived(pkt));
     }
 }

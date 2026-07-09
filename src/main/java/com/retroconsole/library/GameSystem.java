@@ -1,17 +1,17 @@
-package com.retroconsole.client.library;
+package com.retroconsole.library;
 
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.retroconsole.platform.RetroConsolePaths;
 
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -25,15 +25,15 @@ import java.util.Set;
  */
 public final class GameSystem {
 
-    public final String id;          // стабильный ключ (кэши, настройки)
-    public final String badge;       // короткий бейдж в строке (GEN)
-    public final String tab;         // читаемое имя вкладки (Genesis)
-    public final String fullName;    // полное имя (Sega Genesis / Mega Drive)
-    public final String folder;      // подпапка в roms/
+    public final String id;
+    public final String badge;
+    public final String tab;
+    public final String fullName;
+    public final String folder;
     public final int color;
-    public final List<String> exts;      // однозначные расширения
-    public final List<String> coreHints; // приоритетные ядра
-    public final boolean custom;         // из json или из папки
+    public final List<String> exts;
+    public final List<String> coreHints;
+    public final boolean custom;
 
     private GameSystem(String id, String badge, String tab, String fullName, String folder,
                        int color, List<String> exts, List<String> coreHints, boolean custom) {
@@ -42,10 +42,6 @@ public final class GameSystem {
         this.coreHints = coreHints; this.custom = custom;
     }
 
-    // ---------- реестр ----------
-
-    private static final Path CONFIG = Paths.get("config/retroconsole/systems.json");
-    private static final Path ROMS_DIR = Paths.get("config/retroconsole/roms");
     private static final List<GameSystem> REGISTRY = new ArrayList<>();
     public static GameSystem OTHER;
 
@@ -55,6 +51,14 @@ public final class GameSystem {
 
     private static final int[] PALETTE = {0xFFE05050, 0xFF50B060, 0xFF4880D8, 0xFFD09040,
             0xFF9070E0, 0xFF38A8A0, 0xFFC85880, 0xFF88A040};
+
+    private static Path configFile() {
+        return RetroConsolePaths.romsDir().getParent().resolve("systems.json");
+    }
+
+    private static Path romsDir() {
+        return RetroConsolePaths.romsDir();
+    }
 
     public static synchronized List<GameSystem> all() {
         if (REGISTRY.isEmpty()) reload();
@@ -90,7 +94,7 @@ public final class GameSystem {
         loadJson();
         OTHER = new GameSystem("OTHER", "?", "Другое", "Неопознанные", "other",
                 0xFF808080, List.of(), List.of(), false);
-        REGISTRY.add(OTHER);   // «Другое» всегда последняя
+        REGISTRY.add(OTHER);
     }
 
     private static void builtin(String id, String badge, String tab, String full, String folder,
@@ -98,12 +102,11 @@ public final class GameSystem {
         REGISTRY.add(new GameSystem(id, badge, tab, full, folder, color, exts, hints, false));
     }
 
-    /** systems.json: [{"id":"atari2600","name":"Atari 2600","badge":"A26",
-     *  "exts":[".a26"],"cores":["stella"],"color":"#D08030"}] */
     private static void loadJson() {
         ensureJsonFile();
-        if (!Files.exists(CONFIG)) return;
-        try (Reader r = Files.newBufferedReader(CONFIG, StandardCharsets.UTF_8)) {
+        Path config = configFile();
+        if (!Files.exists(config)) return;
+        try (Reader r = Files.newBufferedReader(config, StandardCharsets.UTF_8)) {
             for (JsonElement el : JsonParser.parseReader(r).getAsJsonArray()) {
                 JsonObject o = el.getAsJsonObject();
                 String id = o.get("id").getAsString().toLowerCase(Locale.ROOT);
@@ -121,15 +124,16 @@ public final class GameSystem {
         } catch (Exception ignored) {}
     }
 
-    /** Создаёт systems.json при первом запуске: подпапки roms/ + пример. */
     private static void ensureJsonFile() {
-        if (Files.exists(CONFIG)) return;
+        Path config = configFile();
+        if (Files.exists(config)) return;
         try {
-            Files.createDirectories(CONFIG.getParent());
+            Files.createDirectories(config.getParent());
             JsonArray arr = new JsonArray();
             Set<String> seen = new HashSet<>();
-            if (Files.isDirectory(ROMS_DIR)) {
-                try (var stream = Files.newDirectoryStream(ROMS_DIR)) {
+            Path roms = romsDir();
+            if (Files.isDirectory(roms)) {
+                try (var stream = Files.newDirectoryStream(roms)) {
                     for (Path dir : stream) {
                         if (!Files.isDirectory(dir)) continue;
                         String folder = dir.getFileName().toString();
@@ -145,13 +149,13 @@ public final class GameSystem {
         } catch (Exception ignored) {}
     }
 
-    /** Дописывает новую папочную систему в systems.json. */
     private static void persistFolderSystem(GameSystem sys) {
         if (!sys.custom) return;
         try {
+            Path config = configFile();
             JsonArray arr;
-            if (Files.exists(CONFIG)) {
-                try (Reader r = Files.newBufferedReader(CONFIG, StandardCharsets.UTF_8)) {
+            if (Files.exists(config)) {
+                try (Reader r = Files.newBufferedReader(config, StandardCharsets.UTF_8)) {
                     arr = JsonParser.parseReader(r).getAsJsonArray();
                 }
             } else {
@@ -206,7 +210,7 @@ public final class GameSystem {
     }
 
     private static void writeJson(JsonArray arr) throws java.io.IOException {
-        try (Writer w = Files.newBufferedWriter(CONFIG, StandardCharsets.UTF_8)) {
+        try (Writer w = Files.newBufferedWriter(configFile(), StandardCharsets.UTF_8)) {
             new GsonBuilder().setPrettyPrinting().create().toJson(arr, w);
         }
     }
@@ -223,8 +227,6 @@ public final class GameSystem {
         return PALETTE[Math.abs(name.hashCode()) % PALETTE.length];
     }
 
-    // ---------- поиск ----------
-
     public static GameSystem byId(String id) {
         if (id == null) return null;
         for (GameSystem s : all()) if (s.id.equalsIgnoreCase(id)) return s;
@@ -238,7 +240,6 @@ public final class GameSystem {
         return null;
     }
 
-    /** Папка = вкладка: неизвестная подпапка roms/ становится своей системой. */
     public static synchronized GameSystem forFolder(String rawFolder) {
         GameSystem existing = byFolder(rawFolder);
         if (existing != null) return existing;
@@ -253,7 +254,6 @@ public final class GameSystem {
         return sys;
     }
 
-    /** Система по расширению — только если оно однозначно. */
     public static GameSystem byExt(String ext) {
         GameSystem found = null;
         for (GameSystem s : all())
