@@ -314,15 +314,36 @@ static void *s_rem_fn = NULL;   static BYTE s_rem_orig[14];
 static CRITICAL_SECTION s_veh_cs;
 static int   s_veh_hooked = 0;
 
-typedef struct { PVECTORED_EXCEPTION_HANDLER h; int used; } fly_entry;
+/* Per Flycast session: handler + owning module + nvmem ranges.
+ * core_* = tight BASE..ARAM (handler pick — must NOT overlap across sessions).
+ * route_* = expanded with DC mirrors (lo-=0x81000000) for should_route only. */
+typedef struct {
+    PVECTORED_EXCEPTION_HANDLER h;
+    HMODULE mod;
+    ULONG_PTR core_lo, core_hi;
+    ULONG_PTR route_lo, route_hi;
+    int used;
+} fly_entry;
 static fly_entry s_fly[8];
 static PVOID s_dispatcher = NULL;
 static int   s_dispatch_log_left = 5;
-static ULONG_PTR s_nvmem_lo = 0;
-static ULONG_PTR s_nvmem_hi = 0;
+/* Thread that last registered an isolated VEH — ties log bounds to a slot. */
+static HLG_TLS int t_fly_slot = -1;
+/* BASE may log before AddVEH on this thread — apply on register. */
+static HLG_TLS ULONG_PTR t_pending_core_lo = 0, t_pending_core_hi = 0;
+static HLG_TLS ULONG_PTR t_pending_route_lo = 0, t_pending_route_hi = 0;
 
 static PVOID WINAPI hook_AddVEH(ULONG First, PVECTORED_EXCEPTION_HANDLER Handler);
 static ULONG WINAPI hook_RemoveVEH(PVOID Handle);
+
+static HMODULE module_of(void *p)
+{
+    HMODULE hm = NULL;
+    if (!p) return NULL;
+    GetModuleHandleExA(0x4 /*FROM_ADDRESS*/ | 0x2 /*UNCHANGED_REFCOUNT*/,
+                       (LPCSTR)p, &hm);
+    return hm;
+}
 
 static LPTOP_LEVEL_EXCEPTION_FILTER peek_uef(void)
 {
@@ -366,7 +387,10 @@ static ULONG real_remove_veh(PVOID Handle)
     return r;
 }
 
-static int is_flycast_addr(void *p)
+/** Flycast uses VEH/AV nvmem; isolate its handlers from the JVM chain.
+ *  PCSX2 also uses fastmem AVs, but isolating it breaks single-instance —
+ *  its own handler in the real VEH chain is required. */
+static int is_isolated_core_addr(void *p)
 {
     HMODULE hm = NULL;
     if (GetModuleHandleExA(0x4 | 0x2, (LPCSTR)p, &hm) && hm) {
@@ -379,20 +403,77 @@ static int is_flycast_addr(void *p)
     return 0;
 }
 
-static int is_flycast_ctx(PEXCEPTION_POINTERS ep)
+static int is_isolated_core_ctx(PEXCEPTION_POINTERS ep)
 {
     if (!ep || !ep->ContextRecord) return 0;
 #if defined(_M_X64) || defined(__x86_64__)
-    return is_flycast_addr((void *)ep->ContextRecord->Rip);
+    return is_isolated_core_addr((void *)ep->ContextRecord->Rip);
 #elif defined(_M_IX86) || defined(__i386__)
-    return is_flycast_addr((void *)ep->ContextRecord->Eip);
+    return is_isolated_core_addr((void *)ep->ContextRecord->Eip);
 #else
     return 0;
 #endif
 }
 
+static void stamp_bounds(int slot, ULONG_PTR core_lo, ULONG_PTR core_hi,
+                         ULONG_PTR route_lo, ULONG_PTR route_hi)
+{
+    HMODULE m = s_fly[slot].mod;
+    for (int i = 0; i < 8; ++i) {
+        if (!s_fly[i].used) continue;
+        if (i == slot || (m && s_fly[i].mod == m)) {
+            s_fly[i].core_lo = core_lo;
+            s_fly[i].core_hi = core_hi;
+            s_fly[i].route_lo = route_lo;
+            s_fly[i].route_hi = route_hi;
+        }
+    }
+}
+
+static void assign_slot_bounds(ULONG_PTR core_lo, ULONG_PTR core_hi,
+                               ULONG_PTR route_lo, ULONG_PTR route_hi, const char *tag)
+{
+    if (!(core_lo < core_hi) || !(route_lo < route_hi)) return;
+    int slot = -1;
+    EnterCriticalSection(&s_veh_cs);
+    if (t_fly_slot >= 0 && t_fly_slot < 8 && s_fly[t_fly_slot].used) {
+        slot = t_fly_slot;
+    } else {
+        for (int i = 7; i >= 0; --i) {
+            if (s_fly[i].used && !(s_fly[i].core_lo < s_fly[i].core_hi)) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            for (int i = 7; i >= 0; --i) {
+                if (s_fly[i].used) { slot = i; break; }
+            }
+        }
+    }
+    if (slot >= 0) {
+        HMODULE m = s_fly[slot].mod;
+        stamp_bounds(slot, core_lo, core_hi, route_lo, route_hi);
+        LeaveCriticalSection(&s_veh_cs);
+        fprintf(stderr, "[hlg-win] %s bounds slot=%d mod=%p core=%p-%p route=%p-%p\n",
+                tag, slot, (void *)m, (void *)core_lo, (void *)core_hi,
+                (void *)route_lo, (void *)route_hi);
+    } else {
+        LeaveCriticalSection(&s_veh_cs);
+        t_pending_core_lo = core_lo; t_pending_core_hi = core_hi;
+        t_pending_route_lo = route_lo; t_pending_route_hi = route_hi;
+        fprintf(stderr, "[hlg-win] %s bounds PENDING: core=%p-%p\n",
+                tag, (void *)core_lo, (void *)core_hi);
+    }
+    fflush(stderr);
+}
+
 static void parse_vmem_bounds(const char *msg)
 {
+    /* PCSX2: not isolated — ignore for VEH table. */
+    if (strstr(msg, "Fastmem area:")) return;
+
+    /* Flycast: "BASE %llx RAM(...) ..." */
     const char *vmem = strstr(msg, "BASE ");
     if (!vmem) return;
     unsigned long long base = 0, ram = 0, vram = 0, aram = 0;
@@ -401,27 +482,44 @@ static void parse_vmem_bounds(const char *msg)
                "BASE %llx RAM(%u MB) %llx VRAM64(%u MB) %llx ARAM(%u MB) %llx",
                &base, &ram_mb, &ram, &vram_mb, &vram, &aram_mb, &aram) < 7)
         return;
-    ULONG_PTR lo = (ULONG_PTR)base;
-    ULONG_PTR hi = (ULONG_PTR)aram + (ULONG_PTR)aram_mb * 1024 * 1024;
+    ULONG_PTR core_lo = (ULONG_PTR)base;
+    ULONG_PTR core_hi = (ULONG_PTR)aram + (ULONG_PTR)aram_mb * 1024 * 1024;
     ULONG_PTR ram_end  = (ULONG_PTR)ram  + (ULONG_PTR)ram_mb  * 1024 * 1024;
     ULONG_PTR vram_end = (ULONG_PTR)vram + (ULONG_PTR)vram_mb * 1024 * 1024;
-    if ((ULONG_PTR)ram  < lo) lo = (ULONG_PTR)ram;
-    if ((ULONG_PTR)vram < lo) lo = (ULONG_PTR)vram;
-    if ((ULONG_PTR)aram < lo) lo = (ULONG_PTR)aram;
-    if (ram_end  > hi) hi = ram_end;
-    if (vram_end > hi) hi = vram_end;
-    if (lo > 0x81000000ULL) lo -= 0x81000000ULL;
-    hi += 0x1000000ULL;
-    s_nvmem_lo = lo;
-    s_nvmem_hi = hi;
-    fprintf(stderr, "[hlg-win] nvmem bounds: %p - %p\n", (void *)lo, (void *)hi);
-    fflush(stderr);
+    if ((ULONG_PTR)ram  < core_lo) core_lo = (ULONG_PTR)ram;
+    if ((ULONG_PTR)vram < core_lo) core_lo = (ULONG_PTR)vram;
+    if ((ULONG_PTR)aram < core_lo) core_lo = (ULONG_PTR)aram;
+    if (ram_end  > core_hi) core_hi = ram_end;
+    if (vram_end > core_hi) core_hi = vram_end;
+    core_hi += 0x100000ULL; /* small pad */
+
+    /* Expanded window covers Dreamcast host mirrors; may overlap sessions. */
+    ULONG_PTR route_lo = core_lo;
+    ULONG_PTR route_hi = core_hi + 0x1000000ULL;
+    if (route_lo > 0x81000000ULL) route_lo -= 0x81000000ULL;
+
+    assign_slot_bounds(core_lo, core_hi, route_lo, route_hi, "nvmem");
+}
+
+/** True if addr falls in any live session's ROUTE range (lock held by caller). */
+static int is_nvmem_addr_locked(ULONG_PTR addr)
+{
+    for (int i = 0; i < 8; ++i) {
+        if (!s_fly[i].used) continue;
+        if (s_fly[i].route_lo < s_fly[i].route_hi
+                && addr >= s_fly[i].route_lo && addr < s_fly[i].route_hi)
+            return 1;
+    }
+    return 0;
 }
 
 static int is_nvmem_addr(ULONG_PTR addr)
 {
-    if (s_nvmem_lo < s_nvmem_hi)
-        return (addr >= s_nvmem_lo && addr < s_nvmem_hi) ? 1 : 0;
+    EnterCriticalSection(&s_veh_cs);
+    int hit = is_nvmem_addr_locked(addr);
+    LeaveCriticalSection(&s_veh_cs);
+    if (hit) return 1;
+    /* Heuristic before any session has logged BASE (or parse missed). */
     if (addr < 0x00007FF400000000ULL || addr >= 0x00007FF500000000ULL)
         return 0;
     MEMORY_BASIC_INFORMATION mbi;
@@ -432,9 +530,9 @@ static int is_nvmem_addr(ULONG_PTR addr)
     return 0;
 }
 
-static int should_route_flycast(PEXCEPTION_POINTERS ep)
+static int should_route_isolated(PEXCEPTION_POINTERS ep)
 {
-    if (is_flycast_ctx(ep)) return 1;
+    if (is_isolated_core_ctx(ep)) return 1;
     ULONG_PTR addr = (ULONG_PTR)ep->ExceptionRecord->ExceptionInformation[1];
     return is_nvmem_addr(addr);
 }
@@ -444,56 +542,97 @@ static LONG CALLBACK hlg_dispatch_veh(PEXCEPTION_POINTERS ep)
     EXCEPTION_RECORD *er = ep->ExceptionRecord;
     if (er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION)
         return EXCEPTION_CONTINUE_SEARCH;
-    int route_fly = should_route_flycast(ep);
-    if (s_dispatch_log_left > 0) {
-        ULONG_PTR addr = (ULONG_PTR)er->ExceptionInformation[1];
+    ULONG_PTR addr = (ULONG_PTR)er->ExceptionInformation[1];
 #if defined(_M_X64) || defined(__x86_64__)
-        void *rip = (void *)ep->ContextRecord->Rip;
+    void *rip = (void *)ep->ContextRecord->Rip;
 #else
-        void *rip = (void *)ep->ContextRecord->Eip;
+    void *rip = (void *)ep->ContextRecord->Eip;
 #endif
-        fprintf(stderr, "[hlg-win] AV dispatch: rip=%p addr=%p route_fly=%d\n",
-                rip, (void *)addr, route_fly);
+    int route = should_route_isolated(ep);
+    if (s_dispatch_log_left > 0) {
+        fprintf(stderr, "[hlg-win] AV dispatch: rip=%p addr=%p route=%d\n",
+                rip, (void *)addr, route);
         fflush(stderr);
         s_dispatch_log_left--;
     }
-    if (route_fly) {
-        PVECTORED_EXCEPTION_HANDLER snap[8];
-        int n = 0;
-        EnterCriticalSection(&s_veh_cs);
-        for (int i = 0; i < 8; ++i)
-            if (s_fly[i].used && s_fly[i].h) snap[n++] = s_fly[i].h;
-        LeaveCriticalSection(&s_veh_cs);
-        for (int i = 0; i < n; ++i) {
-            LONG r = snap[i](ep);
-            if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
-        }
-        return EXCEPTION_CONTINUE_SEARCH;
+    if (!route) return EXCEPTION_CONTINUE_SEARCH;
+
+    HMODULE rip_mod = module_of(rip);
+
+    /* Priority: same module → tight core range → expanded route range.
+     * Never give a fault to another session's handler first when core
+     * ranges identify the owner (expanded windows overlap heavily). */
+    PVECTORED_EXCEPTION_HANDLER same_mod[8];
+    PVECTORED_EXCEPTION_HANDLER in_core[8];
+    PVECTORED_EXCEPTION_HANDLER in_route[8];
+    int n_same = 0, n_core = 0, n_route = 0;
+
+    EnterCriticalSection(&s_veh_cs);
+    for (int i = 0; i < 8; ++i) {
+        if (!s_fly[i].used || !s_fly[i].h) continue;
+        int same = rip_mod && s_fly[i].mod && s_fly[i].mod == rip_mod;
+        int core = s_fly[i].core_lo < s_fly[i].core_hi
+                && addr >= s_fly[i].core_lo && addr < s_fly[i].core_hi;
+        int routed = s_fly[i].route_lo < s_fly[i].route_hi
+                && addr >= s_fly[i].route_lo && addr < s_fly[i].route_hi;
+        if (same) same_mod[n_same++] = s_fly[i].h;
+        else if (core) in_core[n_core++] = s_fly[i].h;
+        else if (routed) in_route[n_route++] = s_fly[i].h;
+    }
+    LeaveCriticalSection(&s_veh_cs);
+
+    /* Newest handler first — Flycast registers a generic VEH then the nvmem
+     * one; the nvmem handler must see the fault before a GPF logger. */
+    for (int i = n_same - 1; i >= 0; --i) {
+        LONG r = same_mod[i](ep);
+        if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
+    }
+    for (int i = n_core - 1; i >= 0; --i) {
+        LONG r = in_core[i](ep);
+        if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
+    }
+    for (int i = n_route - 1; i >= 0; --i) {
+        LONG r = in_route[i](ep);
+        if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
 static PVOID WINAPI hook_AddVEH(ULONG First, PVECTORED_EXCEPTION_HANDLER Handler)
 {
-    if (is_flycast_addr((void *)Handler)) {
+    if (is_isolated_core_addr((void *)Handler)) {
         PVOID handle = NULL;
+        int slot = -1;
+        HMODULE mod = module_of((void *)Handler);
         EnterCriticalSection(&s_veh_cs);
         for (int i = 0; i < 8; ++i) {
             if (!s_fly[i].used) {
                 s_fly[i].h = Handler;
+                s_fly[i].mod = mod;
+                s_fly[i].core_lo = s_fly[i].core_hi = 0;
+                s_fly[i].route_lo = s_fly[i].route_hi = 0;
                 s_fly[i].used = 1;
                 handle = (PVOID)&s_fly[i];
+                slot = i;
                 break;
             }
         }
         if (!s_dispatcher)
             s_dispatcher = real_add_veh(1 /*head*/, hlg_dispatch_veh);
+        if (slot >= 0 && t_pending_core_lo < t_pending_core_hi) {
+            stamp_bounds(slot, t_pending_core_lo, t_pending_core_hi,
+                         t_pending_route_lo, t_pending_route_hi);
+            fprintf(stderr, "[hlg-win] applied PENDING bounds to slot=%d\n", slot);
+            t_pending_core_lo = t_pending_core_hi = 0;
+            t_pending_route_lo = t_pending_route_hi = 0;
+        }
         LeaveCriticalSection(&s_veh_cs);
+        if (slot >= 0) t_fly_slot = slot;
         if (!handle)
-            fprintf(stderr, "[hlg-win] WARNING: fly table FULL — handler %p NOT registered!\n",
+            fprintf(stderr, "[hlg-win] WARNING: AV-core table FULL — handler %p NOT registered!\n",
                     (void *)Handler);
-        fprintf(stderr, "[hlg-win] Flycast VEH %p ISOLATED (handle=%p)\n",
-                (void *)Handler, handle);
+        fprintf(stderr, "[hlg-win] AV-core VEH %p ISOLATED (slot=%d mod=%p handle=%p)\n",
+                (void *)Handler, slot, (void *)mod, handle);
         fflush(stderr);
         return handle ? handle : (PVOID)Handler;
     }
@@ -509,10 +648,15 @@ static ULONG WINAPI hook_RemoveVEH(PVOID Handle)
         (ULONG_PTR)Handle <= (ULONG_PTR)&s_fly[7]) {
         EnterCriticalSection(&s_veh_cs);
         fly_entry *e = (fly_entry *)Handle;
+        int slot = (int)(e - s_fly);
         e->used = 0;
         e->h = NULL;
+        e->mod = NULL;
+        e->core_lo = e->core_hi = 0;
+        e->route_lo = e->route_hi = 0;
         LeaveCriticalSection(&s_veh_cs);
-        fprintf(stderr, "[hlg-win] Flycast VEH removed (handle=%p)\n", Handle);
+        if (t_fly_slot == slot) t_fly_slot = -1;
+        fprintf(stderr, "[hlg-win] AV-core VEH removed (slot=%d handle=%p)\n", slot, Handle);
         return 1;
     }
     EnterCriticalSection(&s_veh_cs);
@@ -548,6 +692,7 @@ __declspec(dllexport) void hlg_hook_addveh(void)
 
 __declspec(dllexport) void hlg_reset_veh_session(void)
 {
+    /* Global wipe — Java calls only when FLYCAST_VEH_SESSIONS hits 0. */
     if (!s_veh_hooked) return;
     EnterCriticalSection(&s_veh_cs);
     if (s_dispatcher) {
@@ -555,10 +700,9 @@ __declspec(dllexport) void hlg_reset_veh_session(void)
         s_dispatcher = NULL;
     }
     memset(s_fly, 0, sizeof(s_fly));
-    s_nvmem_lo = 0;
-    s_nvmem_hi = 0;
     s_dispatch_log_left = 5;
     LeaveCriticalSection(&s_veh_cs);
+    t_fly_slot = -1;
     fprintf(stderr, "[hlg-win] VEH session reset\n");
     fflush(stderr);
 }
