@@ -27,7 +27,11 @@ macOS is **not** supported. The mod does **not** ship libretro cores, BIOS files
 
 ### Optional: world TV screens
 
-Place **Screen** blocks near the console (within 16 blocks). They link automatically and show the live emulator picture in the world. Multiple screens can share one console.
+Place **Screen** blocks so that the **Retro Console touches** any block of the screen wall (face-adjacent, 6-neighbour). Linking is physical contact only — there is no radius search.
+
+- Adjacent screens with the same facing/orientation form one rectangular wall (L-shapes split into separate rectangles).
+- Look straight ahead to place a wall screen; look sharply down/up to place on the floor/ceiling (like CC:Tweaked monitors).
+- **Breaking change:** older worlds that relied on “within 16 blocks” auto-link need the console moved flush against the wall (or the wall rebuilt).
 
 ## Quick start (developers)
 
@@ -112,6 +116,23 @@ The library UI recognizes these folders and suggests matching core name patterns
 
 Custom tabs can be added via `systems.json` (on the machine that serves the library — your client in single-player, the server in multiplayer).
 
+### Tested cores (0.1.0)
+
+Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has matching native helpers; treat HW cores there as “should work”, not as a full matrix.
+
+| Core file (libretro) | System | Notes |
+|----------------------|--------|--------|
+| `nestopia_libretro` | NES | Software render |
+| `snes9x_libretro` | SNES | Software render |
+| `mgba_libretro` | GBA | Software render |
+| `genesis_plus_gx_libretro` | Genesis / Mega Drive | Software render |
+| `pcsx_rearmed_libretro` | PS1 | Software render |
+| `pcsx2_libretro` (LRPS2) | PS2 | HW OpenGL via `headless_gl`; needs BIOS under `system/pcsx2/bios/`; multi-console OK |
+| `ppsspp_libretro` | PSP | HW OpenGL via `headless_gl`; multi-console OK |
+| `flycast_libretro` | Dreamcast | HW OpenGL via `headless_gl`; needs DC BIOS under `system/dc/`; multi-console OK |
+
+Other cores from the catalog table above may work, but were **not** part of the 0.1.0 smoke set.
+
 ## Multiplayer
 
 On a **dedicated server**, the game library is built from the **server's** `config/retroconsole/` (ROMs, cores, `systems.json`, `art/`). Clients do not scan their local `roms/` folder in multiplayer.
@@ -124,7 +145,7 @@ On a **dedicated server**, the game library is built from the **server's** `conf
 | Favorites, volume, core overrides | Client-local |
 | Save states & battery saves | Server (`saves/players/<uuid>/`) |
 
-Only the player who launched a game can send input, save states, and power off that console (within 8 blocks). Anyone within 64 blocks can watch the world TV picture.
+Only the player who launched a game can send input, save states, and power off that console (within 8 blocks). Nearby players receive the world TV picture (video ~48 blocks from the console; opening the fullscreen TV view also subscribes you).
 
 **Important:** ROM and core files must exist on the server at the same relative paths the client shows in the library.
 
