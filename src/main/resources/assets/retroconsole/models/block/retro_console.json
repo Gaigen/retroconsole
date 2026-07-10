@@ -1,12 +1,12 @@
 {
   "parent": "minecraft:block/cube",
   "textures": {
-    "particle": "minecraft:block/iron_block",
+    "particle": "retroconsole:block/retro_console_front",
     "north": "retroconsole:block/retro_console_front",
-    "south": "minecraft:block/iron_block",
-    "east":  "minecraft:block/iron_block",
-    "west":  "minecraft:block/iron_block",
-    "up":    "minecraft:block/iron_block",
-    "down":  "minecraft:block/iron_block"
+    "south": "retroconsole:block/retro_console_back",
+    "east": "retroconsole:block/retro_console_side",
+    "west": "retroconsole:block/retro_console_side",
+    "up": "retroconsole:block/retro_console_top",
+    "down": "retroconsole:block/retro_console_bottom"
   }
 }
