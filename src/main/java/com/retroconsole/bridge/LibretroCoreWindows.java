@@ -152,6 +152,9 @@ public class LibretroCoreWindows extends LibretroCore {
             f.get(10, java.util.concurrent.TimeUnit.SECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
             LOGGER.warn("Core shutdown timed out after 10s — forcing GL teardown");
+            // A core thread may still be INSIDE the module — no FreeLibrary, no
+            // slot release. The slot stays poisoned until process restart; other
+            // slots keep working.
         } catch (java.util.concurrent.ExecutionException e) {
             Throwable c = e.getCause();
             LOGGER.warn("Core shutdown error: {}", c != null ? c.getMessage() : e);
@@ -295,6 +298,34 @@ public class LibretroCoreWindows extends LibretroCore {
         }
     }
 
+    /** Global VEH reset ONLY when the last Flycast session ends — while another
+     *  session is running, resetting the dispatcher would kill its nvmem routing. */
+    private void endVehSessionIfLast() {
+        if (!vehSessionHeld) return;
+        vehSessionHeld = false;
+        if (FLYCAST_VEH_SESSIONS.decrementAndGet() == 0) {
+            resetVehSession();
+        }
+    }
+
+    /**
+     * FreeLibrary the module so the next session on this slot starts from clean
+     * globals. MUST run only after retro_unload_game + context_destroy +
+     * retro_deinit + endVehSessionIfLast(), and after the proxy is removed from
+     * KEEP_LOADED — any call through the old proxy after dispose() is a native crash.
+     */
+    private static void disposeCoreLibrary(LibretroBridge proxy) {
+        if (proxy == null) return;
+        try {
+            com.sun.jna.Library.Handler handler = (com.sun.jna.Library.Handler)
+                    java.lang.reflect.Proxy.getInvocationHandler(proxy);
+            handler.getNativeLibrary().dispose(); // -> FreeLibrary + drop JNA cache
+            LOGGER.info("Core module unloaded (FreeLibrary) — slot is clean for next session");
+        } catch (Throwable t) {
+            LOGGER.warn("Failed to unload core module: {}", t.getMessage());
+        }
+    }
+
     private boolean supportsHwRender() {
         try {
             headlessGl();
@@ -400,6 +431,17 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     private boolean coreInitialized;
+
+    /** On-disk DLL copy loaded by this instance (see CoreModulePool). */
+    private CoreModulePool.Slot moduleSlot;
+
+    /** This instance holds one Flycast VEH session (routing via headless_gl). */
+    private boolean vehSessionHeld = false;
+
+    /** Live Flycast VEH sessions in the process (future-proof for >1 slot). */
+    private static final java.util.concurrent.atomic.AtomicInteger FLYCAST_VEH_SESSIONS =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     private LibretroBridge core;
     private final String systemDir;
     private final String saveDir;
@@ -424,6 +466,12 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private boolean isFlycastCore() {
         return coreName().contains("flycast");
+    }
+
+    /** Flycast nvmem needs isolated VEH dispatch. PCSX2 fastmem must stay on
+     *  the real Windows VEH chain — isolating it breaks even a single session. */
+    private boolean needsVehIsolation() {
+        return isFlycastCore();
     }
 
     /** Flycast/PPSSPP sync FPS via audio pacing; PCSX2 does not (bulk batch at end of retro_run). */
@@ -452,12 +500,23 @@ public class LibretroCoreWindows extends LibretroCore {
             LOGGER.error("Cannot load Windows libretro core: corePath is null");
             return;
         }
-        String absPath = corePath.toAbsolutePath().toString();
+
+        // Own DLL copy per session => own globals per session.
+        this.moduleSlot = CoreModulePool.acquire(corePath);
+        if (moduleSlot == null) {
+            LOGGER.error("Failed to prepare a module slot for {} — see CoreModulePool log "
+                    + "(disk problem or -Dretroconsole.maxSlots cap).", corePath.getFileName());
+            return; // core stays null -> loadGame() returns false
+        }
+        String absPath = moduleSlot.slotPath().toAbsolutePath().toString();
+
         LOGGER.info("Native.load({})", absPath);
         try {
-            if (isFlycastCore() && supportsHwRender()) {
+            if (needsVehIsolation() && supportsHwRender()) {
                 captureJvmExceptionFilter();
                 hookAddVeh();
+                vehSessionHeld = true;
+                FLYCAST_VEH_SESSIONS.incrementAndGet();
             }
             this.core = Native.load(absPath, LibretroBridge.class);
             int apiVersion = core.retro_api_version();
@@ -472,11 +531,17 @@ public class LibretroCoreWindows extends LibretroCore {
             LOGGER.info("retro_init() returned. Core initialized.");
         } catch (Throwable t) {
             LOGGER.error("Failed to load libretro core at {}: {}", absPath, t.getMessage(), t);
-            if (this.core != null) {
-                try { this.core.retro_deinit(); } catch (Throwable ignored) {}
-                KEEP_LOADED.remove(this.core);
+            LibretroBridge failed = this.core;
+            if (failed != null) {
+                try { failed.retro_deinit(); } catch (Throwable ignored) {}
+                KEEP_LOADED.remove(failed);
             }
-            if (isFlycastCore() && supportsHwRender()) resetVehSession();
+            endVehSessionIfLast();
+            if (isFlycastCore()) {
+                disposeCoreLibrary(failed); // slot module is dirty — unload for next try
+            }
+            CoreModulePool.release(moduleSlot);
+            moduleSlot = null;
             this.core = null;
             this.coreInitialized = false;
         }
@@ -1493,7 +1558,7 @@ public class LibretroCoreWindows extends LibretroCore {
             }
         }
 
-        if (isFlycastCore() && supportsHwRender()) resetVehSession();
+        endVehSessionIfLast();
 
         teardownHwRender();
         if (headlessGlReady) {
@@ -1525,6 +1590,20 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         this.gameLoaded = false;
         audioPacing.reset();
+
+        // Flycast globals are only reset by a fresh LoadLibrary — unload the
+        // slot module. Order above is already correct: unload_game ->
+        // context_destroy -> retro_deinit -> endVehSessionIfLast() (VEH must be
+        // dead BEFORE FreeLibrary of the last session).
+        if (isFlycastCore()) {
+            disposeCoreLibrary(closed);
+        }
+        // PCSX2/others: do NOT dispose — LRPS2 may keep an MTGS thread after a
+        // skipped context_destroy; FreeLibrary would crash the JVM. Their slot
+        // reuses the same module (deinit->init already works today).
+        CoreModulePool.release(moduleSlot);
+        moduleSlot = null;
+
         LOGGER.info("close(): clean shutdown complete");
     }
 
