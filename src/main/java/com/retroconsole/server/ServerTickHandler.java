@@ -1,7 +1,6 @@
 package com.retroconsole.server;
 
 import com.retroconsole.RetroConsole;
-import com.retroconsole.block.ConsoleRegistry;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
 import net.minecraft.server.level.ServerPlayer;
@@ -25,7 +24,6 @@ public class ServerTickHandler {
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
         ServerConsoles.stopAll();
-        ConsoleRegistry.clear();
     }
 
     @SubscribeEvent

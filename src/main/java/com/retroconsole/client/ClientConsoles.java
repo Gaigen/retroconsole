@@ -2,7 +2,6 @@ package com.retroconsole.client;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.retroconsole.block.ScreenBlockEntity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.core.BlockPos;
@@ -11,12 +10,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.IntBuffer;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.Map;
-import java.util.Queue;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -74,14 +68,6 @@ public final class ClientConsoles {
     private static final Map<BlockPos, PendingFrame> PENDING = new ConcurrentHashMap<>();
     /** SCREENS touched only from render thread; concurrent map is cheap insurance. */
     private static final Map<BlockPos, ScreenEntry> SCREENS = new ConcurrentHashMap<>();
-
-    private static final Map<BlockPos, int[]> GRID_CACHE = new HashMap<>();
-    /**
-     * BUGFIX: cache was cleared by ++frameCounter % 60 — a call counter, not frames:
-     * N screen blocks = N increments per frame, cache reset N times too often. Now time-based.
-     */
-    private static final long GRID_CACHE_TTL_NS = 2_000_000_000L;
-    private static long gridCacheClearedNs = System.nanoTime();
 
     /**
      * Accept a frame from the network thread. Array is already ABGR and ownership
@@ -157,64 +143,5 @@ public final class ClientConsoles {
         if (entry != null) {
             entry.close();
         }
-        GRID_CACHE.clear();
-    }
-
-    // ------------------------------------------------------------------
-    // Multi-block TV grid
-    // ------------------------------------------------------------------
-
-    public static int[] getGridInfo(ScreenBlockEntity be) {
-        BlockPos pos = be.getBlockPos().immutable();
-        long now = System.nanoTime();
-        if (now - gridCacheClearedNs >= GRID_CACHE_TTL_NS) {
-            GRID_CACHE.clear();
-            gridCacheClearedNs = now;
-        }
-        int[] cached = GRID_CACHE.get(pos);
-        if (cached != null) return cached;
-
-        Set<BlockPos> group = findScreenGroup(be);
-        int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-        int minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
-        for (BlockPos p : group) {
-            minX = Math.min(minX, p.getX()); maxX = Math.max(maxX, p.getX());
-            minY = Math.min(minY, p.getY()); maxY = Math.max(maxY, p.getY());
-            minZ = Math.min(minZ, p.getZ()); maxZ = Math.max(maxZ, p.getZ());
-        }
-        int xSpan = maxX - minX + 1, zSpan = maxZ - minZ + 1;
-        int gridW = Math.max(xSpan, zSpan), gridH = maxY - minY + 1;
-        int gridX = (xSpan >= zSpan) ? pos.getX() - minX : pos.getZ() - minZ;
-        int gridYFromTop = maxY - pos.getY();
-        int[] result = {gridX, gridYFromTop, gridW, gridH};
-        GRID_CACHE.put(pos, result);
-        return result;
-    }
-
-    private static Set<BlockPos> findScreenGroup(ScreenBlockEntity be) {
-        Set<BlockPos> visited = new HashSet<>();
-        Queue<BlockPos> queue = new LinkedList<>();
-        BlockPos start = be.getBlockPos().immutable();
-        BlockPos consolePos = be.getConsolePos();
-        queue.add(start);
-        visited.add(start);
-        while (!queue.isEmpty()) {
-            BlockPos current = queue.poll();
-            for (int dx = -1; dx <= 1; dx++)
-                for (int dy = -1; dy <= 1; dy++)
-                    for (int dz = -1; dz <= 1; dz++) {
-                        if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) != 1) continue;
-                        BlockPos neighbor = current.offset(dx, dy, dz);
-                        if (visited.contains(neighbor) || be.getLevel() == null) continue;
-                        var blockEntity = be.getLevel().getBlockEntity(neighbor);
-                        if (blockEntity instanceof ScreenBlockEntity sbe
-                                && consolePos != null && consolePos.equals(sbe.getConsolePos())) {
-                            visited.add(neighbor);
-                            queue.add(neighbor);
-                        }
-                    }
-        }
-        return visited;
     }
 }

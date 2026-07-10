@@ -97,47 +97,15 @@ public class RetroConsoleBlock extends BaseEntityBlock {
     public void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
         super.onPlace(state, level, pos, oldState, movedByPiston);
         if (!level.isClientSide() && !oldState.is(this)) {
-            ConsoleRegistry.add(level, pos);
-            linkNearbyScreens(level, pos);
+            ScreenMultiblocks.onConsoleChanged(level, pos);
         }
     }
 
     @Override
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
-        if (!level.isClientSide() && !newState.is(this)) {
-            ConsoleRegistry.remove(level, pos);
-            unlinkScreens(level, pos);
-        }
         super.onRemove(state, level, pos, newState, movedByPiston);
-    }
-
-    private static void linkNearbyScreens(Level level, BlockPos consolePos) {
-        int r = ScreenBlock.LINK_RADIUS;
-        for (BlockPos candidate : BlockPos.betweenClosed(
-                consolePos.offset(-r, -r, -r), consolePos.offset(r, r, r))) {
-            if (!(level.getBlockState(candidate).getBlock() instanceof ScreenBlock)) continue;
-            if (!(level.getBlockEntity(candidate) instanceof ScreenBlockEntity screen)) continue;
-            BlockPos cur = screen.getConsolePos();
-            boolean unlinked = cur == null || BlockPos.ZERO.equals(cur);
-            boolean stale = !unlinked
-                    && !(level.getBlockEntity(cur) instanceof RetroConsoleBlockEntity);
-            if (unlinked || stale) {
-                screen.setConsolePos(consolePos);
-            }
-        }
-    }
-
-    private static void unlinkScreens(Level level, BlockPos consolePos) {
-        int r = ScreenBlock.LINK_RADIUS;
-        for (BlockPos candidate : BlockPos.betweenClosed(
-                consolePos.offset(-r, -r, -r), consolePos.offset(r, r, r))) {
-            if (!(level.getBlockState(candidate).getBlock() instanceof ScreenBlock)) continue;
-            if (level.getBlockEntity(candidate) instanceof ScreenBlockEntity screen
-                    && consolePos.equals(screen.getConsolePos())) {
-                BlockPos next = ConsoleRegistry.nearestWithin(
-                        level, screen.getBlockPos(), ScreenBlock.LINK_RADIUS, consolePos);
-                screen.setConsolePos(next != null ? next : BlockPos.ZERO);
-            }
+        if (!level.isClientSide() && !newState.is(this)) {
+            ScreenMultiblocks.onConsoleChanged(level, pos);
         }
     }
 
