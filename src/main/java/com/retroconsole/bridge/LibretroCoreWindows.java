@@ -468,8 +468,16 @@ public class LibretroCoreWindows extends LibretroCore {
         return coreName().contains("flycast");
     }
 
-    /** Flycast nvmem needs isolated VEH dispatch. PCSX2 fastmem must stay on
-     *  the real Windows VEH chain — isolating it breaks even a single session. */
+    private boolean isPcsx2CoreLocal() {
+        return coreName().contains("pcsx2");
+    }
+
+    /** Install AddVEH hook for Flycast isolation and/or PCSX2 fastmem wraps. */
+    private boolean needsVehHook() {
+        return isFlycastCore() || isPcsx2CoreLocal();
+    }
+
+    /** Flycast: handlers leave the Windows chain. PCSX2: wrap stays on chain. */
     private boolean needsVehIsolation() {
         return isFlycastCore();
     }
@@ -512,11 +520,13 @@ public class LibretroCoreWindows extends LibretroCore {
 
         LOGGER.info("Native.load({})", absPath);
         try {
-            if (needsVehIsolation() && supportsHwRender()) {
+            if (needsVehHook() && supportsHwRender()) {
                 captureJvmExceptionFilter();
                 hookAddVeh();
-                vehSessionHeld = true;
-                FLYCAST_VEH_SESSIONS.incrementAndGet();
+                if (needsVehIsolation()) {
+                    vehSessionHeld = true;
+                    FLYCAST_VEH_SESSIONS.incrementAndGet();
+                }
             }
             this.core = Native.load(absPath, LibretroBridge.class);
             int apiVersion = core.retro_api_version();
@@ -1095,6 +1105,20 @@ public class LibretroCoreWindows extends LibretroCore {
         if (us != null) {
             parseV2Defs(us);
             LOGGER.info("SET_CORE_OPTIONS_V2_INTL: parsed US definitions");
+            // DIAG: дамп ключей из нативного массива V2 (не legacy coreOptions).
+            Pointer defs = us.getPointer(8);
+            if (defs != null) {
+                final long STRIDE = 6L * 8 + 128L * 16 + 8; // 2104
+                int n = 0;
+                for (long off = 0; n < 512; off += STRIDE, n++) {
+                    Pointer keyP = defs.getPointer(off);
+                    if (keyP == null) break;
+                    Pointer defP = defs.getPointer(off + STRIDE - 8);
+                    LOGGER.info("  option def: {} (default={})",
+                            keyP.getString(0), defP != null ? defP.getString(0) : "");
+                }
+                LOGGER.info("SET_CORE_OPTIONS_V2_INTL: dumped {} option key(s)", n);
+            }
         } else {
             LOGGER.debug("SET_CORE_OPTIONS_V2_INTL: null us definitions");
         }

@@ -20,21 +20,28 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
     private final LibretroCore core;
     private final Path romPath;
     private final PlayerPaths playerPaths;
+    private final Pcsx2MemcardSync.Session pcsx2Session;
     private int[] frameBuffer;
     private int width;
     private int height;
 
     public LibretroRuntime(LibretroCore core, Path romPath, PlayerPaths playerPaths) {
+        this(core, romPath, playerPaths, null);
+    }
+
+    public LibretroRuntime(LibretroCore core, Path romPath, PlayerPaths playerPaths,
+                           Pcsx2MemcardSync.Session pcsx2Session) {
         this.core = core;
         this.romPath = romPath;
         this.playerPaths = playerPaths != null ? playerPaths : PlayerPaths.shared();
+        this.pcsx2Session = pcsx2Session;
         this.width = core.getWidth();
         this.height = core.getHeight();
         this.frameBuffer = new int[Math.max(width, 1) * Math.max(height, 1)];
     }
 
     public LibretroRuntime(LibretroCore core, Path romPath) {
-        this(core, romPath, PlayerPaths.shared());
+        this(core, romPath, PlayerPaths.shared(), null);
     }
 
     @Override
@@ -154,7 +161,9 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
             LOGGER.warn("Failed to close core", e);
         }
 
-        if (core.isPcsx2Core()) {
+        if (pcsx2Session != null) {
+            Pcsx2MemcardSync.export(pcsx2Session);
+        } else if (core.isPcsx2Core()) {
             Pcsx2MemcardSync.export(playerPaths);
         }
     }

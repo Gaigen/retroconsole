@@ -22,6 +22,11 @@ import java.util.Set;
  * <p>Slot files live next to the original core as dot-prefixed names (hidden
  * from {@code CoreManager.discoverCores()}): {@code .flycast_libretro.slot0.dll}.
  * Same directory as the original keeps DLL dependency search working (PCSX2).
+ *
+ * <p>PCSX2 host memory uses {@code CreateFileMappingW("pcsx2_<pid>", ...)} — a
+ * process-global name. Per-slot uniquification is done in {@code headless_gl_win.c}
+ * (CreateFileMappingW hook), not by patching the DLL (the {@code "pcsx2"} string
+ * is also the resources path prefix).
  */
 public final class CoreModulePool {
     private static final Logger LOGGER = LoggerFactory.getLogger("CoreModulePool");

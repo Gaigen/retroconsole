@@ -6,9 +6,11 @@ import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
 import com.retroconsole.network.RetroStopConsolePacket;
 import com.retroconsole.platform.PlayerPaths;
+import com.retroconsole.platform.Pcsx2MemcardSync;
 import com.retroconsole.platform.RetroConsolePaths;
 import com.retroconsole.platform.SaveStateManager;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -104,7 +106,17 @@ public class ServerConsoles {
                 : PlayerPaths.shared();
 
         LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath, playerPaths);
-        if (runtime == null) { LOGGER.error("Failed to load core {} with ROM {}", coreName, romId); return; }
+        if (runtime == null) {
+            String reason = coreName.toLowerCase().contains("pcsx2")
+                    ? Pcsx2MemcardSync.lastRefuseReason()
+                    : null;
+            if (reason == null) {
+                reason = "Failed to load core " + coreName + " with ROM " + romId;
+            }
+            LOGGER.error(reason);
+            notifyOwner(ownerId, reason);
+            return;
+        }
 
         if (loadAuto) {
             runtime.runFrame();
@@ -181,6 +193,15 @@ public class ServerConsoles {
         } catch (Exception e) {
             LOGGER.debug("Shutdown wait: {}", e.getMessage());
         }
+    }
+
+    private static void notifyOwner(UUID ownerId, String message) {
+        if (ownerId == null || message == null || message.isBlank()) return;
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        if (server == null) return;
+        ServerPlayer player = server.getPlayerList().getPlayer(ownerId);
+        if (player == null) return;
+        player.sendSystemMessage(Component.literal("[RetroConsole] " + message));
     }
 
     private static void notifyConsoleStopped(BlockPos pos) {

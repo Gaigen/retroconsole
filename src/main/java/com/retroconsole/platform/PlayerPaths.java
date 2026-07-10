@@ -12,14 +12,13 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Per-player save paths.
  *
- * <p><b>Shared {@code system/}</b> — BIOS, PPSSPP assets, PCSX2 shader cache.
- * Always passed as {@code GET_SYSTEM_DIRECTORY} (works on Windows without symlinks).
+ * <p><b>Shared {@code system/}</b> — BIOS, PPSSPP assets (non-PS2 GET_SYSTEM_DIRECTORY).
  *
- * <p><b>Per-player {@code saves/players/{uuid}/}</b> — battery saves ({@code .srm}).
+ * <p><b>Per-player {@code saves/players/{uuid}/}</b> — battery saves ({@code .srm}), F5 states.
  *
- * <p><b>Per-player {@code saves/players/{uuid}/pcsx2/memcards/}</b> — PS2 memory cards
- * on disk; before {@code retro_load_game} copied into live {@code system/pcsx2/memcards/}
- * via {@link Pcsx2MemcardSync}, and copied back on shutdown.
+ * <p><b>PS2:</b> each session gets a private system root via {@link Pcsx2MemcardSync}
+ * ({@code system/.sessions/ps2-N/}); player stash stays under
+ * {@code saves/players/{uuid}/pcsx2/memcards/}.
  */
 public record PlayerPaths(UUID playerId, Path saveDir, Path systemDir, Path pcsx2MemcardsDir) {
 

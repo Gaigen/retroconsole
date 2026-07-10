@@ -148,29 +148,36 @@ public class CoreManager {
      */
     public LibretroRuntime loadCoreAndGame(Path corePath, Path romPath, PlayerPaths playerPaths) {
         boolean pcsx2 = corePath.getFileName().toString().toLowerCase().contains("pcsx2");
+        Pcsx2MemcardSync.Session pcsx2Session = null;
         if (pcsx2) {
-            Pcsx2MemcardSync.install(playerPaths);
+            pcsx2Session = Pcsx2MemcardSync.install(playerPaths);
+            if (pcsx2Session == null) {
+                LOGGER.error("PS2 refused: {}", Pcsx2MemcardSync.lastRefuseReason());
+                return null;
+            }
         }
         SessionSaveSetup.prepare(corePath, romPath, playerPaths);
+        String systemDir = pcsx2Session != null
+                ? pcsx2Session.systemDir().toString()
+                : playerPaths.systemDir().toString();
         try {
             LibretroCore core = LibretroCore.load(
                     corePath,
-                    playerPaths.systemDir().toString(),
+                    systemDir,
                     playerPaths.saveDir().toString());
 
             if (!core.loadGame(romPath)) {
                 core.close();
-                if (pcsx2) {
-                    Pcsx2MemcardSync.export(playerPaths);
+                if (pcsx2Session != null) {
+                    Pcsx2MemcardSync.export(pcsx2Session);
                 }
                 return null;
             }
 
-            LibretroRuntime runtime = new LibretroRuntime(core, romPath, playerPaths);
-            return runtime;
+            return new LibretroRuntime(core, romPath, playerPaths, pcsx2Session);
         } catch (Exception e) {
-            if (pcsx2) {
-                Pcsx2MemcardSync.export(playerPaths);
+            if (pcsx2Session != null) {
+                Pcsx2MemcardSync.export(pcsx2Session);
             }
             LOGGER.error("Failed to load core {} with ROM {}", corePath, romPath, e);
             return null;

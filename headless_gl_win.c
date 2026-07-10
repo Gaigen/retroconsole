@@ -1,22 +1,9 @@
 /*
- * headless_gl_win.c — Headless WGL OpenGL contexts for libretro on Windows.
+ * headless_gl_win.c — Headless WGL OpenGL for libretro (Windows).
  *
- * Ревизия (multi-instance): синглтон убран.
- *  - hlg_create()/hlg_free() создают/уничтожают независимые инстансы:
- *    своё скрытое окно + свой HGLRC + свой offscreen FBO на каждый.
- *  - Все контекстные функции принимают handle первым параметром.
- *  - get_current_framebuffer / get_proc_address у libretro НЕ имеют
- *    user-data, поэтому диспетчеризация идёт через thread-local t_cur:
- *    каждый инстанс живёт строго на своём retro-core-потоке, и
- *    hlg_make_current(h) привязывает инстанс к текущему потоку.
- *  - Глобальными остаются ТОЛЬКО процессные вещи: VEH-хуки ntdll,
- *    JVM UEF, лог-коллбек, регистрация класса окна, кэш GL-функций
- *    (указатели wglGetProcAddress валидны для всех контекстов одного
- *    драйвера — на destroy инстанса их сбрасывать НЕЛЬЗЯ, ими может
- *    пользоваться другой живой инстанс).
- *
- * Build (MinGW-w64):
- *   gcc -shared -O2 -o .libheadless_gl.dll headless_gl_win.c -lopengl32 -lgdi32 -luser32
+ * Per-instance: hidden window + HGLRC + FBO (hlg_create/hlg_free).
+ * get_current_framebuffer has no user-data → thread-local t_cur.
+ * Build: gcc -shared -O2 -o .libheadless_gl.dll headless_gl_win.c -lopengl32 -lgdi32 -luser32
  */
 
 #define WIN32_LEAN_AND_MEAN
@@ -60,9 +47,7 @@
 
 typedef HGLRC (WINAPI *PFNWGLCREATECONTEXTATTRIBSARBPROC)(HDC, HGLRC, const int *);
 
-/* =========================================================================
- *  Инстанс
- * ========================================================================= */
+/* Per-instance GL context. */
 typedef struct hlg_ctx {
     HWND  hwnd;
     HDC   hdc;
@@ -84,7 +69,6 @@ typedef struct hlg_ctx {
     int   pbo_cap_w, pbo_cap_h;
 } hlg_ctx;
 
-/* Инстанс, привязанный к ТЕКУЩЕМУ потоку (см. шапку файла). */
 #if defined(_MSC_VER)
 #define HLG_TLS __declspec(thread)
 #else
@@ -92,16 +76,13 @@ typedef struct hlg_ctx {
 #endif
 static HLG_TLS hlg_ctx *t_cur = NULL;
 
-/* Процессные глобалы. */
-static CRITICAL_SECTION s_global_cs;      /* класс окна + кэш GL-функций */
+static CRITICAL_SECTION s_global_cs;
 static int s_global_cs_ready = 0;
 static int s_wndclass_registered = 0;
 
 static void hlg_destroy_internal(hlg_ctx *c);
 
-/* =========================================================================
- *  GL function loading (кэш процессный)
- * ========================================================================= */
+/* GL function cache (process-wide). */
 static void *load_gl(const char *name) {
     void *p = (void *)wglGetProcAddress(name);
     if (!p) {
@@ -189,9 +170,7 @@ static int ensure_pbo_funcs(void) {
     return s_pbo_funcs_ready;
 }
 
-/* =========================================================================
- *  Offscreen FBO (per-instance)
- * ========================================================================= */
+/* Offscreen FBO (per-instance). */
 static int create_offscreen_fbo(hlg_ctx *c, int w, int h) {
     if (!ensure_fbo_funcs()) return 0;
     if (!c->fbo)      p_GenFB(1, &c->fbo);
@@ -301,9 +280,7 @@ static void flip_rows_inplace(unsigned char *px, int w, int h) {
     free(tmp);
 }
 
-/* =========================================================================
- *  Flycast VEH isolation hook — процессный глобал.
- * ========================================================================= */
+/* VEH isolation (Flycast/PCSX2), crash forensics, PCSX2 shmem hook. */
 static LPTOP_LEVEL_EXCEPTION_FILTER s_jvm_filter = NULL;
 typedef PVOID   (WINAPI *AddVEH_t)(ULONG, PVECTORED_EXCEPTION_HANDLER);
 typedef ULONG   (WINAPI *RemoveVEH_t)(PVOID);
@@ -314,9 +291,7 @@ static void *s_rem_fn = NULL;   static BYTE s_rem_orig[14];
 static CRITICAL_SECTION s_veh_cs;
 static int   s_veh_hooked = 0;
 
-/* Per Flycast session: handler + owning module + nvmem ranges.
- * core_* = tight BASE..ARAM (handler pick — must NOT overlap across sessions).
- * route_* = expanded with DC mirrors (lo-=0x81000000) for should_route only. */
+/* Flycast: core_* = BASE..ARAM; route_* includes DC mirrors for should_route. */
 typedef struct {
     PVECTORED_EXCEPTION_HANDLER h;
     HMODULE mod;
@@ -327,14 +302,252 @@ typedef struct {
 static fly_entry s_fly[8];
 static PVOID s_dispatcher = NULL;
 static int   s_dispatch_log_left = 5;
-/* Thread that last registered an isolated VEH — ties log bounds to a slot. */
 static HLG_TLS int t_fly_slot = -1;
-/* BASE may log before AddVEH on this thread — apply on register. */
 static HLG_TLS ULONG_PTR t_pending_core_lo = 0, t_pending_core_hi = 0;
 static HLG_TLS ULONG_PTR t_pending_route_lo = 0, t_pending_route_hi = 0;
 
+typedef struct {
+    PVECTORED_EXCEPTION_HANDLER h;
+    HMODULE mod;
+    ULONG_PTR lo, hi;
+    unsigned gen;
+    int used;
+} ps2_entry;
+static ps2_entry s_ps2[8];
+static HLG_TLS int t_ps2_slot = -1;
+static HLG_TLS ULONG_PTR t_pending_ps2_lo = 0, t_pending_ps2_hi = 0;
+
+static HLG_TLS int      t_bound_ps2 = -1;
+static HLG_TLS unsigned t_bound_gen = 0;
+static HLG_TLS int      t_in_dispatch = 0;
+
+#define HLG_AV_RING 256
+enum {
+    AV_FASTMEM = 0,
+    AV_BOUND = 1,
+    AV_TRYALL = 2,
+    AV_FLYCAST = 3,
+    AV_NESTED_SKIP = 4
+};
+typedef struct {
+    DWORD tid;
+    void *rip;
+    void *addr;
+    int   slot;
+    LONG  result;
+    int   kind;
+} hlg_av_rec;
+static hlg_av_rec    s_av_ring[HLG_AV_RING];
+static volatile LONG s_av_seq = 0;
+
+static void av_record(void *rip, void *addr, int slot, LONG result, int kind)
+{
+    LONG i = InterlockedIncrement(&s_av_seq) - 1;
+    hlg_av_rec *r = &s_av_ring[i & (HLG_AV_RING - 1)];
+    r->tid    = GetCurrentThreadId();
+    r->rip    = rip;
+    r->addr   = addr;
+    r->slot   = slot;
+    r->result = result;
+    r->kind   = kind;
+}
+
+static void hlg_dump_av_ring(void);
+
+/* stderr + hlg_crash_pidN.txt (Gradle pipe may drop stderr on instant exit). */
+static HANDLE s_clog = INVALID_HANDLE_VALUE;
+
+static void hlg_clog(const char *fmt, ...)
+{
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n <= 0) return;
+    if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
+    fwrite(buf, 1, (size_t)n, stderr);
+    fflush(stderr);
+    if (s_clog == INVALID_HANDLE_VALUE) {
+        char path[MAX_PATH];
+        snprintf(path, sizeof(path), "hlg_crash_pid%lu.txt",
+                 (unsigned long)GetCurrentProcessId());
+        s_clog = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL,
+                             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    }
+    if (s_clog != INVALID_HANDLE_VALUE) {
+        DWORD w;
+        WriteFile(s_clog, buf, (DWORD)n, &w, NULL);
+        FlushFileBuffers(s_clog);
+    }
+}
+
+static void hlg_dump_av_ring(void)
+{
+    static const char *kinds[] =
+        { "fastmem", "bound", "tryall", "flycast", "nested-skip" };
+    LONG total = s_av_seq;
+    LONG count = total < HLG_AV_RING ? total : HLG_AV_RING;
+    hlg_clog("[hlg-win] ==== AV ring: %ld dispatches total, last %ld ====\n",
+            (long)total, (long)count);
+    for (LONG i = total - count; i < total; ++i) {
+        hlg_av_rec *r = &s_av_ring[i & (HLG_AV_RING - 1)];
+        hlg_clog("[hlg-win]  #%ld tid=%lu rip=%p addr=%p slot=%d %s (%s)\n",
+                (long)i, (unsigned long)r->tid, r->rip, r->addr, r->slot,
+                r->result == EXCEPTION_CONTINUE_EXECUTION ? "CONT" : "SEARCH",
+                (r->kind >= 0 && r->kind <= 4) ? kinds[r->kind] : "?");
+    }
+    for (int i = 0; i < 8; ++i) {
+        if (!s_ps2[i].used) continue;
+        hlg_clog("[hlg-win]  ps2 slot=%d mod=%p fastmem=%p-%p gen=%u\n",
+                i, (void *)s_ps2[i].mod, (void *)s_ps2[i].lo,
+                (void *)s_ps2[i].hi, s_ps2[i].gen);
+    }
+    fflush(stderr);
+}
+
+/* Minidump + crash UEF (dbghelp loaded lazily). */
+typedef struct {
+    DWORD ThreadId;
+    PEXCEPTION_POINTERS ExceptionPointers;
+    BOOL ClientPointers;
+} hlg_minidump_exc_info;
+
+typedef BOOL (WINAPI *MiniDumpWriteDump_t)(HANDLE, DWORD, HANDLE, int,
+                                           void *, void *, void *);
+
+typedef struct {
+    PEXCEPTION_POINTERS ep;
+    DWORD tid;
+} hlg_md_ctx;
+
+/* Dumper thread parked on event — no CreateThread from crash UEF. */
+static HANDLE s_md_go = NULL, s_md_done = NULL;
+static hlg_md_ctx s_md_ctx;
+
+static DWORD WINAPI hlg_minidump_thread(LPVOID arg)
+{
+    (void)arg;
+    for (;;) {
+        if (WaitForSingleObject(s_md_go, INFINITE) != WAIT_OBJECT_0) return 0;
+        HMODULE dbg = LoadLibraryA("dbghelp.dll");
+        MiniDumpWriteDump_t mdwd = dbg
+            ? (MiniDumpWriteDump_t)GetProcAddress(dbg, "MiniDumpWriteDump") : NULL;
+        if (!mdwd) { hlg_clog("[hlg-win] dbghelp unavailable\n"); SetEvent(s_md_done); continue; }
+        char path[MAX_PATH];
+        snprintf(path, sizeof(path), "hlg_crash_pid%lu.dmp",
+                 (unsigned long)GetCurrentProcessId());
+        HANDLE f = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, NULL);
+        if (f == INVALID_HANDLE_VALUE) { SetEvent(s_md_done); continue; }
+        hlg_minidump_exc_info mei;
+        mei.ThreadId = s_md_ctx.tid;
+        mei.ExceptionPointers = s_md_ctx.ep;
+        mei.ClientPointers = FALSE;
+        /* MiniDumpWithDataSegs | MiniDumpWithIndirectlyReferencedMemory */
+        BOOL ok = mdwd(GetCurrentProcess(), GetCurrentProcessId(), f,
+                       0x1 | 0x40, &mei, NULL, NULL);
+        if (!ok) {
+            hlg_clog("[hlg-win] minidump extended FAILED (err=%08lX), retry normal\n",
+                     GetLastError());
+            SetFilePointer(f, 0, NULL, FILE_BEGIN);
+            SetEndOfFile(f);
+            ok = mdwd(GetCurrentProcess(), GetCurrentProcessId(), f,
+                      0x0, &mei, NULL, NULL);
+            if (!ok)
+                hlg_clog("[hlg-win] minidump normal FAILED (err=%08lX)\n",
+                         GetLastError());
+        }
+        CloseHandle(f);
+        hlg_clog("[hlg-win] minidump %s: %s\n", path, ok ? "written" : "FAILED");
+        SetEvent(s_md_done);
+    }
+}
+
+static void hlg_write_minidump(PEXCEPTION_POINTERS ep)
+{
+    if (!s_md_go || !s_md_done) { hlg_clog("[hlg-win] dumper not ready\n"); return; }
+    s_md_ctx.ep = ep;
+    s_md_ctx.tid = GetCurrentThreadId();
+    SetEvent(s_md_go);
+    WaitForSingleObject(s_md_done, 30000);
+}
+
+typedef BOOL (WINAPI *EnumMods_t)(HANDLE, HMODULE *, DWORD, LPDWORD);
+typedef struct { LPVOID base; DWORD size; LPVOID entry; } hlg_modinfo;
+typedef BOOL (WINAPI *GetModInfo_t)(HANDLE, HMODULE, hlg_modinfo *, DWORD);
+
+static void hlg_dump_modules(const char *tag)
+{
+    HMODULE k32 = GetModuleHandleA("kernel32.dll");
+    EnumMods_t em = k32 ? (EnumMods_t)GetProcAddress(k32, "K32EnumProcessModules") : NULL;
+    GetModInfo_t gmi = k32 ? (GetModInfo_t)GetProcAddress(k32, "K32GetModuleInformation") : NULL;
+    if (!em || !gmi) return;
+    static HMODULE mods[1024];
+    DWORD need = 0;
+    if (!em(GetCurrentProcess(), mods, sizeof(mods), &need)) return;
+    DWORD n = need / sizeof(HMODULE);
+    if (n > 1024) n = 1024;
+    hlg_clog("[hlg-win] ==== module map (%s): %lu modules ====\n",
+             tag, (unsigned long)n);
+    for (DWORD i = 0; i < n; ++i) {
+        hlg_modinfo mi = { 0 };
+        char name[MAX_PATH] = "?";
+        if (!gmi(GetCurrentProcess(), mods[i], &mi, sizeof(mi))) continue;
+        GetModuleFileNameA(mods[i], name, MAX_PATH);
+        hlg_clog("[hlg-win]  mod %p-%p %s\n", mi.base,
+                 (void *)((ULONG_PTR)mi.base + mi.size), name);
+    }
+}
+
+static LONG WINAPI hlg_crash_uef(EXCEPTION_POINTERS *ep)
+{
+    static volatile LONG once = 0;
+    DWORD code = (ep && ep->ExceptionRecord) ? ep->ExceptionRecord->ExceptionCode : 0;
+    ULONG_PTR fault_addr = 0;
+    if (code == EXCEPTION_ACCESS_VIOLATION
+            && ep->ExceptionRecord->NumberParameters >= 2)
+        fault_addr = (ULONG_PTR)ep->ExceptionRecord->ExceptionInformation[1];
+
+    /* HotSpot NPE: skip one-shot dump; JVM filter handles it. */
+    if (code == EXCEPTION_ACCESS_VIOLATION && fault_addr < 0x10000
+            && s_jvm_filter
+            && s_jvm_filter != (LPTOP_LEVEL_EXCEPTION_FILTER)hlg_crash_uef)
+        return s_jvm_filter(ep);
+
+    if (InterlockedExchange(&once, 1) == 0) {
+        void *xip = (ep && ep->ExceptionRecord)
+                  ? ep->ExceptionRecord->ExceptionAddress : NULL;
+        hlg_clog("[hlg-win] FATAL: unhandled exception code=%08lX addr=%p tid=%lu\n",
+                code, xip, GetCurrentThreadId());
+        {
+            HMODULE m = NULL;
+            char name[MAX_PATH];
+            if (xip)
+                GetModuleHandleExA(0x4 /*FROM_ADDRESS*/ | 0x2 /*UNCHANGED_REFCOUNT*/,
+                                   (LPCSTR)xip, &m);
+            if (m && GetModuleFileNameA(m, name, MAX_PATH))
+                hlg_clog("[hlg-win] FATAL rip in %s +0x%llX\n", name,
+                        (unsigned long long)((ULONG_PTR)xip - (ULONG_PTR)m));
+            else
+                hlg_clog("[hlg-win] FATAL rip not in any module (JIT/heap?)\n");
+        }
+        hlg_dump_modules("fatal");
+        hlg_dump_av_ring();
+        hlg_write_minidump(ep);
+    }
+    if (s_jvm_filter && s_jvm_filter != (LPTOP_LEVEL_EXCEPTION_FILTER)hlg_crash_uef) {
+        LONG r = s_jvm_filter(ep);
+        if (r == EXCEPTION_CONTINUE_EXECUTION)
+            InterlockedExchange(&once, 0);
+        return r;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static PVOID WINAPI hook_AddVEH(ULONG First, PVECTORED_EXCEPTION_HANDLER Handler);
 static ULONG WINAPI hook_RemoveVEH(PVOID Handle);
+static LONG CALLBACK hlg_dispatch_veh(PEXCEPTION_POINTERS ep);
 
 static HMODULE module_of(void *p)
 {
@@ -387,9 +600,107 @@ static ULONG real_remove_veh(PVOID Handle)
     return r;
 }
 
-/** Flycast uses VEH/AV nvmem; isolate its handlers from the JVM chain.
- *  PCSX2 also uses fastmem AVs, but isolating it breaks single-instance —
- *  its own handler in the real VEH chain is required. */
+/* PCSX2: pcsx2_<pid> shmem name -> pcsx2_<pid>_sN per .slotN.dll (do not patch "pcsx2" in DLL). */
+typedef HANDLE (WINAPI *CreateFileMappingW_t)(HANDLE, LPSECURITY_ATTRIBUTES,
+                                             DWORD, DWORD, DWORD, LPCWSTR);
+static void *s_cfm_fn = NULL;
+static BYTE s_cfm_orig[14];
+static int  s_cfm_hooked = 0;
+static int  s_cfm_log_left = 4;
+
+static HLG_TLS wchar_t t_cfm_rewritten[160];
+
+static HANDLE WINAPI hook_CreateFileMappingW(HANDLE, LPSECURITY_ATTRIBUTES,
+        DWORD, DWORD, DWORD, LPCWSTR);
+
+static int pcsx2_slot_from_module(HMODULE hm)
+{
+    char path[MAX_PATH];
+    if (!hm || !GetModuleFileNameA(hm, path, MAX_PATH))
+        return -1;
+    for (char *p = path; *p; ++p)
+        *p = (char)tolower((unsigned char)*p);
+    if (!strstr(path, "pcsx2"))
+        return -1;
+    const char *sl = strstr(path, ".slot");
+    if (!sl)
+        return 0;
+    int n = atoi(sl + 5);
+    return (n >= 0 && n < 8) ? n : -1;
+}
+
+static int pcsx2_slot_from_rip(void *rip)
+{
+    return pcsx2_slot_from_module(module_of(rip));
+}
+
+static int wcs_ends_with_slot_tag(LPCWSTR name)
+{
+    size_t len = wcslen(name);
+    if (len < 4)
+        return 0;
+    if (name[len - 3] != L'_' || name[len - 2] != L's')
+        return 0;
+    wchar_t c = name[len - 1];
+    return c >= L'0' && c <= L'7';
+}
+
+static HANDLE real_create_file_mapping_w(HANDLE hFile, LPSECURITY_ATTRIBUTES sa,
+        DWORD prot, DWORD hi, DWORD lo, LPCWSTR name)
+{
+    DWORD old;
+    VirtualProtect(s_cfm_fn, 14, PAGE_EXECUTE_READWRITE, &old);
+    memcpy(s_cfm_fn, s_cfm_orig, 14);
+    FlushInstructionCache(GetCurrentProcess(), s_cfm_fn, 14);
+    HANDLE h = ((CreateFileMappingW_t)s_cfm_fn)(hFile, sa, prot, hi, lo, name);
+    write_jmp(s_cfm_fn, (void *)hook_CreateFileMappingW);
+    VirtualProtect(s_cfm_fn, 14, old, &old);
+    return h;
+}
+
+static HANDLE WINAPI hook_CreateFileMappingW(HANDLE hFile, LPSECURITY_ATTRIBUTES sa,
+        DWORD prot, DWORD hi, DWORD lo, LPCWSTR lpName)
+{
+    LPCWSTR use = lpName;
+#if defined(__GNUC__) || defined(__clang__)
+    void *ret = __builtin_return_address(0);
+#else
+    void *ret = _ReturnAddress();
+#endif
+    if (lpName && lpName[0] && wcsncmp(lpName, L"pcsx2_", 6) == 0
+            && !wcs_ends_with_slot_tag(lpName)) {
+        int slot = pcsx2_slot_from_rip(ret);
+        if (slot >= 0) {
+            if (swprintf(t_cfm_rewritten, 160, L"%s_s%d", lpName, slot) > 0)
+                use = t_cfm_rewritten;
+            if (s_cfm_log_left > 0) {
+                fprintf(stderr, "[hlg-win] PS2 shmem slot=%d name rewritten\n", slot);
+                fflush(stderr);
+                s_cfm_log_left--;
+            }
+        }
+    }
+    return real_create_file_mapping_w(hFile, sa, prot, hi, lo, use);
+}
+
+static void hook_create_file_mapping(void)
+{
+    if (s_cfm_hooked)
+        return;
+    HMODULE k32 = GetModuleHandleA("kernel32.dll");
+    void *cfm = k32 ? (void *)GetProcAddress(k32, "CreateFileMappingW") : NULL;
+    if (!cfm) {
+        fprintf(stderr, "[hlg-win] CreateFileMappingW not found\n");
+        return;
+    }
+    s_cfm_fn = cfm;
+    memcpy(s_cfm_orig, cfm, 14);
+    write_jmp(cfm, (void *)hook_CreateFileMappingW);
+    s_cfm_hooked = 1;
+    fprintf(stderr, "[hlg-win] CreateFileMappingW hooked (PS2 shmem uniquify)\n");
+}
+
+/** Flycast VEH/AV nvmem — isolate handlers from JVM chain. */
 static int is_isolated_core_addr(void *p)
 {
     HMODULE hm = NULL;
@@ -401,6 +712,67 @@ static int is_isolated_core_addr(void *p)
         }
     }
     return 0;
+}
+
+static int is_pcsx2_core_addr(void *p)
+{
+    HMODULE hm = NULL;
+    if (GetModuleHandleExA(0x4 | 0x2, (LPCSTR)p, &hm) && hm) {
+        char name[MAX_PATH];
+        if (GetModuleFileNameA(hm, name, MAX_PATH)) {
+            for (char *s = name; *s; ++s) *s = (char)tolower((unsigned char)*s);
+            if (strstr(name, "pcsx2")) return 1;
+        }
+    }
+    return 0;
+}
+
+static void stamp_ps2_bounds(HMODULE m, ULONG_PTR lo, ULONG_PTR hi)
+{
+    if (!m) return;
+    for (int i = 0; i < 8; ++i) {
+        if (!s_ps2[i].used) continue;
+        if (s_ps2[i].mod == m) {
+            s_ps2[i].lo = lo;
+            s_ps2[i].hi = hi;
+        }
+    }
+}
+
+static void assign_ps2_bounds(ULONG_PTR lo, ULONG_PTR hi, const char *tag)
+{
+    if (!(lo < hi)) return;
+    int slot = -1;
+    EnterCriticalSection(&s_veh_cs);
+    /* Fastmem may log before AddVEH — use pending bounds until slot registers. */
+    if (t_ps2_slot >= 0 && t_ps2_slot < 8 && s_ps2[t_ps2_slot].used) {
+        slot = t_ps2_slot;
+    } else {
+        for (int i = 7; i >= 0; --i) {
+            if (s_ps2[i].used && !(s_ps2[i].lo < s_ps2[i].hi)) {
+                slot = i;
+                break;
+            }
+        }
+    }
+    if (slot >= 0) {
+        HMODULE m = s_ps2[slot].mod;
+        if (m) stamp_ps2_bounds(m, lo, hi);
+        else {
+            s_ps2[slot].lo = lo;
+            s_ps2[slot].hi = hi;
+        }
+        LeaveCriticalSection(&s_veh_cs);
+        fprintf(stderr, "[hlg-win] %s bounds slot=%d mod=%p range=%p-%p\n",
+                tag, slot, (void *)m, (void *)lo, (void *)hi);
+    } else {
+        LeaveCriticalSection(&s_veh_cs);
+        t_pending_ps2_lo = lo;
+        t_pending_ps2_hi = hi;
+        fprintf(stderr, "[hlg-win] %s bounds PENDING: %p-%p\n",
+                tag, (void *)lo, (void *)hi);
+    }
+    fflush(stderr);
 }
 
 static int is_isolated_core_ctx(PEXCEPTION_POINTERS ep)
@@ -470,10 +842,18 @@ static void assign_slot_bounds(ULONG_PTR core_lo, ULONG_PTR core_hi,
 
 static void parse_vmem_bounds(const char *msg)
 {
-    /* PCSX2: not isolated — ignore for VEH table. */
-    if (strstr(msg, "Fastmem area:")) return;
+    const char *fm = strstr(msg, "Fastmem area:");
+    if (fm) {
+        unsigned long long lo = 0, hi = 0;
+        const char *p = fm + strlen("Fastmem area:");
+        while (*p == ' ' || *p == '\t') ++p;
+        if (sscanf(p, "0x%llx - 0x%llx", &lo, &hi) >= 2
+                || sscanf(p, "%llx - %llx", &lo, &hi) >= 2) {
+            assign_ps2_bounds((ULONG_PTR)lo, (ULONG_PTR)(hi + 1), "fastmem");
+        }
+        return;
+    }
 
-    /* Flycast: "BASE %llx RAM(...) ..." */
     const char *vmem = strstr(msg, "BASE ");
     if (!vmem) return;
     unsigned long long base = 0, ram = 0, vram = 0, aram = 0;
@@ -491,9 +871,8 @@ static void parse_vmem_bounds(const char *msg)
     if ((ULONG_PTR)aram < core_lo) core_lo = (ULONG_PTR)aram;
     if (ram_end  > core_hi) core_hi = ram_end;
     if (vram_end > core_hi) core_hi = vram_end;
-    core_hi += 0x100000ULL; /* small pad */
+    core_hi += 0x100000ULL;
 
-    /* Expanded window covers Dreamcast host mirrors; may overlap sessions. */
     ULONG_PTR route_lo = core_lo;
     ULONG_PTR route_hi = core_hi + 0x1000000ULL;
     if (route_lo > 0x81000000ULL) route_lo -= 0x81000000ULL;
@@ -519,7 +898,7 @@ static int is_nvmem_addr(ULONG_PTR addr)
     int hit = is_nvmem_addr_locked(addr);
     LeaveCriticalSection(&s_veh_cs);
     if (hit) return 1;
-    /* Heuristic before any session has logged BASE (or parse missed). */
+    /* Heuristic when BASE not logged yet. */
     if (addr < 0x00007FF400000000ULL || addr >= 0x00007FF500000000ULL)
         return 0;
     MEMORY_BASIC_INFORMATION mbi;
@@ -537,6 +916,97 @@ static int should_route_isolated(PEXCEPTION_POINTERS ep)
     return is_nvmem_addr(addr);
 }
 
+/** PS2 Fastmem owner; binds thread to slot on hit. */
+static int dispatch_ps2_fastmem(PEXCEPTION_POINTERS ep, ULONG_PTR addr, LONG *out)
+{
+    PVECTORED_EXCEPTION_HANDLER h = NULL;
+    int slot = -1;
+    unsigned gen = 0;
+    EnterCriticalSection(&s_veh_cs);
+    for (int i = 0; i < 8; ++i) {
+        if (!s_ps2[i].used || !s_ps2[i].h) continue;
+        if (s_ps2[i].lo < s_ps2[i].hi
+                && addr >= s_ps2[i].lo && addr < s_ps2[i].hi) {
+            h = s_ps2[i].h;
+            slot = i;
+            gen = s_ps2[i].gen;
+            break;
+        }
+    }
+    LeaveCriticalSection(&s_veh_cs);
+    if (!h) return 0;
+    t_bound_ps2 = slot;
+    t_bound_gen = gen;
+    *out = h(ep);
+    return 1;
+}
+
+/** PS2 outside Fastmem: bound slot, or one-time try-all with bind. */
+static LONG dispatch_ps2_nonfastmem(PEXCEPTION_POINTERS ep, ULONG_PTR addr,
+                                    void *rip, int nested)
+{
+    if (addr < 0x10000)
+        return EXCEPTION_CONTINUE_SEARCH;
+
+    PVECTORED_EXCEPTION_HANDLER h = NULL;
+    int bound = t_bound_ps2;
+    EnterCriticalSection(&s_veh_cs);
+    if (bound >= 0 && bound < 8 && s_ps2[bound].used
+            && s_ps2[bound].gen == t_bound_gen)
+        h = s_ps2[bound].h;
+    LeaveCriticalSection(&s_veh_cs);
+    if (h) {
+        LONG r = h(ep);
+        av_record(rip, (void *)addr, bound, r, AV_BOUND);
+        return r;
+    }
+    if (bound >= 0) t_bound_ps2 = -1;
+
+    if (nested) {
+        av_record(rip, (void *)addr, -1, EXCEPTION_CONTINUE_SEARCH, AV_NESTED_SKIP);
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    {
+        HMODULE m = module_of(rip);
+        if (m && !is_pcsx2_core_addr(rip))
+            return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    PVECTORED_EXCEPTION_HANDLER hs[8];
+    int slots[8];
+    unsigned gens[8];
+    int n = 0;
+    EnterCriticalSection(&s_veh_cs);
+    for (int i = 0; i < 8; ++i) {
+        if (s_ps2[i].used && s_ps2[i].h) {
+            hs[n] = s_ps2[i].h;
+            slots[n] = i;
+            gens[n] = s_ps2[i].gen;
+            n++;
+        }
+    }
+    LeaveCriticalSection(&s_veh_cs);
+    for (int i = n - 1; i >= 0; --i) {
+        LONG r = hs[i](ep);
+        if (r == EXCEPTION_CONTINUE_EXECUTION) {
+            t_bound_ps2 = slots[i];
+            t_bound_gen = gens[i];
+            av_record(rip, (void *)addr, slots[i], r, AV_TRYALL);
+            return r;
+        }
+    }
+    av_record(rip, (void *)addr, -1, EXCEPTION_CONTINUE_SEARCH, AV_TRYALL);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static int any_ps2_used(void)
+{
+    for (int i = 0; i < 8; ++i)
+        if (s_ps2[i].used) return 1;
+    return 0;
+}
+
 static LONG CALLBACK hlg_dispatch_veh(PEXCEPTION_POINTERS ep)
 {
     EXCEPTION_RECORD *er = ep->ExceptionRecord;
@@ -548,54 +1018,80 @@ static LONG CALLBACK hlg_dispatch_veh(PEXCEPTION_POINTERS ep)
 #else
     void *rip = (void *)ep->ContextRecord->Eip;
 #endif
-    int route = should_route_isolated(ep);
+
+    int nested = t_in_dispatch > 0;
+    t_in_dispatch++;
+    LONG result = EXCEPTION_CONTINUE_SEARCH;
+
     if (s_dispatch_log_left > 0) {
-        fprintf(stderr, "[hlg-win] AV dispatch: rip=%p addr=%p route=%d\n",
-                rip, (void *)addr, route);
+        fprintf(stderr, "[hlg-win] AV dispatch: tid=%lu rip=%p addr=%p nested=%d\n",
+                GetCurrentThreadId(), rip, (void *)addr, nested);
         fflush(stderr);
         s_dispatch_log_left--;
     }
-    if (!route) return EXCEPTION_CONTINUE_SEARCH;
 
-    HMODULE rip_mod = module_of(rip);
+    {
+        LONG ps2r;
+        if (dispatch_ps2_fastmem(ep, addr, &ps2r)) {
+            av_record(rip, (void *)addr, t_bound_ps2, ps2r, AV_FASTMEM);
+            result = ps2r;
+            goto done;
+        }
+    }
 
-    /* Priority: same module → tight core range → expanded route range.
-     * Never give a fault to another session's handler first when core
-     * ranges identify the owner (expanded windows overlap heavily). */
-    PVECTORED_EXCEPTION_HANDLER same_mod[8];
-    PVECTORED_EXCEPTION_HANDLER in_core[8];
-    PVECTORED_EXCEPTION_HANDLER in_route[8];
-    int n_same = 0, n_core = 0, n_route = 0;
+    if (should_route_isolated(ep)) {
+        HMODULE rip_mod = module_of(rip);
+        PVECTORED_EXCEPTION_HANDLER same_mod[8];
+        PVECTORED_EXCEPTION_HANDLER in_core[8];
+        PVECTORED_EXCEPTION_HANDLER in_route[8];
+        int n_same = 0, n_core = 0, n_route = 0;
 
-    EnterCriticalSection(&s_veh_cs);
-    for (int i = 0; i < 8; ++i) {
-        if (!s_fly[i].used || !s_fly[i].h) continue;
-        int same = rip_mod && s_fly[i].mod && s_fly[i].mod == rip_mod;
-        int core = s_fly[i].core_lo < s_fly[i].core_hi
-                && addr >= s_fly[i].core_lo && addr < s_fly[i].core_hi;
-        int routed = s_fly[i].route_lo < s_fly[i].route_hi
-                && addr >= s_fly[i].route_lo && addr < s_fly[i].route_hi;
-        if (same) same_mod[n_same++] = s_fly[i].h;
-        else if (core) in_core[n_core++] = s_fly[i].h;
-        else if (routed) in_route[n_route++] = s_fly[i].h;
-    }
-    LeaveCriticalSection(&s_veh_cs);
+        EnterCriticalSection(&s_veh_cs);
+        for (int i = 0; i < 8; ++i) {
+            if (!s_fly[i].used || !s_fly[i].h) continue;
+            int same = rip_mod && s_fly[i].mod && s_fly[i].mod == rip_mod;
+            int core = s_fly[i].core_lo < s_fly[i].core_hi
+                    && addr >= s_fly[i].core_lo && addr < s_fly[i].core_hi;
+            int routed = s_fly[i].route_lo < s_fly[i].route_hi
+                    && addr >= s_fly[i].route_lo && addr < s_fly[i].route_hi;
+            if (same) same_mod[n_same++] = s_fly[i].h;
+            else if (core) in_core[n_core++] = s_fly[i].h;
+            else if (routed) in_route[n_route++] = s_fly[i].h;
+        }
+        LeaveCriticalSection(&s_veh_cs);
 
-    /* Newest handler first — Flycast registers a generic VEH then the nvmem
-     * one; the nvmem handler must see the fault before a GPF logger. */
-    for (int i = n_same - 1; i >= 0; --i) {
-        LONG r = same_mod[i](ep);
-        if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
+        for (int i = n_same - 1; i >= 0; --i) {
+            LONG r = same_mod[i](ep);
+            if (r == EXCEPTION_CONTINUE_EXECUTION) {
+                av_record(rip, (void *)addr, -1, r, AV_FLYCAST);
+                result = r;
+                goto done;
+            }
+        }
+        for (int i = n_core - 1; i >= 0; --i) {
+            LONG r = in_core[i](ep);
+            if (r == EXCEPTION_CONTINUE_EXECUTION) {
+                av_record(rip, (void *)addr, -1, r, AV_FLYCAST);
+                result = r;
+                goto done;
+            }
+        }
+        for (int i = n_route - 1; i >= 0; --i) {
+            LONG r = in_route[i](ep);
+            if (r == EXCEPTION_CONTINUE_EXECUTION) {
+                av_record(rip, (void *)addr, -1, r, AV_FLYCAST);
+                result = r;
+                goto done;
+            }
+        }
     }
-    for (int i = n_core - 1; i >= 0; --i) {
-        LONG r = in_core[i](ep);
-        if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
-    }
-    for (int i = n_route - 1; i >= 0; --i) {
-        LONG r = in_route[i](ep);
-        if (r == EXCEPTION_CONTINUE_EXECUTION) return r;
-    }
-    return EXCEPTION_CONTINUE_SEARCH;
+
+    if (any_ps2_used())
+        result = dispatch_ps2_nonfastmem(ep, addr, rip, nested);
+
+done:
+    t_in_dispatch--;
+    return result;
 }
 
 static PVOID WINAPI hook_AddVEH(ULONG First, PVECTORED_EXCEPTION_HANDLER Handler)
@@ -618,7 +1114,7 @@ static PVOID WINAPI hook_AddVEH(ULONG First, PVECTORED_EXCEPTION_HANDLER Handler
             }
         }
         if (!s_dispatcher)
-            s_dispatcher = real_add_veh(1 /*head*/, hlg_dispatch_veh);
+            s_dispatcher = real_add_veh(1, hlg_dispatch_veh);
         if (slot >= 0 && t_pending_core_lo < t_pending_core_hi) {
             stamp_bounds(slot, t_pending_core_lo, t_pending_core_hi,
                          t_pending_route_lo, t_pending_route_hi);
@@ -636,6 +1132,56 @@ static PVOID WINAPI hook_AddVEH(ULONG First, PVECTORED_EXCEPTION_HANDLER Handler
         fflush(stderr);
         return handle ? handle : (PVOID)Handler;
     }
+
+    if (is_pcsx2_core_addr((void *)Handler)) {
+        PVOID handle = NULL;
+        int slot = -1;
+        unsigned gen = 0;
+        HMODULE mod = module_of((void *)Handler);
+        EnterCriticalSection(&s_veh_cs);
+        for (int i = 0; i < 8; ++i) {
+            if (!s_ps2[i].used) {
+                s_ps2[i].h = Handler;
+                s_ps2[i].mod = mod;
+                s_ps2[i].lo = s_ps2[i].hi = 0;
+                s_ps2[i].gen++;
+                s_ps2[i].used = 1;
+                gen = s_ps2[i].gen;
+                handle = (PVOID)&s_ps2[i];
+                slot = i;
+                break;
+            }
+        }
+        if (!s_dispatcher)
+            s_dispatcher = real_add_veh(1, hlg_dispatch_veh);
+        if (slot >= 0 && t_pending_ps2_lo < t_pending_ps2_hi) {
+            stamp_ps2_bounds(mod, t_pending_ps2_lo, t_pending_ps2_hi);
+            fprintf(stderr, "[hlg-win] applied PENDING fastmem to ps2 slot=%d\n", slot);
+            t_pending_ps2_lo = t_pending_ps2_hi = 0;
+        }
+        s_dispatch_log_left = 32;
+        LeaveCriticalSection(&s_veh_cs);
+        if (slot >= 0) {
+            t_ps2_slot = slot;
+            t_bound_ps2 = slot;
+            t_bound_gen = gen;
+        }
+        if (!handle) {
+            fprintf(stderr, "[hlg-win] WARNING: PS2 table FULL — passthrough %p\n",
+                    (void *)Handler);
+            fflush(stderr);
+            EnterCriticalSection(&s_veh_cs);
+            handle = real_add_veh(First, Handler);
+            LeaveCriticalSection(&s_veh_cs);
+            return handle;
+        }
+        fprintf(stderr, "[hlg-win] PS2 VEH %p ISOLATED (slot=%d gen=%u mod=%p handle=%p)\n",
+                (void *)Handler, slot, gen, (void *)mod, handle);
+        fflush(stderr);
+        hlg_dump_modules("ps2 register");
+        return handle;
+    }
+
     EnterCriticalSection(&s_veh_cs);
     PVOID h = real_add_veh(First, Handler);
     LeaveCriticalSection(&s_veh_cs);
@@ -659,6 +1205,25 @@ static ULONG WINAPI hook_RemoveVEH(PVOID Handle)
         fprintf(stderr, "[hlg-win] AV-core VEH removed (slot=%d handle=%p)\n", slot, Handle);
         return 1;
     }
+
+    if ((ULONG_PTR)Handle >= (ULONG_PTR)&s_ps2[0] &&
+        (ULONG_PTR)Handle <= (ULONG_PTR)&s_ps2[7]) {
+        EnterCriticalSection(&s_veh_cs);
+        ps2_entry *e = (ps2_entry *)Handle;
+        int slot = (int)(e - s_ps2);
+        e->used = 0;
+        e->h = NULL;
+        e->mod = NULL;
+        e->lo = e->hi = 0;
+        e->gen++;
+        LeaveCriticalSection(&s_veh_cs);
+        if (t_ps2_slot == slot) t_ps2_slot = -1;
+        if (t_bound_ps2 == slot) t_bound_ps2 = -1;
+        fprintf(stderr, "[hlg-win] PS2 VEH removed (slot=%d handle=%p)\n", slot, Handle);
+        fflush(stderr);
+        return 1;
+    }
+
     EnterCriticalSection(&s_veh_cs);
     ULONG r = real_remove_veh(Handle);
     LeaveCriticalSection(&s_veh_cs);
@@ -668,7 +1233,8 @@ static ULONG WINAPI hook_RemoveVEH(PVOID Handle)
 __declspec(dllexport) void hlg_capture_jvm_filter(void)
 {
     LPTOP_LEVEL_EXCEPTION_FILTER cur = peek_uef();
-    if (cur != NULL) s_jvm_filter = cur;
+    if (cur != NULL && cur != (LPTOP_LEVEL_EXCEPTION_FILTER)hlg_crash_uef)
+        s_jvm_filter = cur;
     fprintf(stderr, "[hlg-win] captured JVM UEF = %p\n", (void *)s_jvm_filter);
 }
 
@@ -687,29 +1253,34 @@ __declspec(dllexport) void hlg_hook_addveh(void)
     write_jmp(rem, (void *)hook_RemoveVEH);
     s_veh_hooked = 1;
     fprintf(stderr, "[hlg-win] RtlAdd/RemoveVectoredExceptionHandler hooked\n");
+    hook_create_file_mapping();
+    s_md_go = CreateEventA(NULL, FALSE, FALSE, NULL);
+    s_md_done = CreateEventA(NULL, FALSE, FALSE, NULL);
+    if (s_md_go && s_md_done)
+        CloseHandle(CreateThread(NULL, 0, hlg_minidump_thread, NULL, 0, NULL));
+    SetUnhandledExceptionFilter((LPTOP_LEVEL_EXCEPTION_FILTER)hlg_crash_uef);
+    fprintf(stderr, "[hlg-win] crash UEF installed (chain -> JVM %p)\n",
+            (void *)s_jvm_filter);
     fflush(stderr);
 }
 
 __declspec(dllexport) void hlg_reset_veh_session(void)
 {
-    /* Global wipe — Java calls only when FLYCAST_VEH_SESSIONS hits 0. */
     if (!s_veh_hooked) return;
     EnterCriticalSection(&s_veh_cs);
-    if (s_dispatcher) {
-        RemoveVectoredExceptionHandler(s_dispatcher);
-        s_dispatcher = NULL;
-    }
     memset(s_fly, 0, sizeof(s_fly));
     s_dispatch_log_left = 5;
+    if (s_dispatcher && !any_ps2_used()) {
+        real_remove_veh(s_dispatcher);
+        s_dispatcher = NULL;
+    }
     LeaveCriticalSection(&s_veh_cs);
     t_fly_slot = -1;
-    fprintf(stderr, "[hlg-win] VEH session reset\n");
+    fprintf(stderr, "[hlg-win] Flycast VEH session reset (PS2 isolation kept)\n");
     fflush(stderr);
 }
 
-/* =========================================================================
- *  Контекст
- * ========================================================================= */
+/* Context lifecycle. */
 static int ensure_current(hlg_ctx *c) {
     if (!c || !c->initialized || !c->hdc || !c->hglrc) return 0;
     if (wglGetCurrentContext() == c->hglrc) { t_cur = c; return 1; }
@@ -815,9 +1386,7 @@ static int create_gl_context(hlg_ctx *c, int major, int minor, int compat) {
     return 1;
 }
 
-/* =========================================================================
- *  Экспорты: инстансы
- * ========================================================================= */
+/* Exported instance API. */
 __declspec(dllexport) void *hlg_create(void) {
     hlg_ctx *c = (hlg_ctx *)calloc(1, sizeof(hlg_ctx));
     if (!c) return NULL;
@@ -954,9 +1523,7 @@ __declspec(dllexport) int hlg_resize(void *h, int w, int ht) {
     return 1;
 }
 
-/* =========================================================================
- *  Коллбеки для ядра — БЕЗ handle, диспетчеризация через t_cur
- * ========================================================================= */
+/* Core callbacks (no handle — dispatch via t_cur). */
 static void tracked_glBindFramebuffer(unsigned int target, unsigned int fbo) {
     hlg_ctx *c = t_cur;
     if (!c || !ensure_current(c)) return;
@@ -991,9 +1558,7 @@ __declspec(dllexport) unsigned long hlg_get_framebuffer(void) {
 __declspec(dllexport) void *hlg_get_framebuffer_ptr(void)  { return (void *)hlg_get_framebuffer; }
 __declspec(dllexport) void *hlg_get_proc_address_ptr(void) { return (void *)hlg_get_proc_address; }
 
-/* =========================================================================
- *  Readback (per-instance, double PBO)
- * ========================================================================= */
+/* Readback (per-instance, double PBO). */
 __declspec(dllexport) void hlg_read_pixels(void *h, int *viewport_out, void *pixels_out,
                                            int max_pixels, int req_w, int req_h) {
     hlg_ctx *c = (hlg_ctx *)h;
@@ -1048,13 +1613,11 @@ __declspec(dllexport) void hlg_read_pixels(void *h, int *viewport_out, void *pix
         int out_w = read_w;
         int out_h = read_h;
 
-        /* кадр N: асинхронное чтение в pbo[idx] */
         p_BindBuf(HLG_GL_PIXEL_PACK_BUFFER, c->pbo[idx]);
         rp(0, 0, read_w, read_h, HLG_GL_BGRA, HLG_GL_UNSIGNED_BYTE, 0);
         c->pbo_w[idx] = read_w;
         c->pbo_h[idx] = read_h;
 
-        /* кадр N-1 из другого PBO */
         if (c->pbo_w[prev] > 0 && c->pbo_h[prev] > 0) {
             out_w = c->pbo_w[prev];
             out_h = c->pbo_h[prev];
@@ -1076,7 +1639,6 @@ __declspec(dllexport) void hlg_read_pixels(void *h, int *viewport_out, void *pix
         viewport_out[2] = out_w;
         viewport_out[3] = out_h;
     } else {
-        /* fallback: синхронный readback */
         viewport_out[0] = 0;
         viewport_out[1] = 0;
         viewport_out[2] = read_w;

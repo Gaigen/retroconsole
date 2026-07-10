@@ -3,10 +3,12 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 set OUT=runs\client\config\retroconsole\cores\.libheadless_gl.dll
+set OUT_SRV=runs\server\config\retroconsole\cores\.libheadless_gl.dll
 set RES=src\main\resources\natives\libheadless_gl.dll
 set SRC=headless_gl_win.c
 
 if not exist "runs\client\config\retroconsole\cores" mkdir "runs\client\config\retroconsole\cores"
+if not exist "runs\server\config\retroconsole\cores" mkdir "runs\server\config\retroconsole\cores"
 if not exist "src\main\resources\natives" mkdir "src\main\resources\natives"
 
 set "GCC="
@@ -49,4 +51,5 @@ echo Using compiler: %GCC%
 if errorlevel 1 exit /b 1
 
 copy /Y "%OUT%" "%RES%" >nul
-echo Built %OUT% and copied to %RES%
+copy /Y "%OUT%" "%OUT_SRV%" >nul
+echo Built %OUT% and copied to %RES% and %OUT_SRV%
