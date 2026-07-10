@@ -116,16 +116,12 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     @Override
     public void onLoad() {
         super.onLoad();
-        if (level != null && !level.isClientSide()) {
-            ConsoleRegistry.add(level, worldPosition);
-        }
-    }
-
-    @Override
-    public void onChunkUnloaded() {
-        super.onChunkUnloaded();
-        if (level != null && !level.isClientSide()) {
-            ConsoleRegistry.remove(level, worldPosition);
+        if (level instanceof ServerLevel serverLevel) {
+            serverLevel.getServer().execute(() -> {
+                if (!isRemoved() && serverLevel.isLoaded(worldPosition)) {
+                    ScreenMultiblocks.onConsoleChanged(serverLevel, worldPosition);
+                }
+            });
         }
     }
 
@@ -133,7 +129,6 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     public void setRemoved() {
         super.setRemoved();
         if (level != null && !level.isClientSide()) {
-            ConsoleRegistry.remove(level, worldPosition);
             stopEmulator();
         }
     }
