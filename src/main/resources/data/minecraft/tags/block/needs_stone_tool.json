@@ -1,0 +1,7 @@
+{
+  "replace": false,
+  "values": [
+    "retroconsole:retro_console",
+    "retroconsole:screen"
+  ]
+}
