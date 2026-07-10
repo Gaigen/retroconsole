@@ -20,11 +20,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
-import net.minecraft.world.level.storage.loot.LootParams;
 import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.List;
 import java.util.UUID;
 
 public class RetroConsoleBlock extends BaseEntityBlock {
@@ -107,11 +105,6 @@ public class RetroConsoleBlock extends BaseEntityBlock {
         if (!level.isClientSide() && !newState.is(this)) {
             ScreenMultiblocks.onConsoleChanged(level, pos);
         }
-    }
-
-    @Override
-    protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
-        return List.of(new ItemStack(this));
     }
 
     @Override

@@ -3,7 +3,6 @@ package com.retroconsole.block;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
@@ -15,10 +14,7 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
-import net.minecraft.world.level.storage.loot.LootParams;
 import org.jetbrains.annotations.Nullable;
-
-import java.util.List;
 
 public class ScreenBlock extends BaseEntityBlock {
 
@@ -90,11 +86,5 @@ public class ScreenBlock extends BaseEntityBlock {
             ScreenMultiblocks.rebuildAfterRemoval(level, pos, state);
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
-    }
-
-    /** BUGFIX: without a loot table the block did not drop; drop the block directly. */
-    @Override
-    protected List<ItemStack> getDrops(BlockState state, LootParams.Builder builder) {
-        return List.of(new ItemStack(this));
     }
 }
