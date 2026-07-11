@@ -1,5 +1,6 @@
 package com.retroconsole.platform;
 
+import com.retroconsole.config.ModConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,7 +18,8 @@ import java.util.stream.Stream;
  * directory junction).
  *
  * <p>Default up to {@code 8} concurrent PS2 sessions (VEH wrap gates foreign
- * Fastmem). Override: {@code -Dretroconsole.maxPcsx2Sessions=N}.
+ * Fastmem). Override via {@code limits.maxPcsx2Sessions} in
+ * {@code retroconsole-common.toml}.
  */
 public final class Pcsx2MemcardSync {
 
@@ -25,10 +27,6 @@ public final class Pcsx2MemcardSync {
     private static final Object LOCK = new Object();
     private static final AtomicInteger NEXT_ID = new AtomicInteger();
     private static final Map<Integer, Session> LIVE = new ConcurrentHashMap<>();
-
-    /** Soft cap — VEH wrap table is also 8 slots. */
-    private static final int MAX_SESSIONS =
-            Math.max(1, Integer.getInteger("retroconsole.maxPcsx2Sessions", 8));
 
     private static volatile String lastRefuseReason;
 
@@ -42,7 +40,7 @@ public final class Pcsx2MemcardSync {
     }
 
     public static int maxSessions() {
-        return MAX_SESSIONS;
+        return Math.max(1, Math.min(8, ModConfig.maxPcsx2Sessions()));
     }
 
     public static int liveSessions() {
@@ -56,8 +54,8 @@ public final class Pcsx2MemcardSync {
     public static Session install(PlayerPaths paths) {
         PlayerPaths p = paths != null ? paths : PlayerPaths.shared();
         synchronized (LOCK) {
-            if (LIVE.size() >= MAX_SESSIONS) {
-                lastRefuseReason = "PS2 session limit (" + MAX_SESSIONS
+            if (LIVE.size() >= maxSessions()) {
+                lastRefuseReason = "PS2 session limit (" + maxSessions()
                         + ") reached — stop another PS2 first";
                 LOGGER.error("{} — refused new session.", lastRefuseReason);
                 return null;
@@ -95,7 +93,7 @@ public final class Pcsx2MemcardSync {
             LIVE.put(id, session);
             lastRefuseReason = null;
             LOGGER.info("PS2 session {}/{}: system={} memcards={} ({} file(s) from stash {})",
-                    LIVE.size(), MAX_SESSIONS, systemRoot, live, n, stash);
+                    LIVE.size(), maxSessions(), systemRoot, live, n, stash);
             return session;
         }
     }

@@ -1,5 +1,6 @@
 package com.retroconsole.bridge;
 
+import com.retroconsole.config.ModConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,30 +38,53 @@ public final class CoreModulePool {
     /** Busy slot ids ("<core>#<index>"); guarded by class monitor. */
     private static final Set<String> BUSY = new HashSet<>();
 
+    private static volatile String lastRefuseReason;
+    private static volatile String lastRefuseKey;
+    private static volatile Object[] lastRefuseArgs = new Object[0];
+
     private CoreModulePool() {}
 
-    /** Optional safety valve: -Dretroconsole.maxSlots=N (default 0 = unlimited). */
-    private static final int MAX_SLOTS = Integer.getInteger("retroconsole.maxSlots", 0);
+    public static String lastRefuseReason() { return lastRefuseReason; }
+
+    public static String lastRefuseKey() { return lastRefuseKey; }
+
+    public static Object[] lastRefuseArgs() {
+        Object[] a = lastRefuseArgs;
+        return a != null ? a : new Object[0];
+    }
+
+    private static void clearRefuse() {
+        lastRefuseReason = null;
+        lastRefuseKey = null;
+        lastRefuseArgs = new Object[0];
+    }
+
+    private static void refuse(String key, Object[] args, String englishLog) {
+        lastRefuseKey = key;
+        lastRefuseArgs = args != null ? args : new Object[0];
+        lastRefuseReason = englishLog;
+        LOGGER.error(englishLog);
+    }
 
     /**
-     * Acquire a free slot and materialize its DLL copy. Slots are UNBOUNDED:
-     * indices grow as needed (slot0, slot1, ...) — start as many sessions as
-     * you like, RAM/GPU is the only natural limit.
+     * Acquire a free slot and materialize its DLL copy. Slots grow as needed
+     * unless {@link ModConfig#maxCoreSlots()} is &gt; 0.
      */
     public static synchronized Slot acquire(Path corePath) {
+        clearRefuse();
         String key = key(corePath);
+        int cap = ModConfig.maxCoreSlots();
         int copyFailures = 0;
-        for (int i = 0; MAX_SLOTS <= 0 || i < MAX_SLOTS; i++) {
+        for (int i = 0; cap <= 0 || i < cap; i++) {
             String id = key + "#" + i;
             if (BUSY.contains(id)) continue;
             Path slotPath = slotPath(corePath, i);
             boolean fresh = !Files.exists(slotPath);
             if (!ensureCopy(corePath, slotPath)) {
-                // A locked stale leftover -> just take the next index. But if
-                // even a FRESH copy to a new file fails (disk full, no perms),
-                // it is systemic — further indices won't help, bail out.
                 if (fresh && ++copyFailures >= 3) {
-                    LOGGER.error("Giving up after {} fresh-copy failures for {}", copyFailures, key);
+                    refuse("retroconsole.error.core_slot_copy",
+                            new Object[]{key},
+                            "Cannot copy core module for " + key + " (disk full or permissions)");
                     return null;
                 }
                 continue;
@@ -69,7 +93,16 @@ public final class CoreModulePool {
             LOGGER.info("Module slot acquired: {} -> {}", key, slotPath.getFileName());
             return new Slot(key, i, slotPath);
         }
-        LOGGER.error("Slot cap {} reached for {} (see -Dretroconsole.maxSlots)", MAX_SLOTS, key);
+        if (cap > 0) {
+            refuse("retroconsole.error.core_slot_cap",
+                    new Object[]{cap},
+                    "Core slot limit (" + cap + ") reached for " + key
+                            + " — stop another console or raise limits.maxCoreSlots");
+        } else {
+            refuse("retroconsole.error.core_slot_copy",
+                    new Object[]{key},
+                    "No free module slot for " + key);
+        }
         return null;
     }
 

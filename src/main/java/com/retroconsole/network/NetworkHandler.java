@@ -3,6 +3,7 @@ package com.retroconsole.network;
 import com.retroconsole.RetroConsole;
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.client.ClientPacketHandlers;
+import com.retroconsole.config.ModConfig;
 import com.retroconsole.library.ArtFiles;
 import com.retroconsole.library.GameSystem;
 import com.retroconsole.library.RomLibrary;
@@ -25,13 +26,17 @@ import java.util.function.Consumer;
 @EventBusSubscriber(modid = RetroConsole.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
 public final class NetworkHandler {
 
-    /** Control distance (input, saves, power off, game pick) — container-like. */
-    private static final double CONTROL_DISTANCE_SQ = 8.0 * 8.0;
-
-    /** View distance for world TV frame streaming. */
-    private static final double VIEW_DISTANCE_SQ = 64.0 * 64.0;
-
     private NetworkHandler() {}
+
+    private static double controlDistanceSq() {
+        int d = ModConfig.controlDistance();
+        return (double) d * d;
+    }
+
+    private static double viewSubscribeDistanceSq() {
+        int d = ModConfig.viewSubscribeDistance();
+        return (double) d * d;
+    }
 
     @SubscribeEvent
     public static void registerPackets(RegisterPayloadHandlersEvent event) {
@@ -89,7 +94,7 @@ public final class NetworkHandler {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
             if (pkt.watching()) {
-                if (!isNear(player, pkt.pos(), VIEW_DISTANCE_SQ)) return;
+                if (!isNear(player, pkt.pos(), viewSubscribeDistanceSq())) return;
                 ServerConsoles.addViewer(pkt.pos(), player.getUUID());
             } else {
                 ServerConsoles.removeViewer(pkt.pos(), player.getUUID());
@@ -101,7 +106,7 @@ public final class NetworkHandler {
     private static void handleCoreSelect(RetroCoreSelectPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
-            if (!isNear(player, pkt.pos(), CONTROL_DISTANCE_SQ)) return;
+            if (!isNear(player, pkt.pos(), controlDistanceSq())) return;
             if (player.level().getBlockEntity(pkt.pos())
                     instanceof RetroConsoleBlockEntity console) {
                 console.selectGame(pkt.coreName(), pkt.romId(), player.getUUID(), pkt.loadAuto());
@@ -124,7 +129,7 @@ public final class NetworkHandler {
     private static void handleLibraryRequest(RetroLibraryRequestPacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
             if (!(ctx.player() instanceof ServerPlayer player)) return;
-            if (!isNear(player, pkt.consolePos(), CONTROL_DISTANCE_SQ)) return;
+            if (!isNear(player, pkt.consolePos(), controlDistanceSq())) return;
             if (!(player.level().getBlockEntity(pkt.consolePos())
                     instanceof RetroConsoleBlockEntity)) return;
             RomLibrary lib = new RomLibrary();
@@ -154,7 +159,7 @@ public final class NetworkHandler {
     private static void withControlledConsole(IPayloadContext ctx, BlockPos pos,
                                               Consumer<RetroConsoleBlockEntity> action) {
         if (!(ctx.player() instanceof ServerPlayer player)) return;
-        if (!isNear(player, pos, CONTROL_DISTANCE_SQ)) return;
+        if (!isNear(player, pos, controlDistanceSq())) return;
         if (!(player.level().getBlockEntity(pos)
                 instanceof RetroConsoleBlockEntity console)) return;
         if (!console.isControlledBy(player)) return;

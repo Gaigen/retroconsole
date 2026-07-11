@@ -48,7 +48,15 @@ public class RetroConsole {
         // Directory creation itself is lazy — RetroConsolePaths creates each
         // folder on first read; the first caller is usually the first time
         // the player inserts a console block, well after config loading.
-        modContainer.registerConfig(Type.COMMON, ModConfig.SPEC);
+        modContainer.registerConfig(Type.COMMON, ModConfig.COMMON_SPEC);
+        modContainer.registerConfig(Type.SERVER, ModConfig.SERVER_SPEC);
+
+        if (net.neoforged.fml.loading.FMLEnvironment.dist
+                == net.neoforged.api.distmarker.Dist.CLIENT) {
+            modContainer.registerExtensionPoint(
+                    net.neoforged.neoforge.client.gui.IConfigScreenFactory.class,
+                    net.neoforged.neoforge.client.gui.ConfigurationScreen::new);
+        }
 
         ModBlocks.register(modEventBus);
         ModItems.register(modEventBus);
