@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "I": { "item": "minecraft:iron_ingot" },
+    "R": { "item": "minecraft:redstone" },
+    "G": { "item": "minecraft:glass_pane" }
+  },
+  "pattern": [
+    "GGG",
+    "GRG",
+    "III"
+  ],
+  "result": {
+    "count": 2,
+    "id": "retroconsole:screen"
+  }
+}
