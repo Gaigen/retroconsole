@@ -23,7 +23,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Consumer;
 
-@EventBusSubscriber(modid = RetroConsole.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
+@EventBusSubscriber(modid = RetroConsole.MOD_ID)
 public final class NetworkHandler {
 
     private NetworkHandler() {}

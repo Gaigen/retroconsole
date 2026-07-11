@@ -21,8 +21,18 @@ macOS is **not** supported. The mod does **not** ship libretro cores, BIOS files
 2. Start the game. On first launch the mod creates `config/retroconsole/` under your game directory.
 3. Download libretro cores (`.dll` on Windows, `.so` on Linux) from the [libretro buildbot](https://buildbot.libretro.com/) and place them in `config/retroconsole/cores/`.
 4. Add your legally obtained ROMs under `config/retroconsole/roms/`, preferably in subfolders (`nes/`, `gba/`, `ps2/`, …).
-5. In Creative mode, open the **Retro Console** tab and place a **Retro Console** block.
-6. Right-click the console → the game library opens. Select a game and press **Launch**.
+5. Craft a **Retro Console** and **Screen** blocks (or take them from the **Retro Console** creative tab):
+
+```
+Retro Console          Screen ×2
+I I I                  G G G
+I R I                  G R G
+I G I                  I I I
+
+I = iron ingot, R = redstone, G = glass pane
+```
+
+6. Place the console, then place screens so the console **touches** the wall. Right-click the console → the game library opens. Select a game and press **Launch**.
 7. While a game is running, right-click again to open the fullscreen **TV** view.
 
 ### Optional: world TV screens
@@ -133,6 +143,27 @@ Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has
 
 Other cores from the catalog table above may work, but were **not** part of the 0.1.0 smoke set.
 
+## Configuration
+
+Settings open **in-game**:
+1. Open the console library → **⚙** button (top right), or
+2. Main menu → **Mods** → RetroConsole → **Config**
+
+Two files (created on first launch / world load):
+
+| File | When editable in UI | Contents |
+|------|---------------------|----------|
+| `config/retroconsole-common.toml` | Always | Paths to cores/ROMs/system/saves |
+| `<world>/serverconfig/retroconsole-server.toml` (SP) or server `config/` | Singleplayer / LAN host only | Streaming, limits, video quality |
+
+On a **dedicated server**, edit the server’s toml (or ask the host) — clients cannot change server streaming/video from the UI.
+
+### `[streaming]` / `[limits]` / `[video]`
+
+Same keys as before (distances, session caps, `preset` + per-core overrides). Video overrides apply the next time you **launch** a game on a console.
+
+Leave override strings empty to keep the preset; fill them to customize (e.g. `pcsx2UpscaleMultiplier = "3"`).
+
 ## Multiplayer
 
 On a **dedicated server**, the game library is built from the **server's** `config/retroconsole/` (ROMs, cores, `systems.json`, `art/`). Clients do not scan their local `roms/` folder in multiplayer.
@@ -145,7 +176,7 @@ On a **dedicated server**, the game library is built from the **server's** `conf
 | Favorites, volume, core overrides | Client-local |
 | Save states & battery saves | Server (`saves/players/<uuid>/`) |
 
-Only the player who launched a game can send input, save states, and power off that console (within 8 blocks). Nearby players receive the world TV picture (video ~48 blocks from the console; opening the fullscreen TV view also subscribes you).
+Distances for control / video / audio come from the server's `[streaming]` section (defaults: control 8, video 48, audio 32).
 
 **Important:** ROM and core files must exist on the server at the same relative paths the client shows in the library.
 
