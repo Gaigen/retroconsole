@@ -1,6 +1,8 @@
 package com.retroconsole.server;
 
+import com.retroconsole.bridge.CoreModulePool;
 import com.retroconsole.bridge.LibretroCore;
+import com.retroconsole.config.ModConfig;
 import com.retroconsole.emu.CoreManager;
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
@@ -30,13 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ServerConsoles {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("RetroConsole-Server");
-
-    /** Radius for service notifications (stop packet is cheap, can be wide). */
-    private static final int NOTIFY_DISTANCE = 256;
-    /** Radius where players see the in-world TV screen and receive video frames. */
-    private static final int VIDEO_DISTANCE = 48;
-    /** Console audio hearing radius. */
-    private static final int AUDIO_DISTANCE = 32;
 
     // ConcurrentHashMap: mutations on server thread, reads from FrameSender threads.
     private static final ConcurrentHashMap<BlockPos, Entry> ENTRIES = new ConcurrentHashMap<>();
@@ -107,14 +102,9 @@ public class ServerConsoles {
 
         LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath, playerPaths);
         if (runtime == null) {
-            String reason = coreName.toLowerCase().contains("pcsx2")
-                    ? Pcsx2MemcardSync.lastRefuseReason()
-                    : null;
-            if (reason == null) {
-                reason = "Failed to load core " + coreName + " with ROM " + romId;
-            }
-            LOGGER.error(reason);
-            notifyOwner(ownerId, reason);
+            Component message = loadFailureMessage(coreName, romId);
+            LOGGER.error(message.getString());
+            notifyOwner(ownerId, message);
             return;
         }
 
@@ -195,20 +185,54 @@ public class ServerConsoles {
         }
     }
 
-    private static void notifyOwner(UUID ownerId, String message) {
-        if (ownerId == null || message == null || message.isBlank()) return;
+    private static Component loadFailureMessage(String coreName, String romId) {
+        String refuseKey = CoreModulePool.lastRefuseKey();
+        if (refuseKey != null) {
+            if ("retroconsole.error.core_slot_cap".equals(refuseKey)) {
+                Object[] args = CoreModulePool.lastRefuseArgs();
+                int cap = args.length > 0 && args[0] instanceof Number n
+                        ? n.intValue()
+                        : ModConfig.maxCoreSlots();
+                return Component.translatable(refuseKey, cap, coreName);
+            }
+            return Component.translatable(refuseKey, CoreModulePool.lastRefuseArgs());
+        }
+        if (coreName.toLowerCase().contains("pcsx2")) {
+            String pcsx2 = Pcsx2MemcardSync.lastRefuseReason();
+            if (pcsx2 != null && !pcsx2.isBlank()) {
+                if (pcsx2.contains("session limit")) {
+                    return Component.translatable(
+                            "retroconsole.error.pcsx2_session_cap",
+                            ModConfig.maxPcsx2Sessions());
+                }
+                if (pcsx2.toLowerCase().contains("bios")) {
+                    return Component.translatable("retroconsole.error.pcsx2_bios");
+                }
+                return Component.literal(pcsx2);
+            }
+        }
+        return Component.translatable("retroconsole.error.load_failed", coreName, romId);
+    }
+
+    private static void notifyOwner(UUID ownerId, Component message) {
+        if (ownerId == null || message == null) return;
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null) return;
         ServerPlayer player = server.getPlayerList().getPlayer(ownerId);
         if (player == null) return;
-        player.sendSystemMessage(Component.literal("[RetroConsole] " + message));
+        player.sendSystemMessage(Component.literal("[RetroConsole] ").append(message));
+    }
+
+    private static void notifyOwner(UUID ownerId, String message) {
+        if (message == null || message.isBlank()) return;
+        notifyOwner(ownerId, Component.literal(message));
     }
 
     private static void notifyConsoleStopped(BlockPos pos) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null || !server.isRunning()) return;
         RetroStopConsolePacket packet = new RetroStopConsolePacket(pos);
-        long radiusSq = (long) NOTIFY_DISTANCE * NOTIFY_DISTANCE;
+        long radiusSq = (long) ModConfig.notifyDistance() * ModConfig.notifyDistance();
         for (ServerPlayer player : new ArrayList<>(server.getPlayerList().getPlayers())) {
             if (player.hasDisconnected()) continue;
             if (player.blockPosition().distSqr(pos) < radiusSq) {
@@ -283,10 +307,10 @@ public class ServerConsoles {
     }
 
     /** In-world TV screen visibility radius (video frames). */
-    public static int videoDistance() { return VIDEO_DISTANCE; }
+    public static int videoDistance() { return ModConfig.videoDistance(); }
 
     /** Console audio hearing radius (audio packets). */
-    public static int audioDistance() { return AUDIO_DISTANCE; }
+    public static int audioDistance() { return ModConfig.audioDistance(); }
 
     /**
      * OPTIMIZATION: stopAll used to wait up to 15s SEQUENTIALLY per core (4 consoles =

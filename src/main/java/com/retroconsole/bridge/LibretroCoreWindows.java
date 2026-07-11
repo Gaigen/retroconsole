@@ -513,7 +513,7 @@ public class LibretroCoreWindows extends LibretroCore {
         this.moduleSlot = CoreModulePool.acquire(corePath);
         if (moduleSlot == null) {
             LOGGER.error("Failed to prepare a module slot for {} — see CoreModulePool log "
-                    + "(disk problem or -Dretroconsole.maxSlots cap).", corePath.getFileName());
+                    + "(disk problem or limits.maxCoreSlots cap).", corePath.getFileName());
             return; // core stays null -> loadGame() returns false
         }
         String absPath = moduleSlot.slotPath().toAbsolutePath().toString();

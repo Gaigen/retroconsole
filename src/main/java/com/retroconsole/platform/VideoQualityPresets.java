@@ -1,49 +1,64 @@
 package com.retroconsole.platform;
 
+import com.retroconsole.config.ModConfig;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Default libretro core options for ~1920px-wide output and max visual quality. */
+/**
+ * HW-core video options. Base values come from {@link ModConfig#videoPreset()};
+ * non-empty fields in {@code [video]} of the toml override individual knobs.
+ */
 public final class VideoQualityPresets {
 
     private VideoQualityPresets() {}
 
     public static Map<String, String> flycastOverrides() {
         Map<String, String> m = new LinkedHashMap<>();
+        Preset p = Preset.fromConfig();
         putBoth(m, "threaded_rendering", "disabled");
         putBoth(m, "per_content_vmus", "VMU A1");
         putBoth(m, "device_port1_slot1", "VMU");
-        putBoth(m, "internal_resolution", "1920x1440");
-        putBoth(m, "texupscale", "2");
+        putBoth(m, "internal_resolution",
+                override(ModConfig.FLYCAST_INTERNAL_RESOLUTION, p.flycastRes));
+        putBoth(m, "texupscale",
+                override(ModConfig.FLYCAST_TEX_UPSCALE, p.flycastTex));
         putBoth(m, "texupscale_max_filtered_texture_size", "1024");
-        putBoth(m, "anisotropic_filtering", "8");
+        putBoth(m, "anisotropic_filtering",
+                override(ModConfig.FLYCAST_ANISOTROPIC, p.flycastAniso));
         putBoth(m, "texture_filtering", "1");
         putBoth(m, "alpha_sorting", "per-triangle (normal)");
         putBoth(m, "fix_upscale_bleeding_edge", "enabled");
         return Map.copyOf(m);
     }
 
-    /** 2× native (960×544) — 1920×1088 is ~16× pixels + GL readback and lags badly. */
     public static Map<String, String> ppssppOverrides() {
-        return Map.of(
-                "ppsspp_cpu_core", "JIT",
-                "ppsspp_fast_memory", "disabled",
-                "ppsspp_frameskip", "0",
-                "ppsspp_auto_frameskip", "disabled",
-                "ppsspp_internal_resolution", "960x544",
-                "ppsspp_texture_scaling_level", "2",
-                "ppsspp_texture_shader", "xBRZ");
+        Preset p = Preset.fromConfig();
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("ppsspp_cpu_core", "JIT");
+        m.put("ppsspp_fast_memory", "disabled");
+        m.put("ppsspp_frameskip", "0");
+        m.put("ppsspp_auto_frameskip", "disabled");
+        m.put("ppsspp_internal_resolution",
+                override(ModConfig.PPSSPP_INTERNAL_RESOLUTION, p.ppssppRes));
+        m.put("ppsspp_texture_scaling_level",
+                override(ModConfig.PPSSPP_TEXTURE_SCALING, p.ppssppTex));
+        m.put("ppsspp_texture_shader", "xBRZ");
+        return Map.copyOf(m);
     }
 
-    /** OpenGL 3× (~1920×1344) — works with headless WGL/EGL readback. */
     public static Map<String, String> pcsx2Overrides() {
-        return Map.of(
-                "pcsx2_fastboot", "enabled",
-                "pcsx2_renderer", "OpenGL",
-                "pcsx2_upscale_multiplier", "2",
-                "pcsx2_anisotropic_filtering", "16",
-                "pcsx2_trilinear_filtering", "Trilinear (Forced)",
-                "pcsx2_blending_accuracy", "Basic");
+        Preset p = Preset.fromConfig();
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("pcsx2_fastboot", "enabled");
+        m.put("pcsx2_renderer", "OpenGL");
+        m.put("pcsx2_upscale_multiplier",
+                override(ModConfig.PCSX2_UPSCALE_MULTIPLIER, p.pcsx2Scale));
+        m.put("pcsx2_anisotropic_filtering",
+                override(ModConfig.PCSX2_ANISOTROPIC, p.pcsx2Aniso));
+        m.put("pcsx2_trilinear_filtering", "Trilinear (Forced)");
+        m.put("pcsx2_blending_accuracy", "Basic");
+        return Map.copyOf(m);
     }
 
     public static String flycastDefault(String key) {
@@ -97,6 +112,35 @@ public final class VideoQualityPresets {
         register.accept("pcsx2_fastcdvd", "enabled");
         register.accept("pcsx2_enable_hw_hacks", "disabled");
         register.accept("pcsx2_hw_download_mode", "Accurate");
+    }
+
+    private static String override(
+            net.neoforged.neoforge.common.ModConfigSpec.ConfigValue<String> value, String preset) {
+        String o = ModConfig.videoOverride(value);
+        return o != null ? o : preset;
+    }
+
+    private record Preset(
+            String flycastRes, String flycastTex, String flycastAniso,
+            String ppssppRes, String ppssppTex,
+            String pcsx2Scale, String pcsx2Aniso
+    ) {
+        static Preset fromConfig() {
+            return switch (ModConfig.videoPreset()) {
+                case "performance" -> new Preset(
+                        "640x480", "1", "1",
+                        "480x272", "1",
+                        "1", "2");
+                case "quality" -> new Preset(
+                        "1920x1440", "2", "16",
+                        "1440x816", "3",
+                        "3", "16");
+                default -> new Preset( // balanced
+                        "1280x960", "2", "8",
+                        "960x544", "2",
+                        "2", "16");
+            };
+        }
     }
 
     private static void putBoth(Map<String, String> m, String suffix, String value) {

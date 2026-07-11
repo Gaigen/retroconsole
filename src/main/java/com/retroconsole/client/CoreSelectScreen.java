@@ -98,6 +98,20 @@ public class CoreSelectScreen extends Screen {
         searchBox.setResponder(s -> refreshShown());
         addRenderableWidget(searchBox);
 
+        folderBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.folder"),
+                        b -> Util.getPlatform().openFile(RomLibrary.ensureDir(currentFolder()).toFile()))
+                .pos(width - 104, 22).size(44, 18).build());
+        folderBtn.active = !serverLibrary;
+
+        addRenderableWidget(Button.builder(ModTexts.c("gui.settings"),
+                        b -> { blip(1.1f); ConfigScreens.open(this); })
+                .pos(width - 56, 22).size(20, 18)
+                .tooltip(net.minecraft.client.gui.components.Tooltip.create(ModTexts.c("gui.settings.tooltip")))
+                .build());
+
+        addRenderableWidget(Button.builder(Component.literal("?"), b -> showHelp = !showHelp)
+                .pos(width - 32, 22).size(20, 18).build());
+
         modeBtn = addRenderableWidget(Button.builder(viewLabel(), b -> {
             view = switch (view) {
                 case CARDS -> View.LIST;
@@ -107,15 +121,7 @@ public class CoreSelectScreen extends Screen {
             b.setMessage(viewLabel());
             blip(1.2f);
             refreshShown();
-        }).pos(width - 148, 22).size(64, 18).build());
-
-        folderBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.folder"),
-                        b -> Util.getPlatform().openFile(RomLibrary.ensureDir(currentFolder()).toFile()))
-                .pos(width - 80, 22).size(44, 18).build());
-        folderBtn.active = !serverLibrary;
-
-        addRenderableWidget(Button.builder(Component.literal("?"), b -> showHelp = !showHelp)
-                .pos(width - 32, 22).size(20, 18).build());
+        }).pos(width - 172, 22).size(64, 18).build());
 
         pickCoreBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.core_picker"),
                         b -> { if (selectedRom != null) { showCorePicker = true; pickerScroll = 0; } })

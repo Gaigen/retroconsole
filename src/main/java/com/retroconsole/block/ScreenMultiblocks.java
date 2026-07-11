@@ -1,5 +1,6 @@
 package com.retroconsole.block;
 
+import com.retroconsole.config.ModConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
@@ -25,9 +26,6 @@ import java.util.Set;
  *  - привязка к консоли — только касание (6-соседство) любого блока группы.
  */
 public final class ScreenMultiblocks {
-
-    /** Максимум блоков в кластере (страховка от битых данных и гриферских стен). */
-    public static final int MAX_CLUSTER = 32 * 32;
 
     private ScreenMultiblocks() {}
 
@@ -156,7 +154,7 @@ public final class ScreenMultiblocks {
         visited.add(start.immutable());
         queue.add(start.immutable());
 
-        while (!queue.isEmpty() && visited.size() < MAX_CLUSTER) {
+        while (!queue.isEmpty() && visited.size() < ModConfig.maxScreenCluster()) {
             BlockPos cur = queue.poll();
             for (Direction d : inPlane) {
                 BlockPos n = cur.relative(d);

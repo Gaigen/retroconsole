@@ -2,6 +2,7 @@ package com.retroconsole.server;
 
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
+import com.retroconsole.config.ModConfig;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
 import net.minecraft.core.BlockPos;
@@ -32,16 +33,6 @@ import java.util.UUID;
 public class FrameSenderThread extends Thread {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("FrameSender-Thread");
-    private static final long BATTERY_AUTOSAVE_NS = 30L * 1_000_000_000L;
-
-    /**
-     * Frame width for players who see the in-world screen but have NOT opened TvScreen.
-     * Full resolution (e.g. 1920×1440 on PSP/PS2 HW render) is unnecessary: saves bandwidth,
-     * server deflate work, and client allocations, and keeps custom payloads under ~1 MiB.
-     * Side effect: entering/leaving TvScreen changes resolution and the client texture is
-     * recreated — normal resize path in ClientConsoles.
-     */
-    private static final int WORLD_MAX_WIDTH = 480;
 
     private final BlockPos consolePos;
     private final ThreadedEmulatorRuntime threaded;
@@ -224,7 +215,7 @@ public class FrameSenderThread extends Thread {
      * used to run in a per-player loop.
      *
      * <p>TvScreen viewers get full resolution; others (in-world TV block) are
-     * downscaled to WORLD_MAX_WIDTH.
+     * downscaled to {@link ModConfig#worldMaxWidth()}.
      */
     private void sendVideoFrame(MinecraftServer server, int w, int h, List<ServerPlayer> recipients) {
         if (!canSendToServer(server)) return;
@@ -252,8 +243,8 @@ public class FrameSenderThread extends Thread {
 
         if (!worldRes.isEmpty()) {
             RetroFramePacket worldPacket;
-            if (w > WORLD_MAX_WIDTH) {
-                int sw = WORLD_MAX_WIDTH;
+            if (w > ModConfig.worldMaxWidth()) {
+                int sw = ModConfig.worldMaxWidth();
                 int sh = Math.max(1, Math.round((float) h * sw / w));
                 downscale(buf, w, h, sw, sh);
                 worldPacket = RetroFramePacket.create(consolePos, scaledBuf, sw, sh);
@@ -295,7 +286,8 @@ public class FrameSenderThread extends Thread {
 
     private void maybeAutosaveBattery() {
         long now = System.nanoTime();
-        if (now - lastBatterySaveNs < BATTERY_AUTOSAVE_NS) return;
+        long periodNs = ModConfig.batteryAutosaveSeconds() * 1_000_000_000L;
+        if (now - lastBatterySaveNs < periodNs) return;
         lastBatterySaveNs = now;
         runtime.saveBattery();
     }
