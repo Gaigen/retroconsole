@@ -35,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * after which the result is cached — the directory will exist by the time
  * any caller actually opens a file.
  */
-@EventBusSubscriber(modid = RetroConsole.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
+@EventBusSubscriber(modid = RetroConsole.MOD_ID)
 public final class RetroConsolePaths {
     private static final Logger LOGGER = LoggerFactory.getLogger("RetroConsolePaths");
 

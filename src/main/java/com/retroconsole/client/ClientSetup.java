@@ -11,7 +11,7 @@ import net.neoforged.neoforge.client.event.EntityRenderersEvent;
  * Client-side setup: registers block entity renderers.
  * Key mappings are registered by ModKeys via its own @SubscribeEvent.
  */
-@EventBusSubscriber(modid = RetroConsole.MOD_ID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
+@EventBusSubscriber(modid = RetroConsole.MOD_ID, value = Dist.CLIENT)
 public class ClientSetup {
 
     @SubscribeEvent

@@ -103,7 +103,7 @@ public final class ArtFiles {
         return Math.max(0, Math.min(255, v));
     }
 
-    @EventBusSubscriber(modid = RetroConsole.MOD_ID, bus = EventBusSubscriber.Bus.MOD)
+    @EventBusSubscriber(modid = RetroConsole.MOD_ID)
     public static final class Setup {
         private Setup() {}
 
