@@ -1,8 +1,33 @@
 # RetroConsole
 
+[![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-62B47A?style=flat-square)](https://www.minecraft.net/)
+[![NeoForge](https://img.shields.io/badge/NeoForge-21.1.x-orange?style=flat-square)](https://neoforged.net/)
+[![License](https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)](#requirements)
+
 NeoForge mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
 **Version:** 0.1.0 (early release — expect rough edges)
+
+## Download
+
+Pre-built JAR: **[GitHub Releases](https://github.com/Gaigen/retroconsole/releases)** → `retroconsole-0.1.0.jar`
+
+Requirements: Minecraft **1.21.1**, NeoForge **21.1.x**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs.
+
+## Features
+
+- In-world **Retro Console** block with a game library UI (favorites, search, per-system tabs)
+- **Screen** multiblock walls — console must **touch** the wall (CC:Tweaked-style floor/ceiling placement)
+- Fullscreen **TV** viewer with volume slider and quick save/load
+- Server-side emulation with video/audio streaming to nearby players
+- Per-player saves, play-time stats, PS2 memory-card sync
+- In-game config UI (paths, streaming distances, session limits, video presets)
+- HW-render cores (PS2, PSP, Dreamcast) via bundled headless OpenGL helper
+
+## Screenshots
+
+*Screenshots coming soon.*
 
 ## Requirements
 
@@ -13,7 +38,7 @@ NeoForge mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.
 | Java | 21 |
 | Host OS | **Windows** or **Linux** (64-bit) |
 
-macOS is **not** supported. The mod does **not** ship libretro cores, BIOS files, or ROMs — you must supply those yourself (see below).
+macOS is **not** supported.
 
 ## Quick start (players)
 
@@ -35,29 +60,34 @@ I = iron ingot, R = redstone, G = glass pane
 6. Place the console, then place screens so the console **touches** the wall. Right-click the console → the game library opens. Select a game and press **Launch**.
 7. While a game is running, right-click again to open the fullscreen **TV** view.
 
-### Optional: world TV screens
+### World TV screens
 
 Place **Screen** blocks so that the **Retro Console touches** any block of the screen wall (face-adjacent, 6-neighbour). Linking is physical contact only — there is no radius search.
 
 - Adjacent screens with the same facing/orientation form one rectangular wall (L-shapes split into separate rectangles).
 - Look straight ahead to place a wall screen; look sharply down/up to place on the floor/ceiling (like CC:Tweaked monitors).
-- **Breaking change:** older worlds that relied on “within 16 blocks” auto-link need the console moved flush against the wall (or the wall rebuilt).
+- **Breaking change (0.1.0):** older worlds that relied on “within 16 blocks” auto-link need the console moved flush against the wall (or the wall rebuilt).
 
 ## Quick start (developers)
 
-1. Clone the repo and open it as a Gradle project (IntelliJ IDEA recommended).
+1. Clone the repo and open it as a Gradle project (IntelliJ IDEA recommended):
+
+   ```bash
+   git clone https://github.com/Gaigen/retroconsole.git
+   ```
+
 2. Use **Java 21**.
 3. Run the `runClient` Gradle task, or:
 
-```bash
-./gradlew runClient
-```
+   ```bash
+   ./gradlew runClient
+   ```
 
-On Windows:
+   On Windows:
 
-```bat
-gradlew.bat runClient
-```
+   ```bat
+   gradlew.bat runClient
+   ```
 
 Dev paths are under `runs/client/config/retroconsole/` (single-player) or `runs/server/config/retroconsole/` (dedicated server).
 
@@ -146,6 +176,7 @@ Other cores from the catalog table above may work, but were **not** part of the 
 ## Configuration
 
 Settings open **in-game**:
+
 1. Open the console library → **⚙** button (top right), or
 2. Main menu → **Mods** → RetroConsole → **Config**
 
@@ -158,11 +189,42 @@ Two files (created on first launch / world load):
 
 On a **dedicated server**, edit the server’s toml (or ask the host) — clients cannot change server streaming/video from the UI.
 
-### `[streaming]` / `[limits]` / `[video]`
+### `[streaming]` (defaults)
 
-Same keys as before (distances, session caps, `preset` + per-core overrides). Video overrides apply the next time you **launch** a game on a console.
+| Key | Default | Description |
+|-----|---------|-------------|
+| `videoDistance` | 48 | Max distance (blocks) to receive video frames |
+| `audioDistance` | 32 | Max distance for emulator audio |
+| `viewSubscribeDistance` | 64 | Fullscreen TV subscribe radius |
+| `controlDistance` | 8 | Max distance to send controller input |
+| `notifyDistance` | 48 | Radius for “console stopped” notifications |
+| `worldMaxWidth` | 0 | Cap in-world frame width (0 = no cap) |
 
-Leave override strings empty to keep the preset; fill them to customize (e.g. `pcsx2UpscaleMultiplier = "3"`).
+### `[limits]` (defaults)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `maxCoreSlots` | 0 | Max simultaneous copies of the same core DLL (0 = unlimited). On Windows each active console needs its own slot. |
+| `maxPcsx2Sessions` | 8 | Max parallel PS2 sessions (separate system dirs + memcards) |
+| `maxScreenCluster` | 256 | Max blocks in one linked screen wall |
+| `batteryAutosaveSeconds` | 120 | Interval for battery-save flush to disk |
+
+When a limit is hit, the owner gets a chat message (e.g. core slot cap, PS2 session cap, missing BIOS) instead of a generic load failure.
+
+### `[video]`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `preset` | `balanced` | `performance`, `balanced`, or `quality` |
+| `flycastInternalResolution` | *(preset)* | Override Flycast internal res |
+| `flycastTexUpscale` | *(preset)* | Override texture upscale |
+| `flycastAnisotropic` | *(preset)* | Override anisotropic filtering |
+| `ppssppInternalResolution` | *(preset)* | Override PPSSPP internal res |
+| `ppssppTextureScaling` | *(preset)* | Override PPSSPP texture scaling |
+| `pcsx2UpscaleMultiplier` | *(preset)* | Override PCSX2 upscale (e.g. `"2"`, `"3"`) |
+| `pcsx2Anisotropic` | *(preset)* | Override PCSX2 anisotropic filtering |
+
+Video overrides apply the next time you **launch** a game. Leave override strings empty to keep the preset value.
 
 ## Multiplayer
 
