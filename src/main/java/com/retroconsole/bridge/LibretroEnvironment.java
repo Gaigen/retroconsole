@@ -54,7 +54,7 @@ public final class LibretroEnvironment {
     public static final int SET_CORE_OPTIONS_V2                    = 67;
 
     public static final int GET_INPUT_BITMASKS        = 51 | EXPERIMENTAL;
-    public static final int SET_HW_SHARED_CONTEXT     = 87 | EXPERIMENTAL;
+    public static final int SET_HW_SHARED_CONTEXT     = 44 | EXPERIMENTAL;
     public static final int SET_CORE_OPTIONS_V2_INTL          = 68;
     public static final int SET_MESSAGE_EXT                   = 60;
     public static final int GET_VFS_INTERFACE                 = 45 | EXPERIMENTAL;
@@ -72,6 +72,9 @@ public final class LibretroEnvironment {
 
     public static String name(int cmd) {
         int c = normalize(cmd);
+        if (c == SET_SERIALIZATION_QUIRKS && (cmd & EXPERIMENTAL) != 0) {
+            return "SET_HW_SHARED_CONTEXT";
+        }
         return switch (c) {
             case SET_ROTATION -> "SET_ROTATION";
             case GET_OVERSCAN -> "GET_OVERSCAN";
@@ -118,8 +121,7 @@ public final class LibretroEnvironment {
             case 36 -> "SET_MEMORY_MAPS";
             case 40 -> "GET_CURRENT_SOFTWARE_FRAMEBUFFER";
             case 51 -> "GET_INPUT_BITMASKS";
-            case 87 -> "SET_HW_SHARED_CONTEXT";
-            default -> "UNKNOWN(" + cmd + ")";
+            default -> "UNKNOWN(" + cmd + ", base=" + c + ")";
         };
     }
 

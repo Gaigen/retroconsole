@@ -120,6 +120,11 @@ public final class GameSystem {
                 List.of(), List.of("genesis_plus_gx", "picodrive"));
         builtin("SATURN", "SAT", "Saturn", "Sega Saturn", "saturn", 0xFF7858B0,
                 List.of(), List.of("mednafen_saturn", "beetle_saturn", "kronos", "yabause"));
+        builtin("NDS", "NDS", "Nintendo DS", "Nintendo DS", "nds", 0xFF2E8BC0,
+                List.of(".nds", ".dsi", ".ids"), List.of("melonds", "desmume"));
+        builtin("N3DS", "3DS", "Nintendo 3DS", "Nintendo 3DS", "3ds", 0xFFE03030,
+                List.of(".3ds", ".3dsx", ".cci", ".cxi", ".app", ".axf", ".elf"),
+                List.of("citra"));
     }
 
     private static void finishRegistry() {

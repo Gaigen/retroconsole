@@ -2,6 +2,8 @@ package com.retroconsole.bridge;
 
 import com.retroconsole.platform.Pcsx2BiosResolver;
 import com.retroconsole.platform.VideoQualityPresets;
+import com.sun.jna.Callback;
+import com.sun.jna.CallbackReference;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
@@ -9,8 +11,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 
 /** JNA interface to .libheadless_gl.dll — headless WGL contexts on Windows (multi-instance). */
 interface HeadlessGLWin extends com.sun.jna.Library {
@@ -30,6 +34,8 @@ interface HeadlessGLWin extends com.sun.jna.Library {
 
     // Process-wide (no handle)
     void    hlg_dump_hw_render(Pointer data, int size);
+    long    hlg_get_framebuffer();
+    Pointer hlg_get_proc_address(String sym);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
     Pointer hlg_get_log_cb_ptr();
@@ -60,6 +66,12 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("LibretroCoreWindows");
 
+    /** libretro hw_render: uintptr_t get_current_framebuffer(void) */
+    public interface HwGetCurrentFramebuffer extends Callback { long invoke(); }
+
+    /** libretro hw_render: void* get_proc_address(const char* sym) */
+    public interface HwGetProcAddress extends Callback { Pointer invoke(Pointer sym); }
+
     private static final java.util.List<LibretroBridge> KEEP_LOADED = new java.util.ArrayList<>();
     private static final java.util.List<Object> PINNED_CALLBACKS = new java.util.ArrayList<>();
 
@@ -88,6 +100,8 @@ public class LibretroCoreWindows extends LibretroCore {
                 "pcsx_rearmed_gpu_unai_scale_hires", "enabled"));
         all.put("ppsspp", VideoQualityPresets.ppssppOverrides());
         all.put("pcsx2", VideoQualityPresets.pcsx2Overrides());
+        all.put("melonds", VideoQualityPresets.melondsOverrides());
+        all.put("citra", VideoQualityPresets.citraOverrides());
         return java.util.Map.copyOf(all);
     }
 
@@ -189,6 +203,7 @@ public class LibretroCoreWindows extends LibretroCore {
     private Pointer hwContextReset = null;
     private Pointer hwContextDestroy = null;
     private boolean hwContextResetDone = false;
+    private boolean hwContextResetOk = false;
     private int hwGlMajor = 3;
     private int hwGlMinor = 3;
     // Actual frame dimensions read back (core viewport), not declared geometry.
@@ -201,6 +216,23 @@ public class LibretroCoreWindows extends LibretroCore {
     /** Instance handle in the multi-instance DLL (hlg_create/hlg_free). */
     private Pointer hlgHandle;
     private final Hlg hlgAdapter = new Hlg();
+
+    /** Pinned JNA trampolines — must not be collected while core holds native pointers. */
+    private final HwGetCurrentFramebuffer hwGetFb = () -> {
+        if (!headlessGlReady) return 0L;
+        return rawHlg().hlg_get_framebuffer();
+    };
+    private final HwGetProcAddress hwGetProc = sym -> {
+        if (sym == null) return Pointer.NULL;
+        String name = sym.getString(0);
+        if (name == null || name.isEmpty()) return Pointer.NULL;
+        Pointer p = rawHlg().hlg_get_proc_address(name);
+        if (p == null || Pointer.nativeValue(p) == 0) {
+            LOGGER.warn("get_proc_address -> NULL for symbol: {}", name);
+            return Pointer.NULL;
+        }
+        return p;
+    };
 
     private static HeadlessGLWin rawHlg() {
         HeadlessGLWin gl = HEADLESS_GL;
@@ -263,6 +295,8 @@ public class LibretroCoreWindows extends LibretroCore {
         void hlg_dump_hw_render(Pointer data, int size) {
             rawHlg().hlg_dump_hw_render(data, size);
         }
+        long hlg_get_framebuffer() { return rawHlg().hlg_get_framebuffer(); }
+        Pointer hlg_get_proc_address(String sym) { return rawHlg().hlg_get_proc_address(sym); }
         Pointer hlg_get_framebuffer_ptr()  { return rawHlg().hlg_get_framebuffer_ptr(); }
         Pointer hlg_get_proc_address_ptr() { return rawHlg().hlg_get_proc_address_ptr(); }
         Pointer hlg_get_log_cb_ptr()       { return rawHlg().hlg_get_log_cb_ptr(); }
@@ -392,6 +426,7 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         hwRenderActive = false;
         hwContextResetDone = false;
+        hwContextResetOk = false;
         hwContextReset = null;
         hwContextDestroy = null;
         hwGpuLoggedOnEmulatorThread = false;
@@ -466,6 +501,49 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private boolean isFlycastCore() {
         return coreName().contains("flycast");
+    }
+
+    private boolean isCitraCore() {
+        return coreName().contains("citra");
+    }
+
+    /**
+     * Seeds shared Citra system files from {@code system/citra/} into the per-player Citra folder.
+     * Copies only when missing or size differs (dump updates). Player saves ({@code nand/data}, {@code sdmc})
+     * are untouched — they are not present in the shared folder.
+     */
+    private void seedSharedCitraFiles() {
+        if (systemDir == null || saveDir == null) {
+            return;
+        }
+        Path shared = Path.of(systemDir).resolve("citra");
+        Path userDir = Path.of(saveDir).resolve("Citra");
+        if (!Files.isDirectory(shared)) {
+            return;
+        }
+        try (var walk = Files.walk(shared)) {
+            walk.filter(Files::isRegularFile).forEach(src -> {
+                Path rel = shared.relativize(src);
+                Path dst = userDir.resolve(rel);
+                try {
+                    if (Files.exists(dst) && Files.size(dst) == Files.size(src)) {
+                        return;
+                    }
+                    Files.createDirectories(dst.getParent());
+                    try {
+                        Files.deleteIfExists(dst);
+                        Files.createLink(dst, src);
+                    } catch (Exception linkFail) {
+                        Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    LOGGER.info("Seeded shared Citra file: {}", rel);
+                } catch (java.io.IOException e) {
+                    LOGGER.warn("Failed to seed shared Citra file {}: {}", rel, e.toString());
+                }
+            });
+        } catch (java.io.IOException e) {
+            LOGGER.warn("Failed to walk shared Citra dir: {}", e.toString());
+        }
     }
 
     private boolean isPcsx2CoreLocal() {
@@ -673,11 +751,27 @@ public class LibretroCoreWindows extends LibretroCore {
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
                     int mask = 0;
-                    for (int i = 0; i < 16; i++) if (joypadState.get(i) != 0) mask |= (1 << i);
+                    for (int i = 0; i < 21; i++) if (joypadState.get(i) != 0) mask |= (1 << i);
                     return (short) mask;
                 }
-                if (index == 0 && id >= 0 && id < 16) return (short) joypadState.get(id);
+                if (index == 0 && id >= 0 && id < 21) return (short) joypadState.get(id);
                 return 0;
+            }
+            if (device == LibretroBridge.RETRO_DEVICE_POINTER) {
+                if (pointerPollLogLeft > 0) {
+                    pointerPollLogLeft--;
+                    LOGGER.info("POINTER poll id={} -> x={} y={} pressed={}",
+                            id, pointerX, pointerY, pointerPressed);
+                }
+                return switch (id) {
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_X -> pointerX;
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_Y -> pointerY;
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_PRESSED ->
+                            (short) (pointerPressed ? 1 : 0);
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_COUNT ->
+                            (short) (pointerPressed ? 1 : 0);
+                    default -> 0;
+                };
             }
             if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
@@ -727,11 +821,15 @@ public class LibretroCoreWindows extends LibretroCore {
     private short[] swRowShorts = new short[0];
 
     private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(16);
+            new java.util.concurrent.atomic.AtomicIntegerArray(21);
     private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
             new java.util.concurrent.atomic.AtomicIntegerArray(4);
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
+    private volatile short pointerX;
+    private volatile short pointerY;
+    private volatile boolean pointerPressed;
+    private int pointerPollLogLeft = 10;
 
     /** Flycast/PPSSPP sync timing via audio sample consumption. */
     private final AudioPacing audioPacing = new AudioPacing(44100);
@@ -797,9 +895,12 @@ public class LibretroCoreWindows extends LibretroCore {
                     int w = data.getInt(0);
                     int h = data.getInt(4);
                     if (w > 0 && h > 0) {
+                        this.layoutWidth = w;
+                        this.layoutHeight = h;
                         this.width = w;
                         this.height = h;
                         LOGGER.info("Core set geometry: {}x{}", w, h);
+                        if (hwRenderActive) resizeHwFramebuffer(w, h);
                     }
                 }
                 return true;
@@ -812,8 +913,14 @@ public class LibretroCoreWindows extends LibretroCore {
                     // (geometry 20 bytes + double alignment to 8).
                     double fps = data.getDouble(24);
                     if (w > 0 && h > 0) {
-                        this.width = w;
-                        this.height = h;
+                        if (isCitraCore() && layoutWidth > 0 && layoutHeight > 0) {
+                            // avInfo base is per-screen; keep dual-screen layout from SET_GEOMETRY.
+                            this.width = layoutWidth;
+                            this.height = layoutHeight;
+                        } else {
+                            this.width = w;
+                            this.height = h;
+                        }
                     }
                     // CRITICAL for PAL PS2 games: core changes 59.94 -> 50.0 here.
                     // Without this FrameSender runs PAL games ~20% too fast.
@@ -876,6 +983,15 @@ public class LibretroCoreWindows extends LibretroCore {
             case LibretroEnvironment.SET_INPUT_DESCRIPTORS:
             case LibretroEnvironment.SET_MESSAGE:
             case LibretroEnvironment.SET_SERIALIZATION_QUIRKS:
+                if ((cmd & LibretroEnvironment.EXPERIMENTAL) != 0) {
+                    if (supportsHwRender()) {
+                        LOGGER.info("SET_HW_SHARED_CONTEXT -> true (citra, raw=0x{})",
+                                Integer.toHexString(cmd));
+                        return true;
+                    }
+                    return false;
+                }
+                return true;
             case LibretroEnvironment.SET_PERFORMANCE_LEVEL:
             case LibretroEnvironment.SET_SUBSYSTEM_INFO:
             case LibretroEnvironment.SET_CONTROLLER_INFO:
@@ -943,8 +1059,9 @@ public class LibretroCoreWindows extends LibretroCore {
             case 0x10030:
                 return true;
             default:
-                LOGGER.warn("Unhandled env cmd {} (raw 0x{})",
-                        LibretroEnvironment.name(cmd), Integer.toHexString(cmd));
+                LOGGER.warn("Unhandled env cmd {} (raw 0x{}, base {})",
+                        LibretroEnvironment.name(cmd), Integer.toHexString(cmd),
+                        LibretroEnvironment.normalize(cmd));
                 return false;
         }
     }
@@ -971,6 +1088,14 @@ public class LibretroCoreWindows extends LibretroCore {
             int reqMajor = data.getInt(0x24);
             int reqMinor = data.getInt(0x28);
             if (reqMajor <= 0) { reqMajor = 3; reqMinor = 3; }
+            // Citra GL renderer uses GL 4.x entry points (shader cache, etc.); 3.3 headless ctx crashes in context_reset.
+            if (isCitraCore() && (ctxType == 1 || ctxType == 3)) {
+                if (reqMajor < 4 || (reqMajor == 4 && reqMinor < 3)) {
+                    reqMajor = 4;
+                    reqMinor = 3;
+                    LOGGER.info("Citra: requesting GL {}.{} headless context", reqMajor, reqMinor);
+                }
+            }
             hwReqGlMajor = reqMajor;
             hwReqGlMinor = reqMinor;
 
@@ -984,23 +1109,35 @@ public class LibretroCoreWindows extends LibretroCore {
                 return false;
             }
 
+            Pointer fbFn;
+            Pointer procFn;
+            if (isCitraCore()) {
+                // Citra/glad loads hundreds of symbols from native — avoid JNA trampolines.
+                fbFn = headlessGl().hlg_get_framebuffer_ptr();
+                procFn = headlessGl().hlg_get_proc_address_ptr();
+                pinForever(fbFn);
+                pinForever(procFn);
+                data.setByte(32, (byte) 1);          // depth (offscreen FBO has depth_rb)
+                data.setByte(33, (byte) 1);          // stencil
+            } else {
+                pinForever(hwGetFb);
+                pinForever(hwGetProc);
+                fbFn = CallbackReference.getFunctionPointer(hwGetFb);
+                procFn = CallbackReference.getFunctionPointer(hwGetProc);
+            }
+            data.setPointer(16, fbFn);
+            data.setPointer(24, procFn);
+            // Citra uses top-left framebuffer semantics; PPSSPP/PCSX2 expect bottom-left.
+            data.setByte(34, (byte) (isCitraCore() ? 0 : 1));
+            data.setInt(36, hwGlMajor);              // version_major (actual context)
+            data.setInt(40, hwGlMinor);              // version_minor
+
             headlessGl().hlg_dump_hw_render(data, 80);
-
-            Pointer fbPtr   = headlessGl().hlg_get_framebuffer_ptr();
-            Pointer procPtr = headlessGl().hlg_get_proc_address_ptr();
-            pinForever(fbPtr);
-            pinForever(procPtr);
-
-            data.setPointer(0x10, fbPtr);
-            data.setPointer(0x18, procPtr);
-            data.setByte(0x22, (byte) 1);              // bottom_left_origin
-            data.setInt(0x24, hwGlMajor);              // actually created version
-            data.setInt(0x28, hwGlMinor);
 
             hwContextResetDone = false;
             hwRenderActive = true;
-            LOGGER.info("SET_HW_RENDER accepted (GL {}.{}); context_reset deferred",
-                    hwGlMajor, hwGlMinor);
+            LOGGER.info("SET_HW_RENDER accepted (GL {}.{}); fbFn={} procFn={}; context_reset deferred",
+                    hwGlMajor, hwGlMinor, fbFn, procFn);
             return true;
         } catch (Throwable t) {
             LOGGER.error("Failed to handle SET_HW_RENDER", t);
@@ -1189,10 +1326,46 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private volatile int width;
     private volatile int height;
+    /** Full render target from SET_GEOMETRY (Citra dual-screen layout; avInfo base is smaller). */
+    private volatile int layoutWidth;
+    private volatile int layoutHeight;
     private volatile double timingFps = 60.0;
     private boolean gameLoaded;
     private volatile boolean pendingBatteryLoad;
     private Path pendingBatteryRomPath;
+
+    private void resizeHwFramebuffer(int w, int h) {
+        if (!headlessGlReady || w <= 0 || h <= 0) return;
+        try {
+            if (headlessGl().hlg_make_current() == 0) return;
+            if (w != hwPbufW || h != hwPbufH) {
+                headlessGl().hlg_resize(w, h);
+                hwPbufW = w;
+                hwPbufH = h;
+                LOGGER.info("HW offscreen FBO resized to {}x{}", w, h);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("HW FBO resize failed: {}", t.getMessage());
+        }
+    }
+
+    /** Prefer SET_GEOMETRY layout for Citra; ignore inflated max_* caps elsewhere. */
+    private int hwFboDim(LibretroBridge.RetroSystemAVInfo av, boolean width) {
+        if (isCitraCore() && layoutWidth > 0 && layoutHeight > 0) {
+            return width ? layoutWidth : layoutHeight;
+        }
+        int live = width ? this.width : this.height;
+        if (live > 0) return live;
+        return avMaxDim(av, width);
+    }
+
+    private static int avMaxDim(LibretroBridge.RetroSystemAVInfo av, boolean width) {
+        int base = width ? av.geometry.base_width : av.geometry.base_height;
+        int max = width ? av.geometry.max_width : av.geometry.max_height;
+        // Citra reports max 5× base (e.g. 4000×4800); FBO only needs current geometry.
+        if (base > 0 && max > base * 3) return base;
+        return Math.max(max > 0 ? max : 0, base > 0 ? base : 0);
+    }
 
     private boolean loadGameImpl(Path romPath) {
         if (core == null) {
@@ -1200,6 +1373,10 @@ public class LibretroCoreWindows extends LibretroCore {
             return false;
         }
         LOGGER.info("loadGame({}) [{}]", romPath, isFlycastCore() ? "FLYCAST" : coreName());
+
+        if (isCitraCore()) {
+            seedSharedCitraFiles();
+        }
 
         LibretroBridge.RetroGameInfo info;
         try {
@@ -1232,7 +1409,16 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         this.loadedGameInfo = info;
 
-        if (hwRenderActive && !hwContextResetDone
+        if (hwRenderActive) {
+            var avPre = new LibretroBridge.RetroSystemAVInfo();
+            core.retro_get_system_av_info(avPre);
+            int fboW = hwFboDim(avPre, true);
+            int fboH = hwFboDim(avPre, false);
+            if (fboW > 0 && fboH > 0) resizeHwFramebuffer(fboW, fboH);
+        }
+
+        // Citra: defer context_reset to first runFrame (Linux pattern; glad init is fragile post-load).
+        if (hwRenderActive && !isCitraCore() && !hwContextResetDone
                 && hwContextReset != null && Pointer.nativeValue(hwContextReset) != 0) {
             try {
                 if (headlessGl().hlg_make_current() == 0) {
@@ -1243,6 +1429,7 @@ public class LibretroCoreWindows extends LibretroCore {
                 LOGGER.info("Calling context_reset (post-load) @ {}", hwContextReset);
                 com.sun.jna.Function.getFunction(hwContextReset).invokeVoid(new Object[0]);
                 hwContextResetDone = true;
+                hwContextResetOk = true;
                 LOGGER.info("context_reset completed");
             } catch (Throwable t) {
                 LOGGER.error("context_reset crashed post-load: {}", t.getMessage(), t);
@@ -1255,8 +1442,18 @@ public class LibretroCoreWindows extends LibretroCore {
 
         var avInfo = new LibretroBridge.RetroSystemAVInfo();
         core.retro_get_system_av_info(avInfo);
-        this.width = avInfo.geometry.base_width;
-        this.height = avInfo.geometry.base_height;
+        if (isCitraCore() && layoutWidth > 0 && layoutHeight > 0) {
+            this.width = layoutWidth;
+            this.height = layoutHeight;
+        } else {
+            this.width = avInfo.geometry.base_width;
+            this.height = avInfo.geometry.base_height;
+        }
+        if (hwRenderActive) {
+            int fboW = hwFboDim(avInfo, true);
+            int fboH = hwFboDim(avInfo, false);
+            if (fboW > 0 && fboH > 0) resizeHwFramebuffer(fboW, fboH);
+        }
         // PPSSPP reports 0x0 at startup; real size arrives later via
         // SET_SYSTEM_AV_INFO. PSP default so texture is not 0x0 -> crash.
         if (this.width <= 0 || this.height <= 0) {
@@ -1278,6 +1475,14 @@ public class LibretroCoreWindows extends LibretroCore {
         if (saveDir != null && usesFrontendBatteryRam()) {
             pendingBatteryRomPath = romPath;
             pendingBatteryLoad = true;
+        }
+        if (hwRenderActive && isCitraCore()) {
+            try {
+                headlessGl().hlg_release();
+                LOGGER.info("GL context released from load thread (citra)");
+            } catch (Throwable t) {
+                LOGGER.warn("hlg_release after citra load failed: {}", t.getMessage());
+            }
         }
         return true;
     }
@@ -1440,6 +1645,32 @@ public class LibretroCoreWindows extends LibretroCore {
                         LOGGER.info("Emulator thread GPU: {}", headlessGl().hlg_get_gpu_info());
                     }
                 } catch (Throwable ignored) {}
+                if (isCitraCore() && !hwContextResetDone
+                        && hwContextReset != null && Pointer.nativeValue(hwContextReset) != 0) {
+                    try {
+                        if (headlessGl().hlg_make_current() == 0) {
+                            LOGGER.error("Failed to make GL current before citra context_reset");
+                            hwContextResetDone = true;
+                        } else {
+                            if (layoutWidth > 0 && layoutHeight > 0) {
+                                resizeHwFramebuffer(layoutWidth, layoutHeight);
+                            }
+                            LOGGER.info("context_reset on emulator thread (citra) @ {} (FBO {}x{})",
+                                    hwContextReset, hwPbufW, hwPbufH);
+                            com.sun.jna.Function.getFunction(hwContextReset).invokeVoid(new Object[0]);
+                            hwContextResetDone = true;
+                            hwContextResetOk = true;
+                            LOGGER.info("context_reset completed (citra)");
+                        }
+                    } catch (Throwable t) {
+                        LOGGER.error("context_reset failed (citra): {}", t.getMessage(), t);
+                        hwContextResetDone = true;
+                        hwContextResetOk = false;
+                    }
+                }
+            }
+            if (isCitraCore() && hwRenderActive && !hwContextResetOk) {
+                return;
             }
             try {
                 core.retro_run();
@@ -1475,7 +1706,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
     @Override
     public void setButton(int buttonId, boolean pressed) {
-        if (buttonId >= 0 && buttonId < 16) joypadState.set(buttonId, pressed ? 1 : 0);
+        if (buttonId >= 0 && buttonId < 21) joypadState.set(buttonId, pressed ? 1 : 0);
         if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L) {
             joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2, pressed ? 1 : 0);
             triggerState.set(0, pressed ? 32767 : 0);
@@ -1484,6 +1715,14 @@ public class LibretroCoreWindows extends LibretroCore {
             joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2, pressed ? 1 : 0);
             triggerState.set(1, pressed ? 32767 : 0);
         }
+    }
+
+    @Override
+    public void setPointer(short x, short y, boolean pressed) {
+        this.pointerX = x;
+        this.pointerY = y;
+        this.pointerPressed = pressed;
+        joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_CURSOR_TOUCH, pressed ? 1 : 0);
     }
 
     @Override

@@ -2,11 +2,16 @@ package com.retroconsole.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.platform.NativeImage;
+import com.retroconsole.client.bezel.BezelSettingsScreen;
+import com.retroconsole.client.bezel.TvBezelRenderer;
+import com.retroconsole.client.input.CoreInputProfile;
+import com.retroconsole.client.input.PointerMapper;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.client.library.SaveStates;
 import com.retroconsole.client.library.SoundPrefs;
 import com.retroconsole.network.RetroAnalogPacket;
 import com.retroconsole.network.RetroInputPacket;
+import com.retroconsole.network.RetroPointerPacket;
 import com.retroconsole.network.RetroPowerOffPacket;
 import com.retroconsole.network.RetroSaveStatePacket;
 import com.retroconsole.network.RetroViewPacket;
@@ -25,7 +30,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.FastColor;
 import net.minecraft.util.Mth;
 import net.neoforged.neoforge.network.PacketDistributor;
-
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,25 +37,19 @@ import java.util.List;
 /**
  * Fullscreen GUI for viewing and playing a retro console game.
  * Input bindings live in {@link ModKeys} and are resolved via {@link RetroInputBindings}.
- *
- * <p>Bottom bar: power-off (stops console and returns to CoreSelectScreen), help overlay
- * toggle, game title centered, volume slider on the right.
  */
 public class TvScreen extends Screen {
 
-    /** Bottom bar height; single source of truth for layout. */
     private static final int BAR_HEIGHT = 24;
-
-    // Colors matching CoreSelectScreen for a consistent UI look.
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE = 0xFF2A2F3A;
-
     private static final short ANALOG_MAX = 32767;
     private static final short ANALOG_MIN = -32768;
 
     private final BlockPos consolePos;
     private final String romId;
     private final String displayName;
+    private final CoreInputProfile inputProfile;
 
     private long lastFlush = Util.getMillis();
     private boolean closed;
@@ -63,17 +61,28 @@ public class TvScreen extends Screen {
 
     private final RetroInputBindings.StickState leftStick = new RetroInputBindings.StickState();
     private final RetroInputBindings.StickState rightStick = new RetroInputBindings.StickState();
-
     private short sentLx, sentLy, sentRx, sentRy;
 
+    private int frameX, frameY, frameW, frameH;
+    private boolean pointerDown;
+    private PointerMapper.LibretroPointer pointer = new PointerMapper.LibretroPointer((short) 0, (short) 0);
+    private short sentPx, sentPy;
+    private boolean sentPpressed;
+    private long lastPointerSendMs;
+    private boolean virtualStylus;
+
     public TvScreen(BlockPos consolePos, String romId) {
+        this(consolePos, romId, null);
+    }
+
+    public TvScreen(BlockPos consolePos, String romId, String systemId) {
         super(ModTexts.c("gui.title"));
         this.consolePos = consolePos;
         this.romId = romId != null ? romId : "";
         this.displayName = prettyName(this.romId);
+        this.inputProfile = CoreInputProfile.forSystemId(systemId);
     }
 
-    /** {@code nes/Super_Game.nes} → {@code Super Game}. romId is the only name source for now. */
     private static String prettyName(String romId) {
         if (romId == null || romId.isEmpty()) return "";
         String name = romId.replace('\\', '/');
@@ -86,9 +95,6 @@ public class TvScreen extends Screen {
 
     @Override
     protected void init() {
-        // init() also runs on window resize: widgets are recreated while state
-        // (showHints) lives in fields. Server addViewer is a Set, so a repeat
-        // RetroViewPacket(true) is harmless.
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, true));
 
         int y = this.height - BAR_HEIGHT + 3;
@@ -103,11 +109,13 @@ public class TvScreen extends Screen {
             blip(1.2f);
             showHints = !showHints;
         }), barLeft, y, 88, h);
-        // Add new left-side buttons here: barLeft = addLeft(...)
+        barLeft = addLeft(Button.builder(ModTexts.c("tv.bezel"), b -> {
+            blip(1.0f);
+            minecraft.setScreen(new BezelSettingsScreen(this));
+        }), barLeft, y, 56, h);
 
         int barRight = this.width - 4;
         barRight = addRight(new VolumeSlider(0, y, 110, h, SoundPrefs.volume()), barRight);
-        // Add new right-side widgets here: barRight = addRight(...)
     }
 
     private int addLeft(Button.Builder builder, int x, int y, int w, int h) {
@@ -123,22 +131,22 @@ public class TvScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // Order matters: background → TV frame → bar → widgets → help overlay.
-        // super.render() is not used: it redraws the dimming background over the
-        // frame (same approach as CoreSelectScreen).
         renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         renderTvFrame(guiGraphics);
+        TvBezelRenderer.render(guiGraphics, width, height, BAR_HEIGHT,
+                frameX, frameY, frameW, frameH, Util.getMillis());
         renderBar(guiGraphics);
         for (Renderable renderable : this.renderables) {
             renderable.render(guiGraphics, mouseX, mouseY, partialTick);
+        }
+        if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+            renderTouchCursor(guiGraphics);
         }
         if (showHints) renderHintsOverlay(guiGraphics);
     }
 
     @Override
     public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        // OPTIMIZATION: vanilla renderBackground draws the world + blur every frame.
-        // That is hidden behind the TV frame anyway — use a plain black fill.
         guiGraphics.fill(0, 0, this.width, this.height, 0xFF000000);
     }
 
@@ -149,28 +157,34 @@ public class TvScreen extends Screen {
         if (entry != null) {
             int texW = entry.width();
             int texH = entry.height();
-
             float scale = Math.min((float) this.width / texW, (float) screenH / texH);
-            int drawW = (int) (texW * scale);
-            int drawH = (int) (texH * scale);
-            int drawX = (this.width - drawW) / 2;
-            int drawY = (screenH - drawH) / 2;
-
-            guiGraphics.blit(entry.id(), drawX, drawY, 0, 0, drawW, drawH, drawW, drawH);
-            // OPTIMIZATION: snapshotThumb is no longer called here — it used to be
-            // abgr.clone() (~11 MB) on EVERY render(). Thumbnail is captured once in removed().
+            frameW = (int) (texW * scale);
+            frameH = (int) (texH * scale);
+            frameX = (this.width - frameW) / 2;
+            frameY = (screenH - frameH) / 2;
+            guiGraphics.blit(entry.id(), frameX, frameY, 0, 0, frameW, frameH, frameW, frameH);
         } else {
-            String noSignal = ModTexts.s("gui.no_signal");
-            guiGraphics.drawCenteredString(this.font, noSignal, this.width / 2, screenH / 2, 0xFFFFFF);
+            frameX = frameY = frameW = frameH = 0;
+            guiGraphics.drawCenteredString(this.font, ModTexts.s("gui.no_signal"),
+                    this.width / 2, screenH / 2, 0xFFFFFF);
         }
+    }
+
+    private void renderTouchCursor(GuiGraphics g) {
+        if (!pointerDown && !virtualStylus) return;
+        double nx = (pointer.x() + 32767.0) / 65534.0;
+        double ny = (pointer.y() + 32767.0) / 65534.0;
+        int cx = frameX + (int) (nx * frameW);
+        int cy = frameY + (int) (ny * frameH);
+        g.fill(cx - 2, cy - 2, cx + 3, cy + 3, 0xFFFFFFFF);
+        g.fill(cx - 1, cy - 1, cx + 2, cy + 2, 0xFF000000);
     }
 
     private void renderBar(GuiGraphics guiGraphics) {
         guiGraphics.fill(0, this.height - BAR_HEIGHT, this.width, this.height, COL_PANEL_2);
         guiGraphics.fill(0, this.height - BAR_HEIGHT, this.width, this.height - BAR_HEIGHT + 1, COL_EDGE);
         if (!displayName.isEmpty()) {
-            // Leave room for left buttons (144px) and right slider (114px).
-            int avail = Math.max(40, this.width - 2 * 160);
+            int avail = Math.max(40, this.width - 2 * 200);
             String title = this.font.plainSubstrByWidth(displayName, avail);
             guiGraphics.drawCenteredString(this.font, title,
                     this.width / 2, this.height - BAR_HEIGHT / 2 - 4, 0xC8C8C8);
@@ -200,6 +214,13 @@ public class TvScreen extends Screen {
         right.add(ModTexts.s("tv.hints.system"));
         right.add(line(ModKeys.BTN_START, "Start"));
         right.add(line(ModKeys.BTN_SELECT, "Select"));
+        if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+            right.add("");
+            right.add(ModTexts.s("tv.hints.touch"));
+            right.add(line(ModKeys.VIRTUAL_STYLUS, ModTexts.s("tv.hints.virtual_stylus_action")));
+            right.add(line(ModKeys.BTN_CURSOR_TOUCH, ModTexts.s("tv.hints.tap_action")));
+            right.add(ModTexts.s("tv.hints.ds_extra"));
+        }
         right.add(ModTexts.s("tv.hints.save"));
         right.add(ModTexts.s("tv.hints.load"));
         right.add(ModTexts.s("tv.hints.help"));
@@ -268,26 +289,40 @@ public class TvScreen extends Screen {
 
         @Override
         protected void applyValue() {
-            // Apply live while dragging; do not persist to disk yet.
             ClientAudioHandler.setVolume((float) value);
         }
 
         @Override
         public void onRelease(double mouseX, double mouseY) {
             super.onRelease(mouseX, mouseY);
-            SoundPrefs.setVolume((float) value); // persist once on release
+            SoundPrefs.setVolume((float) value);
         }
     }
 
     @Override
     public void tick() {
         super.tick();
-        if (romId.isEmpty()) return;
-        long now = Util.getMillis();
-        if (now - lastFlush >= 60_000) {
-            PlayStats.addPlaytime(romId, (now - lastFlush) / 1000);
-            lastFlush = now;
+        if (virtualStylus && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+            int dx = stickDir(rightStick.left, rightStick.right);
+            int dy = stickDir(rightStick.up, rightStick.down);
+            if (dx != 0 || dy != 0) {
+                pointer = PointerMapper.move(pointer, dx, dy, 400);
+                sendPointerIfChanged(pointerDown);
+            }
         }
+        if (!romId.isEmpty()) {
+            long now = Util.getMillis();
+            if (now - lastFlush >= 60_000) {
+                PlayStats.addPlaytime(romId, (now - lastFlush) / 1000);
+                lastFlush = now;
+            }
+        }
+    }
+
+    private static int stickDir(boolean neg, boolean pos) {
+        if (pos && !neg) return 1;
+        if (neg && !pos) return -1;
+        return 0;
     }
 
     @Override
@@ -295,9 +330,6 @@ public class TvScreen extends Screen {
         if (!romId.isEmpty()) {
             PlayStats.addPlaytime(romId, (Util.getMillis() - lastFlush) / 1000);
             lastFlush = Util.getMillis();
-            // Thumbnail is captured ONCE here, not every frame.
-            // removed() runs synchronously inside setScreen — before the stop packet
-            // arrives and dispose() removes ScreenEntry, so peekScreen still sees the last frame.
             ClientConsoles.ScreenEntry entry = ClientConsoles.peekScreen(consolePos);
             if (entry != null) snapshotThumb(entry);
             saveThumbnail();
@@ -312,9 +344,12 @@ public class TvScreen extends Screen {
                 showHints = false;
                 return true;
             }
-            // BUGFIX: minecraft.setScreen(null) used to skip onClose(), losing
-            // autosave, release-all, and RetroViewPacket(false).
             this.onClose();
+            return true;
+        }
+        if (ModKeys.VIRTUAL_STYLUS.isActiveAndMatches(InputConstants.getKey(keyCode, scanCode))
+                && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+            virtualStylus = !virtualStylus;
             return true;
         }
         if (keyCode == InputConstants.KEY_F1) {
@@ -331,6 +366,19 @@ public class TvScreen extends Screen {
         }
 
         InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
+        if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
+                && ModKeys.BTN_CURSOR_TOUCH.isActiveAndMatches(key)) {
+            double mx = minecraft.mouseHandler.xpos()
+                    * this.width / (double) minecraft.getWindow().getScreenWidth();
+            double my = minecraft.mouseHandler.ypos()
+                    * this.height / (double) minecraft.getWindow().getScreenHeight();
+            if (PointerMapper.insideFrame(mx, my, frameX, frameY, frameW, frameH)) {
+                pointer = PointerMapper.fromScreen(mx, my, frameX, frameY, frameW, frameH);
+            }
+            pointerDown = true;
+            sendPointerState(true);
+            return true;
+        }
         int buttonId = RetroInputBindings.mapButton(key);
         if (buttonId >= 0) {
             PacketDistributor.sendToServer(new RetroInputPacket(consolePos, buttonId, true));
@@ -343,6 +391,12 @@ public class TvScreen extends Screen {
     @Override
     public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
         InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
+        if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
+                && ModKeys.BTN_CURSOR_TOUCH.isActiveAndMatches(key)) {
+            pointerDown = false;
+            sendPointerState(false);
+            return true;
+        }
         int buttonId = RetroInputBindings.mapButton(key);
         if (buttonId >= 0) {
             PacketDistributor.sendToServer(new RetroInputPacket(consolePos, buttonId, false));
@@ -354,20 +408,43 @@ public class TvScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (super.mouseClicked(mouseX, mouseY, button)) return true; // bar buttons work even with help open
+        if (super.mouseClicked(mouseX, mouseY, button)) return true;
         if (showHints) {
             showHints = false;
+            return true;
+        }
+        if (button == 0 && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
+                && PointerMapper.insideFrame(mouseX, mouseY, frameX, frameY, frameW, frameH)) {
+            setDragging(true);
+            pointer = PointerMapper.fromScreen(mouseX, mouseY, frameX, frameY, frameW, frameH);
+            pointerDown = true;
+            sendPointerState(true);
             return true;
         }
         return false;
     }
 
     @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dx, double dy) {
+        if (pointerDown && button == 0) {
+            pointer = PointerMapper.fromScreen(mouseX, mouseY, frameX, frameY, frameW, frameH);
+            sendPointerIfChanged(true);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dx, dy);
+    }
+
+    @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (pointerDown && button == 0) {
+            pointerDown = false;
+            setDragging(false);
+            pointer = PointerMapper.fromScreen(mouseX, mouseY, frameX, frameY, frameW, frameH);
+            sendPointerState(false);
+            setFocused(null);
+            return true;
+        }
         boolean handled = super.mouseReleased(mouseX, mouseY, button);
-        // BUGFIX: after a click the widget stays focused and Enter/Space would
-        // activate the button instead of Start/game input. Clear focus on release
-        // (not in mouseClicked — that would break slider dragging).
         setFocused(null);
         return handled;
     }
@@ -395,7 +472,6 @@ public class TvScreen extends Screen {
         return 0;
     }
 
-    /** One packet with all axes — only when stick state changes. */
     private void sendAnalogIfChanged() {
         short lx = stickToX(leftStick);
         short ly = stickToY(leftStick);
@@ -409,19 +485,40 @@ public class TvScreen extends Screen {
         PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, lx, ly, rx, ry));
     }
 
-    /**
-     * Power off: stop the server console and return to the game picker.
-     * Autosave is handled server-side in ServerConsoles.stopEmulator(), so we do
-     * not send RetroSaveStatePacket from here (the Entry is gone by then).
-     */
+    private void sendPointerState(boolean pressed) {
+        sentPx = pointer.x();
+        sentPy = pointer.y();
+        sentPpressed = pressed;
+        lastPointerSendMs = Util.getMillis();
+        PacketDistributor.sendToServer(new RetroPointerPacket(consolePos, sentPx, sentPy, pressed));
+    }
+
+    private void sendPointerIfChanged(boolean pressed) {
+        boolean changed = pointer.x() != sentPx || pointer.y() != sentPy || pressed != sentPpressed;
+        if (!changed) return;
+        long now = Util.getMillis();
+        if (pressed == sentPpressed && now - lastPointerSendMs < 16) return;
+        lastPointerSendMs = now;
+        sentPx = pointer.x();
+        sentPy = pointer.y();
+        sentPpressed = pressed;
+        PacketDistributor.sendToServer(new RetroPointerPacket(consolePos, sentPx, sentPy, pressed));
+    }
+
+    private void sendPointerRelease() {
+        if (!sentPpressed && sentPx == 0 && sentPy == 0) return;
+        sentPpressed = false;
+        PacketDistributor.sendToServer(new RetroPointerPacket(consolePos, sentPx, sentPy, false));
+    }
+
     private void powerOffToMenu() {
         if (closed) return;
         closed = true;
         sendReleaseAll();
         sendAnalogZeros();
+        sendPointerRelease();
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
         PacketDistributor.sendToServer(new RetroPowerOffPacket(consolePos));
-        // setScreen triggers removed(): playtime and thumbnail are saved.
         Minecraft.getInstance().setScreen(new CoreSelectScreen(consolePos));
     }
 
@@ -434,6 +531,7 @@ public class TvScreen extends Screen {
         }
         sendReleaseAll();
         sendAnalogZeros();
+        sendPointerRelease();
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
         super.onClose();
     }
@@ -447,6 +545,9 @@ public class TvScreen extends Screen {
         for (RetroInputBindings.ButtonBind bind : RetroInputBindings.BUTTONS) {
             PacketDistributor.sendToServer(new RetroInputPacket(consolePos, bind.retroId(), false));
         }
+        for (RetroInputBindings.ButtonBind bind : RetroInputBindings.DS_BUTTONS) {
+            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, bind.retroId(), false));
+        }
     }
 
     private void snapshotThumb(ClientConsoles.ScreenEntry entry) {
@@ -457,7 +558,7 @@ public class TvScreen extends Screen {
         if (w <= 0 || h <= 0 || abgr.length < w * h) return;
         thumbW = w;
         thumbH = h;
-        thumbPixels = abgr.clone(); // once on close — not a hot path
+        thumbPixels = abgr.clone();
     }
 
     private void saveThumbnail() {

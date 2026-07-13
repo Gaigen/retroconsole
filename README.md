@@ -7,11 +7,11 @@
 
 NeoForge mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
-**Version:** 0.1.0 (early release — expect rough edges)
+**Version:** 0.1.1 (early release — expect rough edges)
 
 ## Download
 
-Pre-built JAR: **[GitHub Releases](https://github.com/Gaigen/retroconsole/releases)** → `retroconsole-0.1.0.jar`
+Pre-built JAR: **[GitHub Releases](https://github.com/Gaigen/retroconsole/releases)** → `retroconsole-0.1.1.jar`
 
 Requirements: Minecraft **1.21.1**, NeoForge **21.1.x**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs.
 
@@ -42,7 +42,7 @@ macOS is **not** supported.
 
 ## Quick start (players)
 
-1. Install NeoForge 1.21.1 and drop `retroconsole-0.1.0.jar` into the `mods` folder.
+1. Install NeoForge 1.21.1 and drop `retroconsole-0.1.1.jar` into the `mods` folder.
 2. Start the game. On first launch the mod creates `config/retroconsole/` under your game directory.
 3. Download libretro cores (`.dll` on Windows, `.so` on Linux) from the [libretro buildbot](https://buildbot.libretro.com/) and place them in `config/retroconsole/cores/`.
 4. Add your legally obtained ROMs under `config/retroconsole/roms/`, preferably in subfolders (`nes/`, `gba/`, `ps2/`, …).
@@ -66,7 +66,7 @@ Place **Screen** blocks so that the **Retro Console touches** any block of the s
 
 - Adjacent screens with the same facing/orientation form one rectangular wall (L-shapes split into separate rectangles).
 - Look straight ahead to place a wall screen; look sharply down/up to place on the floor/ceiling (like CC:Tweaked monitors).
-- **Breaking change (0.1.0):** older worlds that relied on “within 16 blocks” auto-link need the console moved flush against the wall (or the wall rebuilt).
+- **Breaking change (0.1.1):** older worlds that relied on “within 16 blocks” auto-link need the console moved flush against the wall (or the wall rebuilt).
 
 ## Quick start (developers)
 
@@ -156,7 +156,7 @@ The library UI recognizes these folders and suggests matching core name patterns
 
 Custom tabs can be added via `systems.json` (on the machine that serves the library — your client in single-player, the server in multiplayer).
 
-### Tested cores (0.1.0)
+### Tested cores (0.1.1)
 
 Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has matching native helpers; treat HW cores there as “should work”, not as a full matrix.
 
@@ -171,7 +171,7 @@ Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has
 | `ppsspp_libretro` | PSP | HW OpenGL via `headless_gl`; multi-console OK |
 | `flycast_libretro` | Dreamcast | HW OpenGL via `headless_gl`; needs DC BIOS under `system/dc/`; multi-console OK |
 
-Other cores from the catalog table above may work, but were **not** part of the 0.1.0 smoke set.
+Other cores from the catalog table above may work, but were **not** part of the 0.1.1 smoke set.
 
 ## Configuration
 
@@ -281,7 +281,7 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 ./gradlew build
 ```
 
-Output: `build/libs/retroconsole-0.1.0.jar`
+Output: `build/libs/retroconsole-0.1.1.jar`
 
 To rebuild the bundled headless GL native library (developers only):
 

@@ -163,6 +163,21 @@ public final class RetroConsolePaths {
         return p;
     }
 
+    /**
+     * Shared Citra system dumps (aes_keys, Mii data, shared font, etc.).
+     * Seeded into per-player {@code saves/players/{uuid}/Citra/} on 3DS load.
+     * Do not put {@code nand/data} or player {@code sdmc} saves here.
+     */
+    public static Path citraSharedDir() {
+        Path p = systemDir().resolve("citra").toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(p);
+        } catch (Exception ex) {
+            LOGGER.error("Failed to create citra shared directory at {}: {}", p, ex.getMessage());
+        }
+        return p;
+    }
+
     /** One-shot: make sure every RetroConsole-controlled directory exists. */
     public static void ensureAllExist() {
         coresDir();
@@ -175,6 +190,7 @@ public final class RetroConsolePaths {
         pcsx2BiosDir();
         pcsx2MemcardsDir();
         dreamcastDir();
+        citraSharedDir();
         logPathsSummary();
     }
 
@@ -207,6 +223,7 @@ public final class RetroConsolePaths {
             LOGGER.info("  pcsx2/bios -> {}", pcsx2BiosDir().toAbsolutePath().normalize());
             LOGGER.info("  pcsx2/mcd  -> {} (PS2 memory cards)", pcsx2MemcardsDir().toAbsolutePath().normalize());
             LOGGER.info("  dc/        -> {} (Dreamcast BIOS / shared VMU)", dreamcastDir().toAbsolutePath().normalize());
+            LOGGER.info("  citra/     -> {} (shared 3DS system dumps; seeded per player)", citraSharedDir().toAbsolutePath().normalize());
         } catch (Exception ex) {
             LOGGER.warn("Could not log RetroConsole paths yet: {}", ex.getMessage());
         }

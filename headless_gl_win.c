@@ -85,7 +85,7 @@ static void hlg_destroy_internal(hlg_ctx *c);
 /* GL function cache (process-wide). */
 static void *load_gl(const char *name) {
     void *p = (void *)wglGetProcAddress(name);
-    if (!p) {
+    if (!p || p == (void *)1 || p == (void *)2 || p == (void *)3 || p == (void *)-1) {
         HMODULE mod = GetModuleHandleA("opengl32.dll");
         if (mod) p = (void *)GetProcAddress(mod, name);
     }
@@ -1547,7 +1547,11 @@ __declspec(dllexport) void *hlg_get_proc_address(const char *sym) {
             real_glBindFramebuffer = (void (*)(unsigned int, unsigned int))load_gl("glBindFramebuffer");
         return (void *)tracked_glBindFramebuffer;
     }
-    return load_gl(sym);
+    void *p = load_gl(sym);
+    if (!p)
+        fprintf(stderr, "[hlg-win] get_proc_address: %s -> NULL (tid=%lu t_cur=%p)\n",
+                sym, GetCurrentThreadId(), (void *)t_cur);
+    return p;
 }
 
 __declspec(dllexport) unsigned long hlg_get_framebuffer(void) {

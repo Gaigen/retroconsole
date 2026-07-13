@@ -249,7 +249,8 @@ public class CoreSelectScreen extends Screen {
         blip(2.0f);
         PacketDistributor.sendToServer(
                 new RetroCoreSelectPacket(consolePos, core.id(), selectedRom.id(), loadAuto));
-        Minecraft.getInstance().setScreen(new TvScreen(consolePos, selectedRom.id()));
+        Minecraft.getInstance().setScreen(
+                new TvScreen(consolePos, selectedRom.id(), selectedRom.system().id));
     }
 
     private List<RomLibrary.Rom> romsOf(GameSystem s) {

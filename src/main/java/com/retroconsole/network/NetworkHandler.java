@@ -57,6 +57,8 @@ public final class NetworkHandler {
         r.playToClient(RetroArtPacket.TYPE, RetroArtPacket.STREAM_CODEC,
                 (pkt, ctx) -> ClientPacketHandlers.handleArt(pkt, ctx));
 
+        r.playToServer(RetroPointerPacket.TYPE, RetroPointerPacket.STREAM_CODEC,
+                NetworkHandler::handlePointer);
         r.playToServer(RetroInputPacket.TYPE, RetroInputPacket.STREAM_CODEC,
                 NetworkHandler::handleInput);
         r.playToServer(RetroAnalogPacket.TYPE, RetroAnalogPacket.STREAM_CODEC,
@@ -71,6 +73,11 @@ public final class NetworkHandler {
                 NetworkHandler::handlePowerOff);
         r.playToServer(RetroLibraryRequestPacket.TYPE, RetroLibraryRequestPacket.STREAM_CODEC,
                 NetworkHandler::handleLibraryRequest);
+    }
+
+    private static void handlePointer(RetroPointerPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
+                console -> ServerConsoles.handlePointer(pkt.pos(), pkt.x(), pkt.y(), pkt.pressed())));
     }
 
     private static void handleInput(RetroInputPacket pkt, IPayloadContext ctx) {

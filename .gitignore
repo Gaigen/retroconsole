@@ -25,3 +25,5 @@ Thumbs.db
 logs/
 *.tmp
 *.bak
+
+docs/

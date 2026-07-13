@@ -40,6 +40,8 @@ public final class ModConfig {
     public static final ModConfigSpec.ConfigValue<String> PPSSPP_TEXTURE_SCALING;
     public static final ModConfigSpec.ConfigValue<String> PCSX2_UPSCALE_MULTIPLIER;
     public static final ModConfigSpec.ConfigValue<String> PCSX2_ANISOTROPIC;
+    public static final ModConfigSpec.ConfigValue<String> CITRA_RESOLUTION;
+    public static final ModConfigSpec.BooleanValue ENABLE_3DS;
 
     private static final String T = "retroconsole.configuration.";
 
@@ -111,6 +113,10 @@ public final class ModConfig {
                 .comment("How often running cores flush battery/SRAM saves (seconds).")
                 .translation(T + "batteryAutosaveSeconds")
                 .defineInRange("batteryAutosaveSeconds", 30, 5, 600);
+        ENABLE_3DS = server
+                .comment("Allow Nintendo 3DS (Citra) cores — requires server GPU with OpenGL 3.3+.")
+                .translation(T + "enable3ds")
+                .define("enable3ds", true);
         server.pop();
 
         server.translation(T + "video").push("video");
@@ -146,6 +152,10 @@ public final class ModConfig {
                 .comment("PCSX2 anisotropic_filtering (2–16). Empty = preset.")
                 .translation(T + "pcsx2Anisotropic")
                 .define("pcsx2Anisotropic", "");
+        CITRA_RESOLUTION = server
+                .comment("Citra resolution factor (1–10). Empty = preset.")
+                .translation(T + "citraResolution")
+                .define("citraResolution", "");
         server.pop();
 
         SERVER_SPEC = server.build();
@@ -212,6 +222,14 @@ public final class ModConfig {
             return s.isEmpty() ? null : s;
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    public static boolean enable3ds() {
+        try {
+            return ENABLE_3DS.get();
+        } catch (Exception e) {
+            return true;
         }
     }
 

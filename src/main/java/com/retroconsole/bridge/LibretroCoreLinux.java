@@ -34,6 +34,7 @@ interface HeadlessGL extends Library {
 
     /* Process-wide (no handle): libretro callbacks + log/diagnostics. */
     Pointer hlg_get_proc_address(String sym);
+    long    hlg_get_framebuffer();
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
     Pointer hlg_get_log_cb_ptr();
@@ -114,6 +115,21 @@ public class LibretroCoreLinux extends LibretroCore {
     /** Handle of our GL instance in .libheadless_gl.so (one per core). */
     private Pointer glCtx = null;
 
+    private static final java.util.List<Object> PINNED_HW_CALLBACKS = new java.util.ArrayList<>();
+
+    private final GetFramebufferCb hwGetFbCb = () -> {
+        if (glCtx != null) HeadlessGL.INSTANCE.hlg_make_current(glCtx);
+        return HeadlessGL.INSTANCE.hlg_get_framebuffer();
+    };
+    private final GetProcAddressCb hwGetProcCb = sym -> {
+        Pointer p = HeadlessGL.INSTANCE.hlg_get_proc_address(sym);
+        if (p == null || Pointer.nativeValue(p) == 0) {
+            LOGGER.warn("get_proc_address -> NULL for symbol: {}", sym);
+            return Pointer.NULL;
+        }
+        return p;
+    };
+
     private LibretroBridge.RetroLogCallback logCallback;
     private LibretroBridge.RetroLogCallbackStruct logCallbackStruct;
     private static final Pointer RETRO_HW_FRAME_BUFFER_VALID = Pointer.createConstant(-1);
@@ -131,11 +147,15 @@ public class LibretroCoreLinux extends LibretroCore {
 
     // Input — written by server thread, read by emulator thread (lock-free)
     private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(16);
+            new java.util.concurrent.atomic.AtomicIntegerArray(21);
     private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
             new java.util.concurrent.atomic.AtomicIntegerArray(4);
     private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
             new java.util.concurrent.atomic.AtomicIntegerArray(2);
+    private volatile short pointerX;
+    private volatile short pointerY;
+    private volatile boolean pointerPressed;
+    private int pointerPollLogLeft = 10;
 
     // System paths (persistent native memory for env callbacks)
     private String systemDir;
@@ -172,6 +192,8 @@ public class LibretroCoreLinux extends LibretroCore {
         if (isPcsx2Core()) seedPcsx2Defaults();
         if (isFlycastCore()) seedFlycastDefaults();
         if (isPcsxRearmedCore()) seedPcsxRearmedDefaults();
+        if (isMelondsCore()) seedMelondsDefaults();
+        if (isCitraCore()) seedCitraDefaults();
 
         this.core.retro_init();
         LOGGER.info("Core initialized.");
@@ -208,7 +230,7 @@ public class LibretroCoreLinux extends LibretroCore {
                 int[] fb = frameBuffer;
                 if (hwFb) {
                     // PPSSPP/PCSX2: do not read until context_reset on emulator thread
-                    if ((isPpssppCore() || isPcsx2Core()) && !hwContextResetDone) {
+                    if ((isPpssppCore() || isPcsx2Core() || isCitraCore()) && !hwContextResetDone) {
                         newFrame = true;
                         return;
                     }
@@ -247,12 +269,28 @@ public class LibretroCoreLinux extends LibretroCore {
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
                     int mask = 0;
-                    for (int i = 0; i < 16; i++)
+                    for (int i = 0; i < 21; i++)
                         if (joypadState.get(i) != 0) mask |= (1 << i);
                     return (short) mask;
                 }
-                if (index == 0 && id >= 0 && id < 16)
+                if (index == 0 && id >= 0 && id < 21)
                     return (short) joypadState.get(id);
+            }
+            if (device == LibretroBridge.RETRO_DEVICE_POINTER) {
+                if (pointerPollLogLeft > 0) {
+                    pointerPollLogLeft--;
+                    LOGGER.info("POINTER poll id={} -> x={} y={} pressed={}",
+                            id, pointerX, pointerY, pointerPressed);
+                }
+                return switch (id) {
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_X -> pointerX;
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_Y -> pointerY;
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_PRESSED ->
+                            (short) (pointerPressed ? 1 : 0);
+                    case LibretroBridge.RETRO_DEVICE_ID_POINTER_COUNT ->
+                            (short) (pointerPressed ? 1 : 0);
+                    default -> 0;
+                };
             }
             if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
@@ -432,6 +470,8 @@ public class LibretroCoreLinux extends LibretroCore {
     private boolean isFlycastCore()     { return coreNameContains("flycast"); }
     private boolean isPcsxRearmedCore() { return coreNameContains("pcsx_rearmed"); }
     private boolean isPpssppCore()      { return coreNameContains("ppsspp"); }
+    private boolean isMelondsCore()     { return coreNameContains("melonds") || coreNameContains("desmume"); }
+    private boolean isCitraCore()       { return coreNameContains("citra"); }
 
     /** Headless EGL (Mesa) for HW-render cores. */
     private boolean supportsHwRender() { return true; }
@@ -496,6 +536,55 @@ public class LibretroCoreLinux extends LibretroCore {
     private void seedFlycastDefaults() {
         VideoQualityPresets.seedFlycast(this::registerCoreOption);
         LOGGER.info("Flycast defaults: 1920x1440 + tex upscale 4x");
+    }
+
+    private void seedMelondsDefaults() {
+        VideoQualityPresets.seedMelonds(this::registerCoreOption);
+        LOGGER.info("melonDS defaults: Top/Bottom software renderer");
+    }
+
+    private void seedCitraDefaults() {
+        VideoQualityPresets.seedCitra(this::registerCoreOption);
+        LOGGER.info("Citra defaults: OpenGL Top-Bottom layout");
+    }
+
+    /**
+     * Seeds shared Citra system files from {@code system/citra/} into the per-player Citra folder.
+     * Copies only when missing or size differs (dump updates). Player saves ({@code nand/data}, {@code sdmc})
+     * are untouched — they are not present in the shared folder.
+     */
+    private void seedSharedCitraFiles() {
+        if (systemDir == null || saveDir == null) {
+            return;
+        }
+        Path shared = Path.of(systemDir).resolve("citra");
+        Path userDir = Path.of(saveDir).resolve("Citra");
+        if (!Files.isDirectory(shared)) {
+            return;
+        }
+        try (var walk = Files.walk(shared)) {
+            walk.filter(Files::isRegularFile).forEach(src -> {
+                Path rel = shared.relativize(src);
+                Path dst = userDir.resolve(rel);
+                try {
+                    if (Files.exists(dst) && Files.size(dst) == Files.size(src)) {
+                        return;
+                    }
+                    Files.createDirectories(dst.getParent());
+                    try {
+                        Files.deleteIfExists(dst);
+                        Files.createLink(dst, src);
+                    } catch (Exception linkFail) {
+                        Files.copy(src, dst, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    LOGGER.info("Seeded shared Citra file: {}", rel);
+                } catch (IOException e) {
+                    LOGGER.warn("Failed to seed shared Citra file {}: {}", rel, e.toString());
+                }
+            });
+        } catch (IOException e) {
+            LOGGER.warn("Failed to walk shared Citra dir: {}", e.toString());
+        }
     }
 
     private void seedPcsxRearmedDefaults() {
@@ -693,6 +782,7 @@ public class LibretroCoreLinux extends LibretroCore {
                             if (frameBuffer == null || frameBuffer.length != needed)
                                 frameBuffer = new int[needed];
                         }
+                        if (hwRenderActive) resizeHwFramebuffer(baseW, baseH);
                     }
                 }
                 return true;
@@ -726,12 +816,16 @@ public class LibretroCoreLinux extends LibretroCore {
             case 51 -> { // GET_INPUT_BITMASKS — JOYPAD_MASK implemented in input_state
                 return true;
             }
-            case 87 -> { // SET_HW_SHARED_CONTEXT (without experimental flag)
-                if (supportsHwRender()) {
-                    LOGGER.info("Core requested SET_HW_SHARED_CONTEXT — accepting");
-                    return true;
+            case LibretroEnvironment.SET_SERIALIZATION_QUIRKS -> {
+                if ((cmd & LibretroEnvironment.EXPERIMENTAL) != 0) {
+                    if (supportsHwRender()) {
+                        LOGGER.info("SET_HW_SHARED_CONTEXT -> true (citra, raw=0x{})",
+                                Integer.toHexString(cmd));
+                        return true;
+                    }
+                    return false;
                 }
-                return false;
+                return true;
             }
             case LibretroEnvironment.SET_PERFORMANCE_LEVEL -> {
                 return true;
@@ -772,9 +866,6 @@ public class LibretroCoreLinux extends LibretroCore {
             case LibretroEnvironment.SET_KEYBOARD_CALLBACK -> {
                 return false;
             }
-            case LibretroEnvironment.SET_SERIALIZATION_QUIRKS -> {
-                return true;
-            }
             case LibretroEnvironment.SET_SUBSYSTEM_INFO -> {
                 return true;
             }
@@ -813,8 +904,9 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             default -> {
                 long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
-                LOGGER.warn("Unhandled env {} (raw={}) data=0x{}",
-                        LibretroEnvironment.name(cmd), cmd, Long.toHexString(dataAddr));
+                LOGGER.warn("Unhandled env {} (raw=0x{}, base={}) data=0x{}",
+                        LibretroEnvironment.name(cmd), Integer.toHexString(cmd),
+                        LibretroEnvironment.normalize(cmd), Long.toHexString(dataAddr));
                 return false;
             }
         }
@@ -863,16 +955,17 @@ public class LibretroCoreLinux extends LibretroCore {
 
         HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
 
-        /* Callbacks without user-data: write native pointers from .so —
-         * dispatch to our instance happens inside .so via TLS/fallback. */
-        Pointer fbPtr = HeadlessGL.INSTANCE.hlg_get_framebuffer_ptr();
-        Pointer procPtr = HeadlessGL.INSTANCE.hlg_get_proc_address_ptr();
-        LOGGER.info("  get_framebuffer @ {}, get_proc_address @ {}", fbPtr, procPtr);
-        data.setPointer(16, fbPtr);            // get_current_framebuffer
-        data.setPointer(24, procPtr);          // get_proc_address
-        data.setInt(36, glMajor);              // version_major
-        data.setInt(40, glMinor);              // version_minor
-        data.setByte(44, (byte) 1);            // cache_context
+        pinHwCallbacks();
+        Pointer fbFn = CallbackReference.getFunctionPointer(hwGetFbCb);
+        Pointer procFn = CallbackReference.getFunctionPointer(hwGetProcCb);
+        LOGGER.info("  hw callbacks: get_framebuffer @ {}, get_proc_address @ {}", fbFn, procFn);
+        data.setPointer(16, fbFn);
+        data.setPointer(24, procFn);
+        data.setInt(36, glMajor);
+        data.setInt(40, glMinor);
+        data.setByte(44, (byte) 1);
+
+        HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
 
         hwContextReset = data.getPointer(8);
         hwContextResetDone = false;
@@ -892,6 +985,44 @@ public class LibretroCoreLinux extends LibretroCore {
         hwRenderActive = true;
         LOGGER.info("HW render context provided for {} (headless EGL, ctx={})", ctxName, glCtx);
         return true;
+    }
+
+    private void pinHwCallbacks() {
+        for (Object cb : new Object[] { hwGetFbCb, hwGetProcCb }) {
+            if (cb != null && !PINNED_HW_CALLBACKS.contains(cb)) {
+                PINNED_HW_CALLBACKS.add(cb);
+            }
+        }
+    }
+
+    private void resizeHwFramebuffer(int w, int h) {
+        if (!headlessGlReady || glCtx == null || w <= 0 || h <= 0) return;
+        try {
+            if (HeadlessGL.INSTANCE.hlg_make_current(glCtx) == 0) return;
+            if (w != hwPbufW || h != hwPbufH) {
+                HeadlessGL.INSTANCE.hlg_resize(glCtx, w, h);
+                hwPbufW = w;
+                hwPbufH = h;
+                LOGGER.info("HW offscreen FBO resized to {}x{}", w, h);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("HW FBO resize failed: {}", t.getMessage());
+        }
+    }
+
+    private int hwFboDim(LibretroBridge.RetroSystemAVInfo av, boolean width) {
+        synchronized (frameLock) {
+            int live = width ? frameWidth : frameHeight;
+            if (live > 0) return live;
+        }
+        return avMaxDim(av, width);
+    }
+
+    private static int avMaxDim(LibretroBridge.RetroSystemAVInfo av, boolean width) {
+        int base = width ? av.geometry.base_width : av.geometry.base_height;
+        int max = width ? av.geometry.max_width : av.geometry.max_height;
+        if (base > 0 && max > base * 3) return base;
+        return Math.max(max > 0 ? max : 0, base > 0 ? base : 0);
     }
 
     // =====================================================================
@@ -1109,6 +1240,10 @@ public class LibretroCoreLinux extends LibretroCore {
         }
         info.meta = "";
 
+        if (isCitraCore()) {
+            seedSharedCitraFiles();
+        }
+
         boolean ok = core.retro_load_game(info);
         gameLoaded = ok;
         if (ok) {
@@ -1117,9 +1252,15 @@ public class LibretroCoreLinux extends LibretroCore {
 
             var avInfo = new LibretroBridge.RetroSystemAVInfo();
             core.retro_get_system_av_info(avInfo);
-            LOGGER.info("Resolution: {}x{}, FPS: {}, Sample rate: {}",
+            LOGGER.info("Resolution: {}x{} (max {}x{}), FPS: {}, Sample rate: {}",
                     avInfo.geometry.base_width, avInfo.geometry.base_height,
+                    avInfo.geometry.max_width, avInfo.geometry.max_height,
                     avInfo.timing_fps, avInfo.timing_sample_rate);
+            if (hwRenderActive) {
+                int fboW = hwFboDim(avInfo, true);
+                int fboH = hwFboDim(avInfo, false);
+                if (fboW > 0 && fboH > 0) resizeHwFramebuffer(fboW, fboH);
+            }
             timingFps = avInfo.timing_fps > 1.0 ? avInfo.timing_fps : 60.0;
             if (avInfo.timing_sample_rate > 8000.0) {
                 audioSampleRate = avInfo.timing_sample_rate;
@@ -1170,7 +1311,7 @@ public class LibretroCoreLinux extends LibretroCore {
                 }
             } catch (Throwable ignored) {}
             // PPSSPP/PCSX2: context_reset strictly on emulator thread (needs current GL)
-            if ((isPpssppCore() || isPcsx2Core()) && !hwContextResetDone
+            if ((isPpssppCore() || isPcsx2Core() || isCitraCore()) && !hwContextResetDone
                     && hwContextReset != null && Pointer.nativeValue(hwContextReset) != 0) {
                 try {
                     LOGGER.info("context_reset on emulator thread @ {}", hwContextReset);
@@ -1263,7 +1404,7 @@ public class LibretroCoreLinux extends LibretroCore {
 
     /** Joypad button (0 = released, 1 = pressed). */
     public void setButton(int buttonId, boolean pressed) {
-        if (buttonId >= 0 && buttonId < 16)
+        if (buttonId >= 0 && buttonId < 21)
             joypadState.set(buttonId, pressed ? 1 : 0);
         // Dreamcast triggers: mirror L/R to L2/R2 (digital) + analog —
         // Flycast may request any variant for one physical trigger
@@ -1277,6 +1418,14 @@ public class LibretroCoreLinux extends LibretroCore {
         }
         if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) triggerState.set(0, pressed ? 32767 : 0);
         if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) triggerState.set(1, pressed ? 32767 : 0);
+    }
+
+    @Override
+    public void setPointer(short x, short y, boolean pressed) {
+        this.pointerX = x;
+        this.pointerY = y;
+        this.pointerPressed = pressed;
+        joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_CURSOR_TOUCH, pressed ? 1 : 0);
     }
 
     /**

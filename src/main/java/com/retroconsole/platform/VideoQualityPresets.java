@@ -61,6 +61,40 @@ public final class VideoQualityPresets {
         return Map.copyOf(m);
     }
 
+    public static Map<String, String> melondsOverrides() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("melonds_screen_layout", "Top/Bottom");
+        m.put("melonds_renderer", "software");
+        m.put("melonds_show_cursor", "enabled");
+        // Classic melonds_libretro: disabled | Mouse | Touch | Joystick
+        m.put("melonds_touch_mode", "Touch");
+        return Map.copyOf(m);
+    }
+
+    public static Map<String, String> citraOverrides() {
+        Preset p = Preset.fromConfig();
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("citra_renderer", "OpenGL");
+        m.put("citra_layout_option", "Default Top-Bottom Screen");
+        m.put("citra_swap_screen", "Top");
+        m.put("citra_resolution_factor",
+                citraResValue(override(ModConfig.CITRA_RESOLUTION, p.citraRes)));
+        m.put("citra_use_acc_mul", "enabled");
+        m.put("citra_use_hw_shader_cache", "disabled");
+        // Touch: client sends absolute RETRO_DEVICE_POINTER, not relative MOUSE
+        m.put("citra_touch_touchscreen", "enabled");
+        m.put("citra_mouse_touchscreen", "disabled");
+        m.put("citra_render_touchscreen", "enabled");
+        return Map.copyOf(m);
+    }
+
+    private static String citraResValue(String raw) {
+        if (raw == null || raw.isBlank()) return "1x (Native)";
+        String s = raw.trim();
+        if (s.equals("1") || s.equalsIgnoreCase("1x")) return "1x (Native)";
+        return s.endsWith("x") || s.contains("(") ? s : s + "x";
+    }
+
     public static String flycastDefault(String key) {
         return flycastOverrides().get(key);
     }
@@ -114,6 +148,14 @@ public final class VideoQualityPresets {
         register.accept("pcsx2_hw_download_mode", "Accurate");
     }
 
+    public static void seedMelonds(java.util.function.BiConsumer<String, String> register) {
+        melondsOverrides().forEach(register);
+    }
+
+    public static void seedCitra(java.util.function.BiConsumer<String, String> register) {
+        citraOverrides().forEach(register);
+    }
+
     private static String override(
             net.neoforged.neoforge.common.ModConfigSpec.ConfigValue<String> value, String preset) {
         String o = ModConfig.videoOverride(value);
@@ -123,22 +165,26 @@ public final class VideoQualityPresets {
     private record Preset(
             String flycastRes, String flycastTex, String flycastAniso,
             String ppssppRes, String ppssppTex,
-            String pcsx2Scale, String pcsx2Aniso
+            String pcsx2Scale, String pcsx2Aniso,
+            String citraRes
     ) {
         static Preset fromConfig() {
             return switch (ModConfig.videoPreset()) {
                 case "performance" -> new Preset(
                         "640x480", "1", "1",
                         "480x272", "1",
-                        "1", "2");
+                        "1", "2",
+                        "1x (Native)");
                 case "quality" -> new Preset(
                         "1920x1440", "2", "16",
                         "1440x816", "3",
-                        "3", "16");
+                        "3", "16",
+                        "3x");
                 default -> new Preset( // balanced
                         "1280x960", "2", "8",
                         "960x544", "2",
-                        "2", "16");
+                        "2", "16",
+                        "2x");
             };
         }
     }

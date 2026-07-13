@@ -39,6 +39,13 @@ public final class RetroInputBindings {
             new ButtonBind(ModKeys.BTN_R3, LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R3),
     };
 
+    public static final ButtonBind[] DS_BUTTONS = {
+            new ButtonBind(ModKeys.BTN_MIC, LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MIC),
+            new ButtonBind(ModKeys.BTN_LAYOUT, LibretroBridge.RETRO_DEVICE_ID_JOYPAD_LAYOUT_NEXT),
+            new ButtonBind(ModKeys.BTN_LID, LibretroBridge.RETRO_DEVICE_ID_JOYPAD_LID),
+            new ButtonBind(ModKeys.BTN_CURSOR_TOUCH, LibretroBridge.RETRO_DEVICE_ID_JOYPAD_CURSOR_TOUCH),
+    };
+
     public static final StickBind LEFT_STICK = new StickBind(
             0,
             ModKeys.ANALOG_LEFT_UP,
@@ -59,6 +66,11 @@ public final class RetroInputBindings {
 
     public static int mapButton(InputConstants.Key key) {
         for (ButtonBind bind : BUTTONS) {
+            if (bind.key().isActiveAndMatches(key)) {
+                return bind.retroId();
+            }
+        }
+        for (ButtonBind bind : DS_BUTTONS) {
             if (bind.key().isActiveAndMatches(key)) {
                 return bind.retroId();
             }

@@ -32,6 +32,7 @@ public abstract class LibretroCore implements AutoCloseable {
         @Override public int getWidth() { return 0; }
         @Override public int getHeight() { return 0; }
         @Override public void setButton(int buttonId, boolean pressed) { }
+        @Override public void setPointer(short x, short y, boolean pressed) { }
         @Override public void setAnalog(int stick, int axis, short value) { }
         @Override public void reset() { }
         @Override public byte[] serialize() { return null; }
@@ -100,6 +101,8 @@ public abstract class LibretroCore implements AutoCloseable {
 
     public abstract void setButton(int buttonId, boolean pressed);
 
+    public abstract void setPointer(short x, short y, boolean pressed);
+
     public abstract void setAnalog(int stick, int axis, short value);
 
     public abstract void reset();
@@ -150,6 +153,12 @@ public abstract class LibretroCore implements AutoCloseable {
 
     public boolean usesFrontendBatteryRam() {
         return CoreSavePolicy.usesFrontendBatteryRam(corePath);
+    }
+
+    public boolean isTouchCore() {
+        if (corePath == null) return false;
+        String n = corePath.getFileName().toString().toLowerCase();
+        return n.contains("melonds") || n.contains("desmume") || n.contains("citra");
     }
 
     public boolean isPcsx2Core() {

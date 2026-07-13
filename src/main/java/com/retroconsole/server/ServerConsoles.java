@@ -93,6 +93,12 @@ public class ServerConsoles {
         var coreInfo = coreManager.findCore(coreName);
         if (coreInfo == null) { LOGGER.error("Core not found: {}", coreName); return; }
 
+        if (!ModConfig.enable3ds() && coreName.toLowerCase().contains("citra")) {
+            LOGGER.error("3DS (Citra) disabled in server config — enable limits.enable3ds");
+            notifyOwner(ownerId, Component.translatable("retroconsole.error.3ds_disabled"));
+            return;
+        }
+
         Path romPath = RetroConsolePaths.resolveRomFile(romId).orElse(null);
         if (romPath == null) { LOGGER.error("ROM rejected or not found: {}", romId); return; }
 
@@ -260,6 +266,11 @@ public class ServerConsoles {
     public static void handleAnalog(BlockPos pos, int stick, int axis, short value) {
         Entry e = ENTRIES.get(pos.immutable());
         if (e != null) e.runtime().setAnalog(stick, axis, value);
+    }
+
+    public static void handlePointer(BlockPos pos, short x, short y, boolean pressed) {
+        Entry e = ENTRIES.get(pos.immutable());
+        if (e != null) e.runtime().setPointer(x, y, pressed);
     }
 
     public static void handleSaveState(BlockPos pos, int slot, boolean save, boolean auto) {

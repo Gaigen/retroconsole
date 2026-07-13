@@ -27,6 +27,17 @@ public interface LibretroBridge extends Library {
     int RETRO_DEVICE_ANALOG     = 5;
     int RETRO_DEVICE_POINTER    = 6;
 
+    int RETRO_DEVICE_ID_POINTER_X         = 0;
+    int RETRO_DEVICE_ID_POINTER_Y         = 1;
+    int RETRO_DEVICE_ID_POINTER_PRESSED   = 2;
+    int RETRO_DEVICE_ID_POINTER_COUNT     = 3;
+
+    int RETRO_DEVICE_ID_JOYPAD_MIC            = 16;
+    int RETRO_DEVICE_ID_JOYPAD_LAYOUT_NEXT    = 17;
+    int RETRO_DEVICE_ID_JOYPAD_CURSOR_MOVE    = 18;
+    int RETRO_DEVICE_ID_JOYPAD_LID            = 19;
+    int RETRO_DEVICE_ID_JOYPAD_CURSOR_TOUCH   = 20;
+
     // --- Joypad buttons ---
     int RETRO_DEVICE_ID_JOYPAD_B      = 0;
     int RETRO_DEVICE_ID_JOYPAD_Y      = 1;

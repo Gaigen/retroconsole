@@ -54,6 +54,15 @@ public final class ModKeys {
     public static final KeyMapping ANALOG_RIGHT_LEFT = key("analog_right_left", GLFW.GLFW_KEY_F);
     public static final KeyMapping ANALOG_RIGHT_RIGHT = key("analog_right_right", GLFW.GLFW_KEY_H);
 
+    public static final KeyMapping BTN_CURSOR_TOUCH = key("btn_cursor_touch", GLFW.GLFW_KEY_P);
+
+    /** Toggle virtual stylus (right stick moves touch cursor). Default ; — not F2 (screenshot). */
+    public static final KeyMapping VIRTUAL_STYLUS = key("virtual_stylus", GLFW.GLFW_KEY_SEMICOLON);
+
+    public static final KeyMapping BTN_MIC = key("btn_mic", GLFW.GLFW_KEY_B);
+    public static final KeyMapping BTN_LAYOUT = key("btn_layout", GLFW.GLFW_KEY_U);
+    public static final KeyMapping BTN_LID = key("btn_lid", GLFW.GLFW_KEY_O);
+
     private static KeyMapping key(String name, int glfwKey) {
         return new KeyMapping(
                 "key.retroconsole." + name,
@@ -89,6 +98,11 @@ public final class ModKeys {
         event.register(ANALOG_RIGHT_DOWN);
         event.register(ANALOG_RIGHT_LEFT);
         event.register(ANALOG_RIGHT_RIGHT);
+        event.register(BTN_MIC);
+        event.register(BTN_LAYOUT);
+        event.register(BTN_LID);
+        event.register(BTN_CURSOR_TOUCH);
+        event.register(VIRTUAL_STYLUS);
     }
 
     private ModKeys() {}

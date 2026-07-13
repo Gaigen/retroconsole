@@ -50,7 +50,7 @@ public final class ClientPacketHandlers {
             if (pkt.romId() == null || pkt.romId().isEmpty()) {
                 Minecraft.getInstance().setScreen(new CoreSelectScreen(pkt.pos()));
             } else {
-                Minecraft.getInstance().setScreen(new TvScreen(pkt.pos(), pkt.romId()));
+                Minecraft.getInstance().setScreen(new TvScreen(pkt.pos(), pkt.romId(), pkt.systemId()));
             }
         });
     }

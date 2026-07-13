@@ -26,9 +26,12 @@ public final class RomLibrary {
         return RetroConsolePaths.systemDir().resolve("systems.v3.cache");
     }
 
-    private static final List<String> ROM_EXTS = List.of(".nes", ".gb", ".gbc", ".gba",
-            ".sfc", ".smc", ".gen", ".md", ".sms", ".gg", ".zip", ".bin", ".cue",
-            ".iso", ".chd", ".cdi", ".gdi", ".cso");
+    private static final List<String> ROM_EXTS = List.of(
+            ".nes", ".gb", ".gbc", ".gba", ".sfc", ".smc", ".gen", ".md", ".sms", ".gg",
+            ".zip", ".bin", ".cue", ".iso", ".chd", ".cdi", ".gdi", ".cso",
+            ".nds", ".dsi", ".ids",
+            ".3ds", ".3dsx", ".cci", ".cxi", ".app", ".axf", ".elf",
+            ".n64", ".z64", ".v64", ".wbfs", ".wad", ".pbp", ".mdf");
     /** In subfolders accept any file except known junk extensions. */
     private static final List<String> IGNORE_EXTS = List.of(".txt", ".png", ".jpg", ".jpeg",
             ".pdf", ".sav", ".srm", ".state", ".cfg", ".json", ".dat", ".xml");
@@ -130,6 +133,11 @@ public final class RomLibrary {
                 }
             } catch (Exception ignored) {}
             return GameSystem.OTHER;
+        }
+
+        if (ext.equals(".nds") || ext.equals(".dsi") || ext.equals(".ids")) {
+            GameSystem s = sniffNds(file);
+            if (s != null) return s;
         }
 
         if (!ext.equals(".iso") && !ext.equals(".cue") && !ext.equals(".bin") && !ext.equals(".chd"))
@@ -301,6 +309,35 @@ public final class RomLibrary {
         }
         cores.sort(Comparator.comparing(c -> c.displayName, String.CASE_INSENSITIVE_ORDER));
         roms.sort((a, b) -> a.displayName().compareToIgnoreCase(b.displayName()));
+    }
+
+    private static GameSystem sniffNds(Path file) {
+        try (InputStream in = Files.newInputStream(file)) {
+            byte[] hdr = in.readNBytes(512);
+            if (hdr.length >= 0x0D) {
+                if (hdr[0x0B] == 'N' || (hdr.length > 0x12 && hdr[0x12] == 0x03)) {
+                    return GameSystem.byId("nds");
+                }
+            }
+        } catch (Exception ignored) {}
+        return GameSystem.byId("nds");
+    }
+
+    /** Resolve built-in system id from a rom path like {@code nds/game.nds}. */
+    public static String systemIdForRomPath(String romId) {
+        if (romId == null || romId.isEmpty()) return "";
+        String lower = romId.replace('\\', '/').toLowerCase(Locale.ROOT);
+        int dot = lower.lastIndexOf('.');
+        if (dot >= 0) {
+            GameSystem sys = GameSystem.byExt(lower.substring(dot));
+            if (sys != null && sys != GameSystem.OTHER) return sys.id;
+        }
+        int slash = lower.indexOf('/');
+        if (slash > 0) {
+            GameSystem byFolder = GameSystem.byFolder(lower.substring(0, slash));
+            if (byFolder != null && byFolder != GameSystem.OTHER) return byFolder.id;
+        }
+        return "";
     }
 
     public static Path ensureDir(Path dir) {
