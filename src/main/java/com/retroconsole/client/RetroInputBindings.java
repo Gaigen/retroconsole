@@ -108,5 +108,29 @@ public final class RetroInputBindings {
         boolean down;
         boolean left;
         boolean right;
+
+        public short analogX() {
+            if (right && !left) return 32767;
+            if (left && !right) return -32768;
+            return 0;
+        }
+
+        public short analogY() {
+            if (up && !down) return -32768;
+            if (down && !up) return 32767;
+            return 0;
+        }
+
+        public int directionX() {
+            if (left && !right) return -1;
+            if (right && !left) return 1;
+            return 0;
+        }
+
+        public int directionY() {
+            if (up && !down) return -1;
+            if (down && !up) return 1;
+            return 0;
+        }
     }
 }

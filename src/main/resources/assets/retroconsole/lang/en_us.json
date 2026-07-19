@@ -2,6 +2,7 @@
   "itemGroup.retroconsole": "Retro Console",
   "item.retroconsole.retro_console": "Retro Console",
   "item.retroconsole.screen": "Screen",
+  "item.retroconsole.gamepad": "Gamepad",
   "block.retroconsole.retro_console": "Retro Console",
   "block.retroconsole.screen": "Screen",
   "key.categories.retroconsole": "Retro Console",
@@ -219,5 +220,16 @@
   "retroconsole.bezel.preview.right": "Right panel",
   "retroconsole.bezel.fit.fit": "Fit",
   "retroconsole.bezel.fit.fill": "Fill",
-  "retroconsole.bezel.fit.stretch": "Stretch"
+  "retroconsole.bezel.fit.stretch": "Stretch",
+
+  "retroconsole.gamepad.title": "Gamepad",
+  "retroconsole.gamepad.hud": "Playing — Esc to stop · F1 for controls",
+  "retroconsole.gamepad.hints.footer": "§8F1 — close",
+  "retroconsole.gamepad.linked": "Gamepad linked to console at %s, %s, %s",
+  "retroconsole.gamepad.not_linked": "Shift+right-click a retro console to link the gamepad",
+  "retroconsole.gamepad.lost": "Gamepad put away — control stopped",
+  "retroconsole.gamepad.too_far": "Too far from console — control stopped",
+  "retroconsole.gamepad.tooltip.linked": "Linked to console: %s, %s, %s",
+  "retroconsole.gamepad.tooltip.unlinked": "Not linked",
+  "retroconsole.gamepad.tooltip.hint": "Shift+right-click console to link · Right-click to play"
 }

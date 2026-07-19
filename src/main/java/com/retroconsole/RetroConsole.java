@@ -37,6 +37,7 @@ public class RetroConsole {
                     .displayItems((params, output) -> {
                         output.accept(ModBlocks.RETRO_CONSOLE_ITEM.get());
                         output.accept(ModBlocks.SCREEN_ITEM.get());
+                        output.accept(ModItems.GAMEPAD.get());
                     })
                     .build()
     );

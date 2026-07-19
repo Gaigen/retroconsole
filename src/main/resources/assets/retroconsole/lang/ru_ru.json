@@ -2,6 +2,7 @@
   "itemGroup.retroconsole": "Retro Console",
   "item.retroconsole.retro_console": "Retro Console",
   "item.retroconsole.screen": "Экран",
+  "item.retroconsole.gamepad": "Геймпад",
   "block.retroconsole.retro_console": "Retro Console",
   "block.retroconsole.screen": "Экран",
   "key.categories.retroconsole": "Retro Console",
@@ -219,5 +220,16 @@
   "retroconsole.bezel.preview.right": "Правая полоса",
   "retroconsole.bezel.fit.fit": "Вписать",
   "retroconsole.bezel.fit.fill": "Заполнить",
-  "retroconsole.bezel.fit.stretch": "Растянуть"
+  "retroconsole.bezel.fit.stretch": "Растянуть",
+
+  "retroconsole.gamepad.title": "Геймпад",
+  "retroconsole.gamepad.hud": "Игра — Esc чтобы выйти · F1 — управление",
+  "retroconsole.gamepad.hints.footer": "§8F1 — закрыть",
+  "retroconsole.gamepad.linked": "Геймпад привязан к консоли: %s, %s, %s",
+  "retroconsole.gamepad.not_linked": "Shift+ПКМ по консоли, чтобы привязать геймпад",
+  "retroconsole.gamepad.lost": "Геймпад убран — управление остановлено",
+  "retroconsole.gamepad.too_far": "Слишком далеко от консоли — управление остановлено",
+  "retroconsole.gamepad.tooltip.linked": "Привязан к консоли: %s, %s, %s",
+  "retroconsole.gamepad.tooltip.unlinked": "Не привязан",
+  "retroconsole.gamepad.tooltip.hint": "Shift+ПКМ по консоли — привязать · ПКМ — играть"
 }

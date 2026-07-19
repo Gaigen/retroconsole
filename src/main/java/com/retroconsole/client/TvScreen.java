@@ -6,11 +6,10 @@ import com.retroconsole.client.bezel.BezelSettingsScreen;
 import com.retroconsole.client.bezel.TvBezelRenderer;
 import com.retroconsole.client.input.CoreInputProfile;
 import com.retroconsole.client.input.PointerMapper;
+import com.retroconsole.client.input.RetroInputSender;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.client.library.SaveStates;
 import com.retroconsole.client.library.SoundPrefs;
-import com.retroconsole.network.RetroAnalogPacket;
-import com.retroconsole.network.RetroInputPacket;
 import com.retroconsole.network.RetroPointerPacket;
 import com.retroconsole.network.RetroPowerOffPacket;
 import com.retroconsole.network.RetroSaveStatePacket;
@@ -43,8 +42,6 @@ public class TvScreen extends Screen {
     private static final int BAR_HEIGHT = 24;
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE = 0xFF2A2F3A;
-    private static final short ANALOG_MAX = 32767;
-    private static final short ANALOG_MIN = -32768;
 
     private final BlockPos consolePos;
     private final String romId;
@@ -59,9 +56,7 @@ public class TvScreen extends Screen {
     private int thumbW;
     private int thumbH;
 
-    private final RetroInputBindings.StickState leftStick = new RetroInputBindings.StickState();
-    private final RetroInputBindings.StickState rightStick = new RetroInputBindings.StickState();
-    private short sentLx, sentLy, sentRx, sentRy;
+    private final RetroInputSender input;
 
     private int frameX, frameY, frameW, frameH;
     private boolean pointerDown;
@@ -81,6 +76,7 @@ public class TvScreen extends Screen {
         this.romId = romId != null ? romId : "";
         this.displayName = prettyName(this.romId);
         this.inputProfile = CoreInputProfile.forSystemId(systemId);
+        this.input = new RetroInputSender(consolePos);
     }
 
     private static String prettyName(String romId) {
@@ -303,8 +299,9 @@ public class TvScreen extends Screen {
     public void tick() {
         super.tick();
         if (virtualStylus && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
-            int dx = stickDir(rightStick.left, rightStick.right);
-            int dy = stickDir(rightStick.up, rightStick.down);
+            var rightStick = input.rightStick();
+            int dx = rightStick.directionX();
+            int dy = rightStick.directionY();
             if (dx != 0 || dy != 0) {
                 pointer = PointerMapper.move(pointer, dx, dy, 400);
                 sendPointerIfChanged(pointerDown);
@@ -317,12 +314,6 @@ public class TvScreen extends Screen {
                 lastFlush = now;
             }
         }
-    }
-
-    private static int stickDir(boolean neg, boolean pos) {
-        if (pos && !neg) return 1;
-        if (neg && !pos) return -1;
-        return 0;
     }
 
     @Override
@@ -379,12 +370,7 @@ public class TvScreen extends Screen {
             sendPointerState(true);
             return true;
         }
-        int buttonId = RetroInputBindings.mapButton(key);
-        if (buttonId >= 0) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, buttonId, true));
-            return true;
-        }
-        if (handleAnalogKey(key, true)) return true;
+        if (input.handleKeyPressed(key)) return true;
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
@@ -397,12 +383,7 @@ public class TvScreen extends Screen {
             sendPointerState(false);
             return true;
         }
-        int buttonId = RetroInputBindings.mapButton(key);
-        if (buttonId >= 0) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, buttonId, false));
-            return true;
-        }
-        if (handleAnalogKey(key, false)) return true;
+        if (input.handleKeyReleased(key)) return true;
         return super.keyReleased(keyCode, scanCode, modifiers);
     }
 
@@ -449,42 +430,6 @@ public class TvScreen extends Screen {
         return handled;
     }
 
-    private boolean handleAnalogKey(InputConstants.Key key, boolean pressed) {
-        boolean leftChanged = RetroInputBindings.updateStick(
-                RetroInputBindings.LEFT_STICK, key, pressed, leftStick);
-        boolean rightChanged = RetroInputBindings.updateStick(
-                RetroInputBindings.RIGHT_STICK, key, pressed, rightStick);
-        if (leftChanged || rightChanged) {
-            sendAnalogIfChanged();
-        }
-        return leftChanged || rightChanged;
-    }
-
-    private short stickToX(RetroInputBindings.StickState stick) {
-        if (stick.right && !stick.left) return ANALOG_MAX;
-        if (stick.left && !stick.right) return ANALOG_MIN;
-        return 0;
-    }
-
-    private short stickToY(RetroInputBindings.StickState stick) {
-        if (stick.up && !stick.down) return ANALOG_MIN;
-        if (stick.down && !stick.up) return ANALOG_MAX;
-        return 0;
-    }
-
-    private void sendAnalogIfChanged() {
-        short lx = stickToX(leftStick);
-        short ly = stickToY(leftStick);
-        short rx = stickToX(rightStick);
-        short ry = stickToY(rightStick);
-        if (lx == sentLx && ly == sentLy && rx == sentRx && ry == sentRy) return;
-        sentLx = lx;
-        sentLy = ly;
-        sentRx = rx;
-        sentRy = ry;
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, lx, ly, rx, ry));
-    }
-
     private void sendPointerState(boolean pressed) {
         sentPx = pointer.x();
         sentPy = pointer.y();
@@ -514,8 +459,8 @@ public class TvScreen extends Screen {
     private void powerOffToMenu() {
         if (closed) return;
         closed = true;
-        sendReleaseAll();
-        sendAnalogZeros();
+        input.releaseAll();
+        input.sendAnalogZeros();
         sendPointerRelease();
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
         PacketDistributor.sendToServer(new RetroPowerOffPacket(consolePos));
@@ -529,25 +474,11 @@ public class TvScreen extends Screen {
         if (!romId.isEmpty()) {
             PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true, true));
         }
-        sendReleaseAll();
-        sendAnalogZeros();
+        input.releaseAll();
+        input.sendAnalogZeros();
         sendPointerRelease();
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
         super.onClose();
-    }
-
-    private void sendAnalogZeros() {
-        sentLx = sentLy = sentRx = sentRy = 0;
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, (short) 0, (short) 0, (short) 0, (short) 0));
-    }
-
-    private void sendReleaseAll() {
-        for (RetroInputBindings.ButtonBind bind : RetroInputBindings.BUTTONS) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, bind.retroId(), false));
-        }
-        for (RetroInputBindings.ButtonBind bind : RetroInputBindings.DS_BUTTONS) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, bind.retroId(), false));
-        }
     }
 
     private void snapshotThumb(ClientConsoles.ScreenEntry entry) {

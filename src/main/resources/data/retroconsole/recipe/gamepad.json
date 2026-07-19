@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "key": {
+    "B": { "item": "minecraft:stone_button" },
+    "I": { "item": "minecraft:iron_ingot" },
+    "R": { "item": "minecraft:redstone" },
+    "S": { "item": "minecraft:stick" }
+  },
+  "pattern": [
+    " R ",
+    "BIB",
+    " S "
+  ],
+  "result": {
+    "count": 1,
+    "id": "retroconsole:gamepad"
+  }
+}
