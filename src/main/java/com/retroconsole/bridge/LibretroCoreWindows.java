@@ -845,6 +845,13 @@ public class LibretroCoreWindows extends LibretroCore {
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
     private final java.util.List<Memory> allocatedOptionMemory = new java.util.ArrayList<>();
     private int coreOptionsVersion = 2;
+
+    // libretro ABI: retro_core_option_value = 2 pointers; values[RETRO_NUM_CORE_OPTION_VALUES_MAX=128].
+    // V1 def (retro_core_option_definition):    3 ptr + 128 values + 1 ptr default = 2080 (default @ 2072)
+    // V2 def (retro_core_option_v2_definition): 6 ptr + 128 values + 1 ptr default = 2104 (default @ 2096)
+    private static final int OPT_VALUE_SIZE    = Native.POINTER_SIZE * 2;
+    private static final int OPT_DEF_V1_STRIDE = Native.POINTER_SIZE * 3 + 128 * OPT_VALUE_SIZE + Native.POINTER_SIZE;
+    private static final int OPT_DEF_V2_STRIDE = Native.POINTER_SIZE * 6 + 128 * OPT_VALUE_SIZE + Native.POINTER_SIZE;
     private boolean audioBufferStatusRequested = false;
 
     private boolean handleEnvironment(int cmd, Pointer data) {
@@ -1208,21 +1215,29 @@ public class LibretroCoreWindows extends LibretroCore {
     private void parseV1Structs(Pointer array, boolean v2) {
         if (array == null) return;
         final int KEY_OFF     = 0;
-        final int DEFAULT_OFF = v2 ? 536 : 16;
+        final int stride      = v2 ? OPT_DEF_V2_STRIDE : OPT_DEF_V1_STRIDE;
+        final int DEFAULT_OFF = stride - Native.POINTER_SIZE;
         long off = 0;
         int count = 0;
         while (true) {
+            Pointer keyPtr;
+            try { keyPtr = array.getPointer(KEY_OFF + off); } catch (Throwable t) { break; }
+            if (keyPtr == null) break;
             String key;
-            try { key = array.getString(KEY_OFF + off); } catch (Throwable t) { break; }
+            try { key = keyPtr.getString(0); } catch (Throwable t) { break; }
             if (key == null || key.isEmpty()) break;
-            String def;
-            try { def = array.getString(DEFAULT_OFF + off); } catch (Throwable t) { def = ""; }
+            String def = "";
+            try {
+                Pointer defPtr = array.getPointer(DEFAULT_OFF + off);
+                if (defPtr != null) def = defPtr.getString(0);
+            } catch (Throwable t) { def = ""; }
             coreOptions.put(key, def != null ? def : "");
+            LOGGER.debug("  core opt: {} = {}", key, def != null ? def : "");
             count++;
-            off += 544;
+            off += stride;
             if (count > 256) break;
         }
-        LOGGER.info("SET_CORE_OPTIONS: stored {} key(s)", count);
+        LOGGER.info("SET_CORE_OPTIONS: parsed {} defs, stored {} key(s)", count, count);
     }
 
     private void parseV2Defs(Pointer data) {
@@ -1245,7 +1260,7 @@ public class LibretroCoreWindows extends LibretroCore {
             // DIAG: дамп ключей из нативного массива V2 (не legacy coreOptions).
             Pointer defs = us.getPointer(8);
             if (defs != null) {
-                final long STRIDE = 6L * 8 + 128L * 16 + 8; // 2104
+                final long STRIDE = OPT_DEF_V2_STRIDE; // single source of truth (see parseV1Structs)
                 int n = 0;
                 for (long off = 0; n < 512; off += STRIDE, n++) {
                     Pointer keyP = defs.getPointer(off);
