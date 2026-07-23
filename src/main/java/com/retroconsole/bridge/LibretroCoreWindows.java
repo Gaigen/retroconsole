@@ -1715,6 +1715,8 @@ public class LibretroCoreWindows extends LibretroCore {
             joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2, pressed ? 1 : 0);
             triggerState.set(1, pressed ? 32767 : 0);
         }
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) triggerState.set(0, pressed ? 32767 : 0);
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) triggerState.set(1, pressed ? 32767 : 0);
     }
 
     @Override

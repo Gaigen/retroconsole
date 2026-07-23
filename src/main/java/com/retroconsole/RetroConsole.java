@@ -54,6 +54,7 @@ public class RetroConsole {
 
         if (net.neoforged.fml.loading.FMLEnvironment.dist
                 == net.neoforged.api.distmarker.Dist.CLIENT) {
+            modContainer.registerConfig(Type.CLIENT, ModConfig.CLIENT_SPEC);
             modContainer.registerExtensionPoint(
                     net.neoforged.neoforge.client.gui.IConfigScreenFactory.class,
                     net.neoforged.neoforge.client.gui.ConfigurationScreen::new);

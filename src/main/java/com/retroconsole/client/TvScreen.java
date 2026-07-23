@@ -6,6 +6,7 @@ import com.retroconsole.client.bezel.BezelSettingsScreen;
 import com.retroconsole.client.bezel.TvBezelRenderer;
 import com.retroconsole.client.input.CoreInputProfile;
 import com.retroconsole.client.input.PointerMapper;
+import com.retroconsole.client.input.GamepadPoller;
 import com.retroconsole.client.input.RetroInputSender;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.client.library.SaveStates;
@@ -58,6 +59,8 @@ public class TvScreen extends Screen {
 
     private final RetroInputSender input;
 
+    private final GamepadPoller gamepad;
+
     private int frameX, frameY, frameW, frameH;
     private boolean pointerDown;
     private PointerMapper.LibretroPointer pointer = new PointerMapper.LibretroPointer((short) 0, (short) 0);
@@ -77,6 +80,7 @@ public class TvScreen extends Screen {
         this.displayName = prettyName(this.romId);
         this.inputProfile = CoreInputProfile.forSystemId(systemId);
         this.input = new RetroInputSender(consolePos);
+        this.gamepad = new GamepadPoller(this.input);
     }
 
     private static String prettyName(String romId) {
@@ -298,6 +302,7 @@ public class TvScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        if (!closed) gamepad.poll();
         if (virtualStylus && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             var rightStick = input.rightStick();
             int dx = rightStick.directionX();
@@ -476,6 +481,7 @@ public class TvScreen extends Screen {
         }
         input.releaseAll();
         input.sendAnalogZeros();
+        gamepad.reset();
         sendPointerRelease();
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
         super.onClose();

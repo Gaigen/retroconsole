@@ -1,6 +1,7 @@
 package com.retroconsole.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.retroconsole.client.input.GamepadPoller;
 import com.retroconsole.client.input.RetroInputSender;
 import com.retroconsole.config.ModConfig;
 import com.retroconsole.item.GamepadItem;
@@ -25,6 +26,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
 
     private final BlockPos consolePos;
     private final RetroInputSender input;
+    private final GamepadPoller gamepad;
     private boolean closed;
     private boolean showHints;
 
@@ -32,6 +34,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         super(ModTexts.c("gamepad.title"));
         this.consolePos = consolePos;
         this.input = new RetroInputSender(consolePos);
+        this.gamepad = new GamepadPoller(this.input);
     }
 
     @Override
@@ -115,6 +118,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     @Override
     public void tick() {
         super.tick();
+        if (closed) return;
         var player = minecraft.player;
         if (player == null) {
             onClose();
@@ -135,7 +139,10 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         if (distSq > (double) controlDist * controlDist) {
             player.displayClientMessage(Component.translatable("retroconsole.gamepad.too_far"), true);
             onClose();
+            return;
         }
+
+        gamepad.poll();
     }
 
     @Override
@@ -180,6 +187,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true, true));
         input.releaseAll();
         input.sendAnalogZeros();
+        gamepad.reset();
         super.onClose();
     }
 

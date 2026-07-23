@@ -143,3 +143,13 @@ tasks.register('copyHeadlessGLToResources', Copy) {
 
 // Release jar bundles BOTH natives from src/main/resources/natives/ (committed in git).
 // Run copyHeadlessGLToResources on each OS once before release — do not auto-overwrite on every build.
+
+// --- Gamepad logic smoke test (no device, no GLFW window needed) ---
+// Reuses the mod's runtime classpath (incl. LWJGL + natives) so the GLFW class
+// can load its native lib for the constant references. Run: ./gradlew runGamepadSmokeTest
+tasks.register('runGamepadSmokeTest', JavaExec) {
+    group = 'verification'
+    description = 'Run GamepadLogicSmokeTest (mapping + deadzone). No device needed.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.retroconsole.GamepadLogicSmokeTest'
+}

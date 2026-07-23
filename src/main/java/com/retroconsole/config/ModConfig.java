@@ -14,6 +14,7 @@ public final class ModConfig {
 
     public static final ModConfigSpec COMMON_SPEC;
     public static final ModConfigSpec SERVER_SPEC;
+    public static final ModConfigSpec CLIENT_SPEC;
 
     public static final ModConfigSpec.ConfigValue<String> CORES_DIR;
     public static final ModConfigSpec.ConfigValue<String> ROMS_DIR;
@@ -42,6 +43,10 @@ public final class ModConfig {
     public static final ModConfigSpec.ConfigValue<String> PCSX2_ANISOTROPIC;
     public static final ModConfigSpec.ConfigValue<String> CITRA_RESOLUTION;
     public static final ModConfigSpec.BooleanValue ENABLE_3DS;
+
+    public static final ModConfigSpec.BooleanValue GAMEPAD_ENABLED;
+    public static final ModConfigSpec.DoubleValue GAMEPAD_DEADZONE;
+    public static final ModConfigSpec.DoubleValue GAMEPAD_TRIGGER_THRESHOLD;
 
     private static final String T = "retroconsole.configuration.";
 
@@ -159,6 +164,20 @@ public final class ModConfig {
         server.pop();
 
         SERVER_SPEC = server.build();
+
+        ModConfigSpec.Builder client = new ModConfigSpec.Builder();
+        client.translation(T + "gamepad").push("gamepad");
+        GAMEPAD_ENABLED = client
+                .comment("Enable gamepad input while the console screen is open")
+                .define("enabled", true);
+        GAMEPAD_DEADZONE = client
+                .comment("Radial stick deadzone (0.0..0.9)")
+                .defineInRange("deadzone", 0.15, 0.0, 0.9);
+        GAMEPAD_TRIGGER_THRESHOLD = client
+                .comment("Analog trigger press threshold for digital L2/R2 (0.05..0.95)")
+                .defineInRange("triggerThreshold", 0.5, 0.05, 0.95);
+        client.pop();
+        CLIENT_SPEC = client.build();
     }
 
     @Deprecated
@@ -230,6 +249,30 @@ public final class ModConfig {
             return ENABLE_3DS.get();
         } catch (Exception e) {
             return true;
+        }
+    }
+
+    public static boolean gamepadEnabled() {
+        try {
+            return GAMEPAD_ENABLED.get();
+        } catch (IllegalStateException | NullPointerException e) {
+            return true;
+        }
+    }
+
+    public static double gamepadDeadzone() {
+        try {
+            return GAMEPAD_DEADZONE.get();
+        } catch (IllegalStateException | NullPointerException e) {
+            return 0.15;
+        }
+    }
+
+    public static double gamepadTriggerThreshold() {
+        try {
+            return GAMEPAD_TRIGGER_THRESHOLD.get();
+        } catch (IllegalStateException | NullPointerException e) {
+            return 0.5;
         }
     }
 

@@ -21,12 +21,30 @@ public final class RetroInputSender {
     private short sentRx;
     private short sentRy;
 
+    // --- Gamepad analog state (merged with keyboard analog) ---
+    private short gpLx, gpLy, gpRx, gpRy;
+
     public RetroInputSender(BlockPos consolePos) {
         this.consolePos = consolePos;
     }
 
     public BlockPos consolePos() {
         return consolePos;
+    }
+
+    /** Direct button send by retro id (gamepad path, bypasses KeyMapping). */
+    public void sendButton(int retroId, boolean pressed) {
+        PacketDistributor.sendToServer(new RetroInputPacket(consolePos, retroId, pressed));
+    }
+
+    /** Gamepad stick state after deadzone; merged with keyboard analog. */
+    public void setGamepadAnalog(short lx, short ly, short rx, short ry) {
+        if (lx == gpLx && ly == gpLy && rx == gpRx && ry == gpRy) return;
+        gpLx = lx;
+        gpLy = ly;
+        gpRx = rx;
+        gpRy = ry;
+        sendAnalogIfChanged();
     }
 
     public boolean handleKeyPressed(InputConstants.Key key) {
@@ -57,6 +75,7 @@ public final class RetroInputSender {
     }
 
     public void sendAnalogZeros() {
+        gpLx = gpLy = gpRx = gpRy = 0;
         sentLx = sentLy = sentRx = sentRy = 0;
         PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, (short) 0, (short) 0, (short) 0, (short) 0));
     }
@@ -77,15 +96,22 @@ public final class RetroInputSender {
     }
 
     private void sendAnalogIfChanged() {
-        short lx = leftStick.analogX();
-        short ly = leftStick.analogY();
-        short rx = rightStick.analogX();
-        short ry = rightStick.analogY();
+        short lx = merge(leftStick.analogX(), gpLx);
+        short ly = merge(leftStick.analogY(), gpLy);
+        short rx = merge(rightStick.analogX(), gpRx);
+        short ry = merge(rightStick.analogY(), gpRy);
         if (lx == sentLx && ly == sentLy && rx == sentRx && ry == sentRy) return;
         sentLx = lx;
         sentLy = ly;
         sentRx = rx;
         sentRy = ry;
         PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, lx, ly, rx, ry));
+    }
+
+    private static short merge(short keyboard, short gamepad) {
+        int sum = keyboard + gamepad;
+        if (sum < -32768) return (short) -32768;
+        if (sum > 32767) return (short) 32767;
+        return (short) sum;
     }
 }
