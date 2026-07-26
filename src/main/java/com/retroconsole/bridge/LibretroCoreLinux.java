@@ -169,6 +169,9 @@ public class LibretroCoreLinux extends LibretroCore {
 
     private String loadedGamePath;
 
+    /** Cached retro_get_system_info().need_fullpath, read once after retro_init(). */
+    private boolean needFullpath = false;
+
     private LibretroCoreLinux(Path corePath, String systemDir, String saveDir) {
         super(corePath);
         this.corePath = corePath;              // FIX: was not assigned → NPE in isXxxCore()
@@ -200,7 +203,10 @@ public class LibretroCoreLinux extends LibretroCore {
 
         var sysInfo = new LibretroBridge.RetroSystemInfo();
         this.core.retro_get_system_info(sysInfo);
-        LOGGER.info("Core: {} v{}", sysInfo.library_name, sysInfo.library_version);
+        this.needFullpath = sysInfo.need_fullpath;
+        LOGGER.info("Core: {} v{} (need_fullpath={}, valid_ext={})",
+                sysInfo.library_name, sysInfo.library_version,
+                sysInfo.need_fullpath, sysInfo.valid_extensions);
     }
 
     private void setupCallbacks() {
@@ -1188,21 +1194,16 @@ public class LibretroCoreLinux extends LibretroCore {
     
     // =====================================================================
 
-    /** Max ROM size to load into memory (cartridges; larger → path only). */
-    private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
+    /** Safety cap: refuse to slurp anything this big into memory even if need_fullpath=false. */
+    private static final long MAX_IN_MEMORY_ROM = 512L * 1024 * 1024;
 
-    private static boolean isPathOnlyRom(String lowerPath, Path romPath) {
-        if (lowerPath.endsWith(".cue") || lowerPath.endsWith(".gdi")) return true;
-        if (lowerPath.endsWith(".iso") || lowerPath.endsWith(".chd")
+    /** Disc-extension list kept as a safety net for cores that mis-report need_fullpath. */
+    private static boolean isDiscExtension(String lowerPath) {
+        return lowerPath.endsWith(".cue") || lowerPath.endsWith(".gdi")
+                || lowerPath.endsWith(".iso") || lowerPath.endsWith(".chd")
                 || lowerPath.endsWith(".cso") || lowerPath.endsWith(".mdf")
-                || lowerPath.endsWith(".nrg") || lowerPath.endsWith(".img")) {
-            return true;
-        }
-        try {
-            return Files.size(romPath) > MAX_IN_MEMORY_ROM;
-        } catch (IOException e) {
-            return true;
-        }
+                || lowerPath.endsWith(".nrg") || lowerPath.endsWith(".img")
+                || lowerPath.endsWith(".pbp");
     }
 
     /**
@@ -1220,10 +1221,29 @@ public class LibretroCoreLinux extends LibretroCore {
         // Do NOT read discs and large files into memory: cores (PCSX2/PPSSPP/Flycast)
         // open tracks from disk by path; multi-GB ISO does not fit in byte[].
         String lower = romPath.toString().toLowerCase();
-        boolean pathOnly = isPathOnlyRom(lower, romPath);
+        boolean discImage = isDiscExtension(lower);
+        long romSize;
+        try {
+            romSize = Files.size(romPath);
+        } catch (IOException e) {
+            romSize = -1;
+        }
+        boolean pathOnly = needFullpath || discImage;
 
-        if (!pathOnly) {
+        if (pathOnly) {
+            LOGGER.info("load mode: path-only (need_fullpath={}, disc_ext={}, size={})",
+                    needFullpath, discImage, romSize);
+            info.data = null;
+            info.size = 0;
+        } else if (romSize > MAX_IN_MEMORY_ROM) {
+            // need_fullpath=false but unexpectedly large — refuse to slurp a stray ISO.
+            LOGGER.warn("load mode: path-only fallback — need_fullpath=false but size={} exceeds cap {}",
+                    romSize, MAX_IN_MEMORY_ROM);
+            info.data = null;
+            info.size = 0;
+        } else {
             try {
+                LOGGER.info("load mode: in-memory (need_fullpath=false, size={})", romSize);
                 byte[] romBytes = Files.readAllBytes(romPath);
                 info.data = new Memory(romBytes.length);
                 info.data.write(0, romBytes, 0, romBytes.length);
@@ -1233,10 +1253,6 @@ public class LibretroCoreLinux extends LibretroCore {
                 info.data = null;
                 info.size = 0;
             }
-        } else {
-            LOGGER.info("Disc/large image — passing path only: {}", romPath.getFileName());
-            info.data = null;
-            info.size = 0;
         }
         info.meta = "";
 

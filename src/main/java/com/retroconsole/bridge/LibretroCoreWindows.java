@@ -467,6 +467,9 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private boolean coreInitialized;
 
+    /** Cached retro_get_system_info().need_fullpath, read once after retro_init(). */
+    private boolean needFullpath = false;
+
     /** On-disk DLL copy loaded by this instance (see CoreModulePool). */
     private CoreModulePool.Slot moduleSlot;
 
@@ -617,6 +620,16 @@ public class LibretroCoreWindows extends LibretroCore {
             core.retro_init();
             coreInitialized = true;
             LOGGER.info("retro_init() returned. Core initialized.");
+            try {
+                var sysInfo = new LibretroBridge.RetroSystemInfo();
+                core.retro_get_system_info(sysInfo);
+                this.needFullpath = sysInfo.need_fullpath;
+                LOGGER.info("Core system info: {} v{} (need_fullpath={}, valid_ext={})",
+                        sysInfo.library_name, sysInfo.library_version,
+                        sysInfo.need_fullpath, sysInfo.valid_extensions);
+            } catch (Throwable t) {
+                LOGGER.warn("retro_get_system_info failed: {}", t.getMessage());
+            }
         } catch (Throwable t) {
             LOGGER.error("Failed to load libretro core at {}: {}", absPath, t.getMessage(), t);
             LibretroBridge failed = this.core;
@@ -1570,17 +1583,27 @@ public class LibretroCoreWindows extends LibretroCore {
         info.path = isFlycastCore() ? abs.replace('\\', '/') : abs;
         info.meta = "";
         String lower = romPath.toString().toLowerCase();
+        // Disc-extension list kept as a safety net for cores that mis-report need_fullpath.
         boolean discImage = lower.endsWith(".cue") || lower.endsWith(".gdi")
                 || lower.endsWith(".iso") || lower.endsWith(".chd")
                 || lower.endsWith(".cso") || lower.endsWith(".mdf")
                 || lower.endsWith(".nrg") || lower.endsWith(".img")
                 || lower.endsWith(".pbp");
         long size = java.nio.file.Files.size(romPath);
-        if (discImage || size > MAX_IN_MEMORY_ROM) {
-            LOGGER.info("Disc/large image — passing path only: {}", romPath.getFileName());
+        boolean pathOnly = needFullpath || discImage;
+        if (pathOnly) {
+            LOGGER.info("load mode: path-only (need_fullpath={}, disc_ext={}, size={})",
+                    needFullpath, discImage, size);
+            info.data = null;
+            info.size = 0;
+        } else if (size > MAX_IN_MEMORY_ROM) {
+            // need_fullpath=false but unexpectedly large — refuse to slurp a stray ISO.
+            LOGGER.warn("load mode: path-only fallback — need_fullpath=false but size={} exceeds cap {}",
+                    size, MAX_IN_MEMORY_ROM);
             info.data = null;
             info.size = 0;
         } else {
+            LOGGER.info("load mode: in-memory (need_fullpath=false, size={})", size);
             byte[] bytes = java.nio.file.Files.readAllBytes(romPath);
             var mem = new com.sun.jna.Memory(bytes.length);
             mem.write(0, bytes, 0, bytes.length);
@@ -1596,7 +1619,8 @@ public class LibretroCoreWindows extends LibretroCore {
         this.loadedGameInfo = null;
     }
 
-    private static final long MAX_IN_MEMORY_ROM = 64L * 1024 * 1024;
+    /** Safety cap: refuse to slurp anything this big into memory even if need_fullpath=false. */
+    private static final long MAX_IN_MEMORY_ROM = 512L * 1024 * 1024;
 
     private void drainHwFrame() {
         synchronized (frameLock) {
