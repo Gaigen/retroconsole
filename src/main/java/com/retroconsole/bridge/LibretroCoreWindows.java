@@ -1328,6 +1328,9 @@ public class LibretroCoreWindows extends LibretroCore {
             String override = ov.get(key);
             if (override != null) return override;
         }
+        // Genesis Plus GX: force full-frame rendering — "single field" causes
+        // visible vertical jitter on non-interlaced (digital) displays.
+        if ("genesis_plus_gx_render".equals(key)) return "full frame";
         String val = coreOptions.get(key);
         if (val != null && !val.isEmpty()) return val;
         if (key.startsWith("pcsx_rearmed_")) return applyPcsxRearmedDefault(key);

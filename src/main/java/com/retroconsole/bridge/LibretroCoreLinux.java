@@ -1173,6 +1173,9 @@ public class LibretroCoreLinux extends LibretroCore {
             if (key == null || key.isEmpty()) return false;
 
             String val = coreOptions.get(key);
+            // Genesis Plus GX: force full-frame rendering — "single field" causes
+            // visible vertical jitter on non-interlaced (digital) displays.
+            if ("genesis_plus_gx_render".equals(key)) val = "full frame";
             if ((val == null || val.isEmpty()) && key.startsWith("ppsspp_"))
                 val = applyPpssppDefault(key, "");
             if (key.startsWith("pcsx2_"))
