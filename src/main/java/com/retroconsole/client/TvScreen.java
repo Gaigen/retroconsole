@@ -11,6 +11,7 @@ import com.retroconsole.client.input.RetroInputSender;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.client.library.SaveStates;
 import com.retroconsole.client.library.SoundPrefs;
+import com.retroconsole.network.RetroCoopPacket;
 import com.retroconsole.network.RetroPointerPacket;
 import com.retroconsole.network.RetroPowerOffPacket;
 import com.retroconsole.network.RetroSaveStatePacket;
@@ -68,6 +69,7 @@ public class TvScreen extends Screen {
     private boolean sentPpressed;
     private long lastPointerSendMs;
     private boolean virtualStylus;
+    private boolean coopP2;
 
     public TvScreen(BlockPos consolePos, String romId) {
         this(consolePos, romId, null);
@@ -112,6 +114,12 @@ public class TvScreen extends Screen {
         barLeft = addLeft(Button.builder(ModTexts.c("tv.bezel"), b -> {
             blip(1.0f);
             minecraft.setScreen(new BezelSettingsScreen(this));
+        }), barLeft, y, 56, h);
+        barLeft = addLeft(Button.builder(Component.literal("P2 Join"), b -> {
+            blip(1.0f);
+            coopP2 = !coopP2;
+            PacketDistributor.sendToServer(new RetroCoopPacket(consolePos, coopP2));
+            b.setMessage(Component.literal(coopP2 ? "P2 Leave" : "P2 Join"));
         }), barLeft, y, 56, h);
 
         int barRight = this.width - 4;

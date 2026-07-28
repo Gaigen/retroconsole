@@ -21,7 +21,7 @@ import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.function.Consumer;
+import java.util.UUID;
 
 @EventBusSubscriber(modid = RetroConsole.MOD_ID)
 public final class NetworkHandler {
@@ -73,27 +73,33 @@ public final class NetworkHandler {
                 NetworkHandler::handlePowerOff);
         r.playToServer(RetroLibraryRequestPacket.TYPE, RetroLibraryRequestPacket.STREAM_CODEC,
                 NetworkHandler::handleLibraryRequest);
+        r.playToServer(RetroCoopPacket.TYPE, RetroCoopPacket.STREAM_CODEC,
+                NetworkHandler::handleCoop);
     }
 
     private static void handlePointer(RetroPointerPacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
-                console -> ServerConsoles.handlePointer(pkt.pos(), pkt.x(), pkt.y(), pkt.pressed())));
+        ctx.enqueueWork(() -> withConsole(ctx, pkt.pos(), console -> {
+            ServerConsoles.handlePointer(pkt.pos(), pkt.x(), pkt.y(), pkt.pressed());
+        }));
     }
 
     private static void handleInput(RetroInputPacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
-                console -> ServerConsoles.handleInput(pkt.pos(), pkt.buttonId(), pkt.pressed())));
+        ctx.enqueueWork(() -> withConsole(ctx, pkt.pos(), console -> {
+            int port = ServerConsoles.getPort(pkt.pos(), ctx.player().getUUID());
+            ServerConsoles.handleInput(pkt.pos(), port, pkt.buttonId(), pkt.pressed());
+        }));
     }
 
     /** Full analog pad state; enqueueWork required for block entity access. */
     private static void handleAnalog(RetroAnalogPacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(), console -> {
+        ctx.enqueueWork(() -> withConsole(ctx, pkt.pos(), console -> {
+            int port = ServerConsoles.getPort(pkt.pos(), ctx.player().getUUID());
             var core = console.getCore();
             if (core == null) return;
-            core.setAnalog(0, 0, pkt.lx());
-            core.setAnalog(0, 1, pkt.ly());
-            core.setAnalog(1, 0, pkt.rx());
-            core.setAnalog(1, 1, pkt.ry());
+            core.setAnalog(port, 0, 0, pkt.lx());
+            core.setAnalog(port, 0, 1, pkt.ly());
+            core.setAnalog(port, 1, 0, pkt.rx());
+            core.setAnalog(port, 1, 1, pkt.ry());
         }));
     }
 
@@ -122,14 +128,17 @@ public final class NetworkHandler {
     }
 
     private static void handleSaveState(RetroSaveStatePacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
-                console -> ServerConsoles.handleSaveState(pkt.pos(), pkt.slot(), pkt.save(), pkt.auto())));
+        ctx.enqueueWork(() -> withConsole(ctx, pkt.pos(), console -> {
+            ServerConsoles.handleSaveState(pkt.pos(), pkt.slot(), pkt.save(), pkt.auto());
+        }));
     }
 
     /** Power off via block entity so romId clears; auto-save runs in stopEmulator(). */
     private static void handlePowerOff(RetroPowerOffPacket pkt, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> withControlledConsole(ctx, pkt.pos(),
-                RetroConsoleBlockEntity::powerOff));
+        ctx.enqueueWork(() -> withConsole(ctx, pkt.pos(), console -> {
+            if (!ServerConsoles.isOwner(pkt.pos(), ctx.player().getUUID())) return;
+            console.powerOff();
+        }));
     }
 
     /** Client opened game picker — send server disk catalog + art. */
@@ -162,14 +171,36 @@ public final class NetworkHandler {
                 pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) <= distSq;
     }
 
-    /** Run action only if player is near, block is a console, and player controls it. */
-    private static void withControlledConsole(IPayloadContext ctx, BlockPos pos,
-                                              Consumer<RetroConsoleBlockEntity> action) {
+    /** Co-op join/leave: player explicitly connects/disconnects as P2 (port 1). */
+    private static void handleCoop(RetroCoopPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer player)) return;
+            if (!isNear(player, pkt.pos(), controlDistanceSq())) return;
+            if (!ServerConsoles.hasEmulator(pkt.pos())) return;
+            UUID uuid = player.getUUID();
+            if (pkt.join()) {
+                boolean ok = ServerConsoles.joinCoop(pkt.pos(), uuid);
+                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                        ok ? "[RetroConsole] Joined as Player 2" : "[RetroConsole] P2 slot is taken"));
+            } else {
+                ServerConsoles.leaveCoop(pkt.pos(), uuid);
+                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                        "[RetroConsole] Left Player 2 — back to shared P1"));
+            }
+        });
+    }
+
+    /**
+     * Gate: player must be near the console and emulator must be running.
+     * All players share port 0 by default; P2 is explicit via RetroCoopPacket.
+     */
+    private static void withConsole(IPayloadContext ctx, BlockPos pos,
+                                     java.util.function.Consumer<RetroConsoleBlockEntity> action) {
         if (!(ctx.player() instanceof ServerPlayer player)) return;
         if (!isNear(player, pos, controlDistanceSq())) return;
         if (!(player.level().getBlockEntity(pos)
                 instanceof RetroConsoleBlockEntity console)) return;
-        if (!console.isControlledBy(player)) return;
+        if (!ServerConsoles.hasEmulator(pos)) return;
         action.accept(console);
     }
 }

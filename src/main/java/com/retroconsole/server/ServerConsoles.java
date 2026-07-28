@@ -38,6 +38,9 @@ public class ServerConsoles {
     private static final ConcurrentHashMap<BlockPos, Set<UUID>> VIEWERS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<BlockPos, FrameSenderThread> FRAME_SENDERS = new ConcurrentHashMap<>();
 
+    /** Co-op port assignments: pos -> (player UUID -> libretro port). Owner = port 0, P2 = port 1. */
+    private static final ConcurrentHashMap<BlockPos, ConcurrentHashMap<UUID, Integer>> PORTS = new ConcurrentHashMap<>();
+
     private static CoreManager coreManager;
 
     /** Background core shutdown — does not block server thread when breaking the block. */
@@ -138,6 +141,10 @@ public class ServerConsoles {
         ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId, ownerId,
                 System.currentTimeMillis()));
         FRAME_SENDERS.put(pos, sender);
+        // Co-op: owner always gets port 0
+        ConcurrentHashMap<UUID, Integer> portMap = new ConcurrentHashMap<>();
+        if (ownerId != null) portMap.put(ownerId, 0);
+        PORTS.put(pos, portMap);
         if (ownerId != null) {
             ServerPlayStats.onLaunch(ownerId, romId);
         }
@@ -168,6 +175,7 @@ public class ServerConsoles {
         }
         notifyConsoleStopped(pos);
         VIEWERS.remove(pos);
+        PORTS.remove(pos);
     }
 
     private static void scheduleClose(LibretroRuntime runtime, BlockPos pos) {
@@ -259,13 +267,21 @@ public class ServerConsoles {
     }
 
     public static void handleInput(BlockPos pos, int buttonId, boolean pressed) {
+        handleInput(pos, 0, buttonId, pressed);
+    }
+
+    public static void handleInput(BlockPos pos, int port, int buttonId, boolean pressed) {
         Entry e = ENTRIES.get(pos.immutable());
-        if (e != null) e.runtime().setButton(buttonId, pressed);
+        if (e != null) e.runtime().setButton(port, buttonId, pressed);
     }
 
     public static void handleAnalog(BlockPos pos, int stick, int axis, short value) {
+        handleAnalog(pos, 0, stick, axis, value);
+    }
+
+    public static void handleAnalog(BlockPos pos, int port, int stick, int axis, short value) {
         Entry e = ENTRIES.get(pos.immutable());
-        if (e != null) e.runtime().setAnalog(stick, axis, value);
+        if (e != null) e.runtime().setAnalog(port, stick, axis, value);
     }
 
     public static void handlePointer(BlockPos pos, short x, short y, boolean pressed) {
@@ -301,6 +317,56 @@ public class ServerConsoles {
     public static void removeViewerEverywhere(UUID playerId) {
         for (Set<UUID> viewers : VIEWERS.values()) {
             viewers.remove(playerId);
+        }
+    }
+
+    // --- Co-op port management ---
+
+    /** Get the libretro port assigned to a player at a console. Default 0 (shared). */
+    public static int getPort(BlockPos pos, UUID playerId) {
+        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(pos.immutable());
+        if (portMap == null) return 0;
+        Integer port = portMap.get(playerId);
+        return port != null ? port : 0;
+    }
+
+    /**
+     * Explicitly join as player 2 (port 1). Returns true if assigned.
+     * Fails if port 1 is already taken by someone else.
+     */
+    public static boolean joinCoop(BlockPos pos, UUID playerId) {
+        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(pos.immutable());
+        if (portMap == null) return false;
+        // Already assigned?
+        Integer existing = portMap.get(playerId);
+        if (existing != null && existing == 1) return true;
+        // Check port 1 is free
+        if (portMap.containsValue(1)) return false;
+        portMap.put(playerId, 1);
+        LOGGER.info("Co-op: player {} joined as P2 at {}", playerId, pos);
+        return true;
+    }
+
+    /** Leave co-op — player goes back to shared port 0. */
+    public static void leaveCoop(BlockPos pos, UUID playerId) {
+        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(pos.immutable());
+        if (portMap == null) return;
+        Integer removed = portMap.remove(playerId);
+        if (removed != null && removed == 1) {
+            LOGGER.info("Co-op: player {} left P2 at {}", playerId, pos);
+        }
+    }
+
+    /** True if the player is the owner (started the emulator). */
+    public static boolean isOwner(BlockPos pos, UUID playerId) {
+        Entry e = ENTRIES.get(pos.immutable());
+        return e != null && playerId.equals(e.ownerId());
+    }
+
+    /** Release a player's port on ALL consoles (disconnect). */
+    public static void releasePortEverywhere(UUID playerId) {
+        for (ConcurrentHashMap<UUID, Integer> portMap : PORTS.values()) {
+            portMap.remove(playerId);
         }
     }
 
@@ -343,6 +409,7 @@ public class ServerConsoles {
         List<Entry> entries = new ArrayList<>(ENTRIES.values());
         ENTRIES.clear();
         VIEWERS.clear();
+        PORTS.clear();
         List<LibretroRuntime> runtimes = new ArrayList<>(entries.size());
         for (Entry e : entries) {
             if (e.ownerId() != null) {

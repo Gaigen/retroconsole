@@ -11,6 +11,8 @@ import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.PacketDistributor;
 
+import java.util.UUID;
+
 @EventBusSubscriber(modid = RetroConsole.MOD_ID)
 public class ServerTickHandler {
 
@@ -28,7 +30,9 @@ public class ServerTickHandler {
 
     @SubscribeEvent
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent event) {
-        ServerConsoles.removeViewerEverywhere(event.getEntity().getUUID());
+        UUID uuid = event.getEntity().getUUID();
+        ServerConsoles.removeViewerEverywhere(uuid);
+        ServerConsoles.releasePortEverywhere(uuid);
     }
 
     /**

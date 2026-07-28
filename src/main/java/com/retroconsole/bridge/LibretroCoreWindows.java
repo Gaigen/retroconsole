@@ -760,17 +760,18 @@ public class LibretroCoreWindows extends LibretroCore {
         core.retro_set_input_poll(inputPollCallback);
 
         LibretroBridge.RetroInputState inputStateCb = (port, device, index, id) -> {
-            if (port != 0) return 0;
+            if (port < 0 || port >= MAX_PORTS) return 0;
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
                     int mask = 0;
-                    for (int i = 0; i < 21; i++) if (joypadState.get(i) != 0) mask |= (1 << i);
+                    for (int i = 0; i < 21; i++) if (joypadState[port].get(i) != 0) mask |= (1 << i);
                     return (short) mask;
                 }
-                if (index == 0 && id >= 0 && id < 21) return (short) joypadState.get(id);
+                if (index == 0 && id >= 0 && id < 21) return (short) joypadState[port].get(id);
                 return 0;
             }
             if (device == LibretroBridge.RETRO_DEVICE_POINTER) {
+                if (port != 0) return 0; // pointer only on port 0
                 if (pointerPollLogLeft > 0) {
                     pointerPollLogLeft--;
                     LOGGER.info("POINTER poll id={} -> x={} y={} pressed={}",
@@ -788,18 +789,18 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             if (device == LibretroBridge.RETRO_DEVICE_ANALOG) {
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_LEFT) {
-                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(0);
-                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(1);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState[port].get(0);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState[port].get(1);
                 }
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
-                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState.get(2);
-                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState.get(3);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_X) return (short) analogState[port].get(2);
+                    if (id == LibretroBridge.RETRO_DEVICE_ID_ANALOG_Y) return (short) analogState[port].get(3);
                 }
                 if (index == LibretroBridge.RETRO_DEVICE_INDEX_ANALOG_BUTTON) {
                     if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L ||
-                            id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) return (short) triggerState.get(0);
+                            id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) return (short) triggerState[port].get(0);
                     if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R ||
-                            id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) return (short) triggerState.get(1);
+                            id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) return (short) triggerState[port].get(1);
                 }
             }
             return 0;
@@ -833,12 +834,19 @@ public class LibretroCoreWindows extends LibretroCore {
     private int[] swRowInts = new int[0];
     private short[] swRowShorts = new short[0];
 
-    private final java.util.concurrent.atomic.AtomicIntegerArray joypadState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(21);
-    private final java.util.concurrent.atomic.AtomicIntegerArray analogState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(4);
-    private final java.util.concurrent.atomic.AtomicIntegerArray triggerState =
-            new java.util.concurrent.atomic.AtomicIntegerArray(2);
+    private final java.util.concurrent.atomic.AtomicIntegerArray[] joypadState =
+            new java.util.concurrent.atomic.AtomicIntegerArray[MAX_PORTS];
+    private final java.util.concurrent.atomic.AtomicIntegerArray[] analogState =
+            new java.util.concurrent.atomic.AtomicIntegerArray[MAX_PORTS];
+    private final java.util.concurrent.atomic.AtomicIntegerArray[] triggerState =
+            new java.util.concurrent.atomic.AtomicIntegerArray[MAX_PORTS];
+    {
+        for (int p = 0; p < MAX_PORTS; p++) {
+            joypadState[p] = new java.util.concurrent.atomic.AtomicIntegerArray(21);
+            analogState[p] = new java.util.concurrent.atomic.AtomicIntegerArray(4);
+            triggerState[p] = new java.util.concurrent.atomic.AtomicIntegerArray(2);
+        }
+    }
     private volatile short pointerX;
     private volatile short pointerY;
     private volatile boolean pointerPressed;
@@ -1520,12 +1528,15 @@ public class LibretroCoreWindows extends LibretroCore {
             // Flycast waits until all 4 ports are set before update_variables()
             // configures VMU in expansion slot A1 (see retro_set_controller_port_device).
             core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
-            for (int port = 1; port < 4; port++) {
+            core.retro_set_controller_port_device(1, LibretroBridge.RETRO_DEVICE_JOYPAD);
+            for (int port = 2; port < 4; port++) {
                 core.retro_set_controller_port_device(port, LibretroBridge.RETRO_DEVICE_NONE);
             }
-            LOGGER.info("Flycast: all controller ports registered (VMU slot A1 active)");
+            LOGGER.info("Flycast: controller ports 0-1 registered as JOYPAD (VMU slot A1 active)");
         } else {
             core.retro_set_controller_port_device(0, LibretroBridge.RETRO_DEVICE_JOYPAD);
+            core.retro_set_controller_port_device(1, LibretroBridge.RETRO_DEVICE_JOYPAD);
+            LOGGER.info("Controller ports 0-1 registered as JOYPAD (co-op ready)");
         }
     }
 
@@ -1745,17 +1756,23 @@ public class LibretroCoreWindows extends LibretroCore {
 
     @Override
     public void setButton(int buttonId, boolean pressed) {
-        if (buttonId >= 0 && buttonId < 21) joypadState.set(buttonId, pressed ? 1 : 0);
+        setButton(0, buttonId, pressed);
+    }
+
+    @Override
+    public void setButton(int port, int buttonId, boolean pressed) {
+        if (port < 0 || port >= MAX_PORTS) return;
+        if (buttonId >= 0 && buttonId < 21) joypadState[port].set(buttonId, pressed ? 1 : 0);
         if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L) {
-            joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2, pressed ? 1 : 0);
-            triggerState.set(0, pressed ? 32767 : 0);
+            joypadState[port].set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2, pressed ? 1 : 0);
+            triggerState[port].set(0, pressed ? 32767 : 0);
         }
         if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R) {
-            joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2, pressed ? 1 : 0);
-            triggerState.set(1, pressed ? 32767 : 0);
+            joypadState[port].set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2, pressed ? 1 : 0);
+            triggerState[port].set(1, pressed ? 32767 : 0);
         }
-        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) triggerState.set(0, pressed ? 32767 : 0);
-        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) triggerState.set(1, pressed ? 32767 : 0);
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2) triggerState[port].set(0, pressed ? 32767 : 0);
+        if (buttonId == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) triggerState[port].set(1, pressed ? 32767 : 0);
     }
 
     @Override
@@ -1763,13 +1780,19 @@ public class LibretroCoreWindows extends LibretroCore {
         this.pointerX = x;
         this.pointerY = y;
         this.pointerPressed = pressed;
-        joypadState.set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_CURSOR_TOUCH, pressed ? 1 : 0);
+        joypadState[0].set(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_CURSOR_TOUCH, pressed ? 1 : 0);
     }
 
     @Override
     public void setAnalog(int stick, int axis, short value) {
+        setAnalog(0, stick, axis, value);
+    }
+
+    @Override
+    public void setAnalog(int port, int stick, int axis, short value) {
+        if (port < 0 || port >= MAX_PORTS) return;
         int idx = stick * 2 + axis;
-        if (idx >= 0 && idx < 4) analogState.set(idx, value);
+        if (idx >= 0 && idx < 4) analogState[port].set(idx, value);
     }
 
     @Override public void reset() { /* no-op */ }

@@ -105,6 +105,19 @@ public abstract class LibretroCore implements AutoCloseable {
 
     public abstract void setAnalog(int stick, int axis, short value);
 
+    /** Port-aware button (co-op). Default delegates to port-0 variant. */
+    public void setButton(int port, int buttonId, boolean pressed) {
+        if (port == 0) setButton(buttonId, pressed);
+    }
+
+    /** Port-aware analog (co-op). Default delegates to port-0 variant. */
+    public void setAnalog(int port, int stick, int axis, short value) {
+        if (port == 0) setAnalog(stick, axis, value);
+    }
+
+    /** Maximum number of controller ports exposed to libretro cores. */
+    public static final int MAX_PORTS = 2;
+
     public abstract void reset();
 
     public abstract byte[] serialize();

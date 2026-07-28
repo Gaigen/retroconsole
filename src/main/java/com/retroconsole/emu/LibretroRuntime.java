@@ -125,8 +125,16 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
         core.setButton(buttonId, pressed);
     }
 
+    public void setButton(int port, int buttonId, boolean pressed) {
+        core.setButton(port, buttonId, pressed);
+    }
+
     public void setAnalog(int stick, int axis, short value) {
         core.setAnalog(stick, axis, value);
+    }
+
+    public void setAnalog(int port, int stick, int axis, short value) {
+        core.setAnalog(port, stick, axis, value);
     }
 
     public void setPointer(short x, short y, boolean pressed) {
