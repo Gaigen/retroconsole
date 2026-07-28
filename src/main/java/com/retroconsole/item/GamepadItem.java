@@ -2,6 +2,8 @@ package com.retroconsole.item;
 
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.reg.ModItems;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
@@ -119,5 +121,10 @@ public class GamepadItem extends Item {
             tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.unlinked"));
         }
         tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.hint"));
+
+        if (Screen.hasAltDown()) {
+            tooltip.add(Component.literal("For d_aranda, who saw the potential before anyone else.")
+                    .withStyle(ChatFormatting.LIGHT_PURPLE, ChatFormatting.ITALIC));
+        }
     }
 }
