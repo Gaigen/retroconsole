@@ -6,6 +6,7 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -50,9 +51,20 @@ public class ScreenBlockEntity extends BlockEntity {
         if (changed) {
             setChanged();
             if (level instanceof ServerLevel serverLevel) {
-                serverLevel.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), CLIENTS_ONLY);
-                serverLevel.blockEntityChanged(worldPosition);
+                syncToTrackingClients(serverLevel);
             }
+        }
+    }
+
+    /** Push grid/consoleId to clients already watching this chunk (not only on rejoin). */
+    private void syncToTrackingClients(ServerLevel serverLevel) {
+        serverLevel.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), CLIENTS_ONLY);
+        ClientboundBlockEntityDataPacket packet = ClientboundBlockEntityDataPacket.create(this);
+        BlockPos pos = worldPosition;
+        for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {
+            if (player.level() != serverLevel || player.connection == null) continue;
+            if (!player.getChunkTrackingView().contains(pos)) continue;
+            player.connection.send(packet);
         }
     }
 
