@@ -12,7 +12,7 @@ jobs:
   native-linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install native build deps
         run: sudo apt-get update && sudo apt-get install -y libegl-dev libgl-dev
@@ -29,7 +29,7 @@ jobs:
   native-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: msys2/setup-msys2@v2
         with:
@@ -55,7 +55,7 @@ jobs:
     needs: [native-linux, native-windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download built natives
         uses: actions/download-artifact@v4

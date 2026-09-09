@@ -10,6 +10,8 @@ OUT="runs/client/config/retroconsole/cores/.libheadless_gl.so"
 RES="src/main/resources/natives/libheadless_gl.so"
 SRC="headless_gl.c"
 
+mkdir -p "$(dirname "$OUT")" "$(dirname "$RES")"
+
 echo "Compiling $SRC -> $OUT"
 gcc -shared -fPIC -O2 -Wall -o "$OUT" "$SRC" -lEGL -lGL -ldl -lpthread
 strip "$OUT"
