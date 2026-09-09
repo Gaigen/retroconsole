@@ -7,6 +7,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -63,7 +64,7 @@ public class ScreenBlockEntity extends BlockEntity {
         BlockPos pos = worldPosition;
         for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {
             if (player.level() != serverLevel || player.connection == null) continue;
-            if (!player.getChunkTrackingView().contains(pos)) continue;
+            if (!player.getChunkTrackingView().contains(new ChunkPos(pos))) continue;
             player.connection.send(packet);
         }
     }
