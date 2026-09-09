@@ -3,6 +3,7 @@ package com.retroconsole.bridge;
 import com.retroconsole.platform.Pcsx2BiosResolver;
 import com.retroconsole.platform.VideoQualityPresets;
 import com.sun.jna.*;
+import com.sun.jna.Library;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,6 +11,8 @@ import java.io.*;
 import java.nio.file.*;
 import java.util.Arrays;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 /** JNA interface to .libheadless_gl.so — multi-instance headless EGL/Mesa GL. */
 interface HeadlessGL extends Library {
@@ -192,7 +195,16 @@ public class LibretroCoreLinux extends LibretroCore {
         this.saveDir = saveDir;
         updatePersistentDirMemory();
 
-        this.core = Native.load(corePath.toAbsolutePath().toString(), LibretroBridge.class);
+        // this.core = Native.load(corePath.toAbsolutePath().toString(), LibretroBridge.class);
+        Map<String, Object> options = new HashMap<>();
+        // RTLD_NOW = 2, RTLD_LOCAL = 0 (отсутствие RTLD_GLOBAL=0x100)
+        // Каждый .so получает своё пространство символов — ядра не видят друг друга
+        options.put(Library.OPTION_OPEN_FLAGS, 2); // RTLD_NOW без RTLD_GLOBAL
+        this.core = Native.load(
+            corePath.toAbsolutePath().toString(),
+            LibretroBridge.class,
+            options
+        );
         LOGGER.info("Core loaded. API version: {}", this.core.retro_api_version());
 
         setupCallbacks(); // BEFORE retro_init()
@@ -278,7 +290,7 @@ public class LibretroCoreLinux extends LibretroCore {
         core.retro_set_input_poll(inputPollCallback);
 
         inputStateCallback = (port, device, index, id) -> {
-            if (port < 0 || port >= MAX_PORTS) return 0;
+            if (port < 0 || port >= MAX_PORTS) return (short) 0;
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
                     int mask = 0;
@@ -290,7 +302,7 @@ public class LibretroCoreLinux extends LibretroCore {
                     return (short) joypadState[port].get(id);
             }
             if (device == LibretroBridge.RETRO_DEVICE_POINTER) {
-                if (port != 0) return 0; // pointer only on port 0
+                if (port != 0) return (short) 0; // pointer only on port 0
                 if (pointerPollLogLeft > 0) {
                     pointerPollLogLeft--;
                     LOGGER.info("POINTER poll id={} -> x={} y={} pressed={}",
@@ -322,7 +334,7 @@ public class LibretroCoreLinux extends LibretroCore {
                         id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2) return (short) triggerState[port].get(1);
                 }
             }
-            return 0;
+            return (short) 0;
         };
         core.retro_set_input_state(inputStateCallback);
     }

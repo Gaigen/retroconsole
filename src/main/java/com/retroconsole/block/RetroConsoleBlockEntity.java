@@ -9,6 +9,8 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -16,6 +18,11 @@ import java.util.UUID;
 
 public class RetroConsoleBlockEntity extends BlockEntity {
 
+    /** Sync BE data to clients without Block.UPDATE_NEIGHBORS (breaks block breaking). */
+    private static final int CLIENTS_ONLY = Block.UPDATE_CLIENTS;
+
+    private UUID consoleId;
+    private BlockPos lastTrackedPos;
     private String romId = "";
     private String coreName = "";
     private UUID ownerId;
@@ -23,6 +30,40 @@ public class RetroConsoleBlockEntity extends BlockEntity {
 
     public RetroConsoleBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.RETRO_CONSOLE_BE.get(), pos, state);
+    }
+
+    /** Synced id; null on client until chunk/BE packet arrives. */
+    public UUID getConsoleId() {
+        return consoleId;
+    }
+
+    /** Server: return id, creating and persisting one if needed. */
+    public UUID getOrAssignConsoleId() {
+        if (level != null && level.isClientSide()) {
+            return consoleId;
+        }
+        if (consoleId == null) {
+            consoleId = UUID.randomUUID();
+            setChanged();
+            syncBlockEntityToClients();
+        }
+        return consoleId;
+    }
+
+    /** Server tick: track moving contraptions for frame distance checks only. */
+    static void serverTick(RetroConsoleBlockEntity be) {
+        if (be.level == null || be.level.isClientSide() || be.consoleId == null) return;
+        BlockPos pos = be.getBlockPos();
+        if (be.lastTrackedPos != null && be.lastTrackedPos.equals(pos)) return;
+        be.lastTrackedPos = pos.immutable();
+        ServerConsoles.updatePosition(be.consoleId, pos);
+    }
+
+    private void syncBlockEntityToClients() {
+        if (level instanceof ServerLevel serverLevel) {
+            serverLevel.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), CLIENTS_ONLY);
+            serverLevel.blockEntityChanged(worldPosition);
+        }
     }
 
     public String getRomId() {
@@ -34,7 +75,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         this.romId = romId;
         setChanged();
         if (level != null && !level.isClientSide()) {
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+            syncBlockEntityToClients();
             if (!romId.isEmpty() && !romId.equals(old)) {
                 startEmulator();
             } else if (romId.isEmpty()) {
@@ -51,7 +92,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         this.coreName = coreName;
         setChanged();
         if (level != null && !level.isClientSide()) {
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+            syncBlockEntityToClients();
         }
     }
 
@@ -71,7 +112,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         this.pendingLoadAuto = loadAuto;
         this.romId = romId;
         setChanged();
-        level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        syncBlockEntityToClients();
         if (romId.isEmpty()) {
             stopEmulator();
         } else {
@@ -80,36 +121,32 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         }
     }
 
-    /**
-     * Power off from TvScreen: clear romId — setRomId("") calls stopEmulator()
-     * (autosave inside) and sends a block update. After that, right-click opens CoreSelectScreen again.
-     */
     public void powerOff() {
         if (level == null || level.isClientSide()) return;
         setRomId("");
     }
 
-    /** The player who selected the game (or restarted the console) is the sole driver. */
     public boolean isControlledBy(ServerPlayer player) {
         return ownerId != null && ownerId.equals(player.getUUID());
     }
 
-    /** Active libretro core on the server, or null if the emulator is not running. */
     public LibretroCore getCore() {
         if (level == null || level.isClientSide()) return null;
-        return ServerConsoles.getCore(worldPosition);
+        UUID id = consoleId;
+        return id != null ? ServerConsoles.getCore(id) : null;
     }
 
     private void startEmulator() {
         if (level instanceof ServerLevel && !coreName.isEmpty() && !romId.isEmpty()) {
-            ServerConsoles.startEmulator(worldPosition, coreName, romId, ownerId, pendingLoadAuto);
+            UUID id = getOrAssignConsoleId();
+            ServerConsoles.startEmulator(id, worldPosition, coreName, romId, ownerId, pendingLoadAuto);
             pendingLoadAuto = false;
         }
     }
 
     private void stopEmulator() {
-        if (level instanceof ServerLevel) {
-            ServerConsoles.stopEmulator(worldPosition);
+        if (level instanceof ServerLevel && consoleId != null) {
+            ServerConsoles.stopEmulator(consoleId);
         }
     }
 
@@ -119,7 +156,9 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         if (level instanceof ServerLevel serverLevel) {
             serverLevel.getServer().execute(() -> {
                 if (!isRemoved() && serverLevel.isLoaded(worldPosition)) {
-                    ScreenMultiblocks.onConsoleChanged(serverLevel, worldPosition);
+                    UUID id = getOrAssignConsoleId();
+                    lastTrackedPos = worldPosition.immutable();
+                    ServerConsoles.updatePosition(id, worldPosition);
                 }
             });
         }
@@ -136,6 +175,10 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
+        UUID id = level != null && !level.isClientSide() ? getOrAssignConsoleId() : consoleId;
+        if (id != null) {
+            tag.putUUID("ConsoleId", id);
+        }
         tag.putString("RomId", romId);
         tag.putString("CoreName", coreName);
         if (ownerId != null) {
@@ -146,6 +189,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     @Override
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
+        consoleId = tag.hasUUID("ConsoleId") ? tag.getUUID("ConsoleId") : null;
         romId = tag.getString("RomId");
         coreName = tag.getString("CoreName");
         ownerId = tag.hasUUID("OwnerId") ? tag.getUUID("OwnerId") : null;

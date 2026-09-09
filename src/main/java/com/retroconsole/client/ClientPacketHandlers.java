@@ -25,7 +25,7 @@ public final class ClientPacketHandlers {
     public static void handleFrame(RetroFramePacket pkt, IPayloadContext ctx) {
         int[] frame = pkt.decompressFrameAbgr();
         if (frame != null) {
-            ClientConsoles.submitFrame(pkt.pos(), frame, pkt.width(), pkt.height());
+            ClientConsoles.submitFrame(pkt.consoleId(), frame, pkt.width(), pkt.height());
         }
     }
 
@@ -35,8 +35,8 @@ public final class ClientPacketHandlers {
 
     public static void handleStopConsole(RetroStopConsolePacket pkt, IPayloadContext ctx) {
         ctx.enqueueWork(() -> {
-            ClientConsoles.dispose(pkt.pos());
-            ClientAudioHandler.stop(pkt.pos());
+            ClientConsoles.dispose(pkt.consoleId());
+            ClientAudioHandler.stop(pkt.consoleId());
         });
     }
 
@@ -50,7 +50,8 @@ public final class ClientPacketHandlers {
             if (pkt.romId() == null || pkt.romId().isEmpty()) {
                 Minecraft.getInstance().setScreen(new CoreSelectScreen(pkt.pos()));
             } else {
-                Minecraft.getInstance().setScreen(new TvScreen(pkt.pos(), pkt.romId(), pkt.systemId()));
+                Minecraft.getInstance().setScreen(
+                        new TvScreen(pkt.pos(), pkt.consoleId(), pkt.romId(), pkt.systemId()));
             }
         });
     }

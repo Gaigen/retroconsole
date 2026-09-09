@@ -4,17 +4,17 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.IntBuffer;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Client-side console screens.
+ * Client-side console screens keyed by stable console UUID.
  *
  * "Last frame wins" architecture:
  *
@@ -40,15 +40,15 @@ public final class ClientConsoles {
         private final ResourceLocation id;
         private final int width;
         private final int height;
-        private final IntBuffer staging; // direct memory, reused every frame
+        private final IntBuffer staging;
         private int[] lastAbgr;
 
-        private ScreenEntry(BlockPos pos, int width, int height) {
+        private ScreenEntry(UUID consoleId, int width, int height) {
             this.width = width;
             this.height = height;
             this.tex = new DynamicTexture(width, height, true);
             this.id = Minecraft.getInstance().getTextureManager()
-                    .register("retro_screen_" + pos.asLong(), tex);
+                    .register("retro_screen_" + consoleId, tex);
             this.staging = MemoryUtil.memAllocInt(width * height);
         }
 
@@ -64,63 +64,47 @@ public final class ClientConsoles {
         public int[] lastAbgr() { return lastAbgr; }
     }
 
-    /** PENDING written from network thread, read from render — must be concurrent. */
-    private static final Map<BlockPos, PendingFrame> PENDING = new ConcurrentHashMap<>();
-    /** SCREENS touched only from render thread; concurrent map is cheap insurance. */
-    private static final Map<BlockPos, ScreenEntry> SCREENS = new ConcurrentHashMap<>();
+    private static final Map<UUID, PendingFrame> PENDING = new ConcurrentHashMap<>();
+    private static final Map<UUID, ScreenEntry> SCREENS = new ConcurrentHashMap<>();
 
-    /**
-     * Accept a frame from the network thread. Array is already ABGR and ownership
-     * transfers to ClientConsoles — caller must not touch it afterward.
-     * Unshown previous frame is silently overwritten.
-     */
-    public static void submitFrame(BlockPos pos, int[] abgr, int width, int height) {
-        if (abgr == null || width <= 0 || height <= 0) return;
+    public static void submitFrame(UUID consoleId, int[] abgr, int width, int height) {
+        if (consoleId == null || abgr == null || width <= 0 || height <= 0) return;
         if (abgr.length < width * height) return;
-        PENDING.put(pos.immutable(), new PendingFrame(abgr, width, height));
+        PENDING.put(consoleId, new PendingFrame(abgr, width, height));
     }
 
-    /**
-     * Get console screen. Uploads a fresh frame before return if one is pending.
-     * Repeated calls in the same render frame are free (PENDING already empty).
-     */
-    public static ScreenEntry getScreen(BlockPos consolePos) {
-        if (consolePos == null) return null;
-        BlockPos pos = consolePos.immutable();
-        uploadPendingFrame(pos);
-        return SCREENS.get(pos);
+    public static ScreenEntry getScreen(UUID consoleId) {
+        if (consoleId == null) return null;
+        uploadPendingFrame(consoleId);
+        return SCREENS.get(consoleId);
     }
 
-    /** Without frame upload — callable from any thread (thumbnails on exit). */
-    public static ScreenEntry peekScreen(BlockPos consolePos) {
-        if (consolePos == null) return null;
-        return SCREENS.get(consolePos.immutable());
+    public static ScreenEntry peekScreen(UUID consoleId) {
+        if (consoleId == null) return null;
+        return SCREENS.get(consoleId);
     }
 
-    /** Render thread only. Takes latest frame from slot and uploads to texture. */
-    private static void uploadPendingFrame(BlockPos pos) {
+    private static void uploadPendingFrame(UUID consoleId) {
         if (!RenderSystem.isOnRenderThread()) return;
 
-        PendingFrame f = PENDING.remove(pos);
+        PendingFrame f = PENDING.remove(consoleId);
         if (f == null) return;
 
-        ScreenEntry entry = SCREENS.get(pos);
+        ScreenEntry entry = SCREENS.get(consoleId);
         if (entry != null && (entry.width != f.width() || entry.height != f.height())) {
             entry.close();
-            SCREENS.remove(pos);
+            SCREENS.remove(consoleId);
             entry = null;
         }
         if (entry == null) {
-            entry = new ScreenEntry(pos, f.width(), f.height());
-            SCREENS.put(pos, entry);
+            entry = new ScreenEntry(consoleId, f.width(), f.height());
+            SCREENS.put(consoleId, entry);
         }
 
         int n = f.width() * f.height();
         entry.staging.clear();
         entry.staging.put(f.abgr(), 0, n);
         entry.staging.flip();
-        // OPTIMIZATION: Arrays.copyOf(f.abgr(), n) here was ~11 MB extra alloc per frame
-        // at 1920x1440. Array belongs solely to PendingFrame and is not mutated — take as-is.
         entry.lastAbgr = f.abgr();
 
         GlStateManager._bindTexture(entry.tex.getId());
@@ -135,11 +119,10 @@ public final class ClientConsoles {
                 MemoryUtil.memAddress(entry.staging));
     }
 
-    /** Call from render thread (via enqueueWork from stop-packet handler). */
-    public static void dispose(BlockPos pos) {
-        pos = pos.immutable();
-        PENDING.remove(pos);
-        ScreenEntry entry = SCREENS.remove(pos);
+    public static void dispose(UUID consoleId) {
+        if (consoleId == null) return;
+        PENDING.remove(consoleId);
+        ScreenEntry entry = SCREENS.remove(consoleId);
         if (entry != null) {
             entry.close();
         }

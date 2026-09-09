@@ -22,6 +22,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Wireless gamepad item. Shift+right-click a retro console to link;
@@ -29,6 +30,8 @@ import java.util.List;
  */
 public class GamepadItem extends Item {
 
+    private static final String TAG_CONSOLE_ID = "ConsoleId";
+    /** Legacy hint for resolving console after a move. */
     private static final String TAG_CONSOLE_POS = "ConsolePos";
 
     public GamepadItem(Properties properties) {
@@ -40,25 +43,45 @@ public class GamepadItem extends Item {
     }
 
     @Nullable
-    public static BlockPos getLinkedConsole(ItemStack stack) {
+    public static UUID getLinkedConsoleId(ItemStack stack) {
         CustomData custom = stack.get(DataComponents.CUSTOM_DATA);
         if (custom == null) return null;
         CompoundTag tag = custom.copyTag();
-        if (!tag.contains(TAG_CONSOLE_POS)) return null;
-        return BlockPos.of(tag.getLong(TAG_CONSOLE_POS));
+        if (tag.hasUUID(TAG_CONSOLE_ID)) {
+            return tag.getUUID(TAG_CONSOLE_ID);
+        }
+        return null;
     }
 
-    public static boolean isLinkedTo(ItemStack stack, BlockPos consolePos) {
-        BlockPos linked = getLinkedConsole(stack);
-        return linked != null && linked.equals(consolePos);
+    @Nullable
+    public static BlockPos getLinkedConsolePos(ItemStack stack) {
+        CustomData custom = stack.get(DataComponents.CUSTOM_DATA);
+        if (custom == null) return null;
+        CompoundTag tag = custom.copyTag();
+        if (tag.contains(TAG_CONSOLE_POS)) {
+            return BlockPos.of(tag.getLong(TAG_CONSOLE_POS));
+        }
+        return null;
     }
 
-    public static void setLinkedConsole(ItemStack stack, @Nullable BlockPos consolePos) {
-        if (consolePos == null) {
+    public static boolean isLinkedTo(ItemStack stack, UUID consoleId) {
+        UUID linked = getLinkedConsoleId(stack);
+        return linked != null && linked.equals(consoleId);
+    }
+
+    public static boolean isLinkedTo(ItemStack stack, BlockPos consolePos, UUID consoleId) {
+        if (consoleId != null && isLinkedTo(stack, consoleId)) return true;
+        BlockPos linkedPos = getLinkedConsolePos(stack);
+        return linkedPos != null && linkedPos.equals(consolePos);
+    }
+
+    public static void setLinkedConsole(ItemStack stack, UUID consoleId, BlockPos consolePos) {
+        if (consoleId == null) {
             stack.remove(DataComponents.CUSTOM_DATA);
             return;
         }
         CompoundTag tag = new CompoundTag();
+        tag.putUUID(TAG_CONSOLE_ID, consoleId);
         tag.putLong(TAG_CONSOLE_POS, consolePos.asLong());
         stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
     }
@@ -71,7 +94,7 @@ public class GamepadItem extends Item {
         if (player == null) return InteractionResult.PASS;
 
         BlockEntity be = level.getBlockEntity(pos);
-        if (!(be instanceof RetroConsoleBlockEntity)) {
+        if (!(be instanceof RetroConsoleBlockEntity console)) {
             return InteractionResult.PASS;
         }
 
@@ -81,7 +104,7 @@ public class GamepadItem extends Item {
 
         ItemStack stack = context.getItemInHand();
         if (!level.isClientSide()) {
-            setLinkedConsole(stack, pos.immutable());
+            setLinkedConsole(stack, console.getConsoleId(), pos.immutable());
             player.displayClientMessage(
                     Component.translatable("retroconsole.gamepad.linked", pos.getX(), pos.getY(), pos.getZ()),
                     true);
@@ -96,8 +119,8 @@ public class GamepadItem extends Item {
             return InteractionResultHolder.pass(stack);
         }
 
-        BlockPos linked = getLinkedConsole(stack);
-        if (linked == null) {
+        BlockPos linkedPos = resolveConsolePos(level, player, stack);
+        if (linkedPos == null) {
             if (level.isClientSide()) {
                 player.displayClientMessage(Component.translatable("retroconsole.gamepad.not_linked"), true);
             }
@@ -105,15 +128,43 @@ public class GamepadItem extends Item {
         }
 
         if (level.isClientSide()) {
-            GamepadScreens.open(linked);
+            GamepadScreens.open(linkedPos);
         }
         return InteractionResultHolder.success(stack);
+    }
+
+    @Nullable
+    private static BlockPos resolveConsolePos(Level level, Player player, ItemStack stack) {
+        UUID consoleId = getLinkedConsoleId(stack);
+        BlockPos hint = getLinkedConsolePos(stack);
+        if (hint != null && level.isLoaded(hint)) {
+            BlockEntity be = level.getBlockEntity(hint);
+            if (be instanceof RetroConsoleBlockEntity console
+                    && (consoleId == null || console.getConsoleId().equals(consoleId))) {
+                return hint;
+            }
+        }
+        if (consoleId == null) {
+            return hint;
+        }
+        int r = 64;
+        BlockPos center = player.blockPosition();
+        for (BlockPos p : BlockPos.betweenClosed(
+                center.offset(-r, -r, -r), center.offset(r, r, r))) {
+            if (!level.isLoaded(p)) continue;
+            BlockEntity be = level.getBlockEntity(p);
+            if (be instanceof RetroConsoleBlockEntity console
+                    && console.getConsoleId().equals(consoleId)) {
+                return p.immutable();
+            }
+        }
+        return null;
     }
 
     @Override
     public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip,
                                 TooltipFlag flag) {
-        BlockPos linked = getLinkedConsole(stack);
+        BlockPos linked = getLinkedConsolePos(stack);
         if (linked != null) {
             tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.linked",
                     linked.getX(), linked.getY(), linked.getZ()));

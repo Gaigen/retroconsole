@@ -10,7 +10,6 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.state.BlockState;
@@ -18,7 +17,7 @@ import org.joml.Matrix4f;
 
 /**
  * Рисует кадр на экранных блоках. Вся геометрия группы приходит с сервера:
- * xIndex/yIndex/width/height — из BE, FACING/ORIENTATION — из блокстейта.
+ * xIndex/yIndex/width/height/consoleId — из BE, FACING/ORIENTATION — из блокстейта.
  */
 public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBlockEntity> {
 
@@ -35,9 +34,8 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         Direction facing = state.getValue(ScreenBlock.FACING);
         Direction orientation = state.getValue(ScreenBlock.ORIENTATION);
 
-        BlockPos consolePos = be.getConsolePos();
-        var entry = (consolePos != null && !consolePos.equals(BlockPos.ZERO))
-                ? ClientConsoles.getScreen(consolePos) : null;
+        var entry = be.getConsoleId() != null
+                ? ClientConsoles.getScreen(be.getConsoleId()) : null;
         ResourceLocation tex = (entry != null) ? entry.id() : SCREENSAVER;
 
         int gridW = Math.max(1, be.getGridWidth());

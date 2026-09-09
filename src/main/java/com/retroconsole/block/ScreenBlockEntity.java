@@ -6,45 +6,52 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.UUID;
 
 public class ScreenBlockEntity extends BlockEntity {
 
-    private BlockPos consolePos = BlockPos.ZERO;
+    private static final int CLIENTS_ONLY = Block.UPDATE_CLIENTS;
+
+    @Nullable
+    private UUID consoleId;
     private int xIndex;
     private int yIndex;
     private int gridWidth = 1;
     private int gridHeight = 1;
-    /** false — группа не собрана (свежая установка или старый NBT без Grid-тегов). */
     private boolean assembled;
 
     public ScreenBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.SCREEN_BE.get(), pos, state);
     }
 
-    public BlockPos getConsolePos() { return consolePos; }
+    @Nullable
+    public UUID getConsoleId() { return consoleId; }
     public int getXIndex() { return xIndex; }
     public int getYIndex() { return yIndex; }
     public int getGridWidth() { return gridWidth; }
     public int getGridHeight() { return gridHeight; }
 
-    /** Только сервер; вызывается ScreenMultiblocks при пересборке группы. */
-    void setGrid(int xIndex, int yIndex, int width, int height, BlockPos consolePos) {
+    void setGrid(int xIndex, int yIndex, int width, int height, @Nullable UUID consoleId) {
         boolean changed = !assembled
                 || this.xIndex != xIndex || this.yIndex != yIndex
                 || this.gridWidth != width || this.gridHeight != height
-                || !this.consolePos.equals(consolePos);
+                || !java.util.Objects.equals(this.consoleId, consoleId);
         this.assembled = true;
         this.xIndex = xIndex;
         this.yIndex = yIndex;
         this.gridWidth = width;
         this.gridHeight = height;
-        this.consolePos = consolePos.immutable();
+        this.consoleId = consoleId;
         if (changed) {
             setChanged();
-            if (level != null && !level.isClientSide()) {
-                level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+            if (level instanceof ServerLevel serverLevel) {
+                serverLevel.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), CLIENTS_ONLY);
+                serverLevel.blockEntityChanged(worldPosition);
             }
         }
     }
@@ -60,9 +67,9 @@ public class ScreenBlockEntity extends BlockEntity {
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
-        tag.putInt("ConsoleX", consolePos.getX());
-        tag.putInt("ConsoleY", consolePos.getY());
-        tag.putInt("ConsoleZ", consolePos.getZ());
+        if (consoleId != null) {
+            tag.putUUID("ConsoleId", consoleId);
+        }
         if (assembled) {
             tag.putInt("GridX", xIndex);
             tag.putInt("GridY", yIndex);
@@ -74,7 +81,7 @@ public class ScreenBlockEntity extends BlockEntity {
     @Override
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
-        consolePos = new BlockPos(tag.getInt("ConsoleX"), tag.getInt("ConsoleY"), tag.getInt("ConsoleZ"));
+        consoleId = tag.hasUUID("ConsoleId") ? tag.getUUID("ConsoleId") : null;
         assembled = tag.contains("GridW");
         xIndex = tag.getInt("GridX");
         yIndex = tag.getInt("GridY");

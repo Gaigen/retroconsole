@@ -34,7 +34,7 @@ public class FrameSenderThread extends Thread {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("FrameSender-Thread");
 
-    private final BlockPos consolePos;
+    private final UUID consoleId;
     private final ThreadedEmulatorRuntime threaded;
     private final LibretroRuntime runtime;
 
@@ -44,10 +44,10 @@ public class FrameSenderThread extends Thread {
     private volatile boolean running = true;
     private long lastBatterySaveNs = System.nanoTime();
 
-    FrameSenderThread(BlockPos consolePos, ThreadedEmulatorRuntime threaded, LibretroRuntime runtime) {
-        super("retro-frame-sender-" + consolePos.toShortString());
+    FrameSenderThread(UUID consoleId, ThreadedEmulatorRuntime threaded, LibretroRuntime runtime) {
+        super("retro-frame-sender-" + consoleId);
         setDaemon(true);
-        this.consolePos = consolePos;
+        this.consoleId = consoleId;
         this.threaded = threaded;
         this.runtime = runtime;
         // Size buffer up front: pollFrame with an empty array would return false
@@ -106,7 +106,7 @@ public class FrameSenderThread extends Thread {
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         } catch (Throwable t) {
-            LOGGER.error("FrameSenderThread crashed for {}", consolePos, t);
+            LOGGER.error("FrameSenderThread crashed for {}", consoleId, t);
         }
     }
 
@@ -177,13 +177,18 @@ public class FrameSenderThread extends Thread {
      * Previously duplicated as videoRecipients/audioRecipients.
      */
     private List<ServerPlayer> recipients(List<ServerPlayer> players, int distance) {
-        Set<UUID> viewers = ServerConsoles.viewers(consolePos);
+        BlockPos consolePos = ServerConsoles.getPosition(consoleId);
+        Set<UUID> viewers = ServerConsoles.viewers(consoleId);
         long rSq = (long) distance * distance;
         List<ServerPlayer> out = new ArrayList<>(2);
         for (ServerPlayer p : players) {
             if (p.hasDisconnected()) continue;
-            if (viewers.contains(p.getUUID())
-                    || p.blockPosition().distSqr(consolePos) < rSq) {
+            if (viewers.contains(p.getUUID())) {
+                out.add(p);
+                continue;
+            }
+            if (p.distanceToSqr(
+                    consolePos.getX() + 0.5, consolePos.getY() + 0.5, consolePos.getZ() + 0.5) <= rSq) {
                 out.add(p);
             }
         }
@@ -201,7 +206,8 @@ public class FrameSenderThread extends Thread {
             pcm[b + 1] = (byte) (s >> 8);
         }
         int sr = (int) Math.round(runtime.getAudioSampleRate());
-        RetroAudioPayload packet = new RetroAudioPayload(consolePos, sr, pcm);
+        BlockPos consolePos = ServerConsoles.getPosition(consoleId);
+        RetroAudioPayload packet = new RetroAudioPayload(consoleId, consolePos, sr, pcm);
         for (ServerPlayer player : recipients) {
             if (!canSendToServer(server)) return;
             if (player.hasDisconnected()) continue;
@@ -220,7 +226,7 @@ public class FrameSenderThread extends Thread {
     private void sendVideoFrame(MinecraftServer server, int w, int h, List<ServerPlayer> recipients) {
         if (!canSendToServer(server)) return;
 
-        Set<UUID> viewers = ServerConsoles.viewers(consolePos);
+        Set<UUID> viewers = ServerConsoles.viewers(consoleId);
         List<ServerPlayer> fullRes = new ArrayList<>(recipients.size());
         List<ServerPlayer> worldRes = new ArrayList<>(recipients.size());
         for (ServerPlayer p : recipients) {
@@ -234,7 +240,7 @@ public class FrameSenderThread extends Thread {
 
         RetroFramePacket fullPacket = null;
         if (!fullRes.isEmpty()) {
-            fullPacket = RetroFramePacket.create(consolePos, buf, w, h);
+            fullPacket = RetroFramePacket.create(consoleId, buf, w, h);
             for (ServerPlayer player : fullRes) {
                 if (!canSendToServer(server)) return;
                 ServerTickHandler.sendFrameToPlayer(player, fullPacket);
@@ -247,12 +253,11 @@ public class FrameSenderThread extends Thread {
                 int sw = ModConfig.worldMaxWidth();
                 int sh = Math.max(1, Math.round((float) h * sw / w));
                 downscale(buf, w, h, sw, sh);
-                worldPacket = RetroFramePacket.create(consolePos, scaledBuf, sw, sh);
+                worldPacket = RetroFramePacket.create(consoleId, scaledBuf, sw, sh);
             } else {
-                // Frame is already small — reuse the packet we already built.
                 worldPacket = fullPacket != null
                         ? fullPacket
-                        : RetroFramePacket.create(consolePos, buf, w, h);
+                        : RetroFramePacket.create(consoleId, buf, w, h);
             }
             for (ServerPlayer player : worldRes) {
                 if (!canSendToServer(server)) return;

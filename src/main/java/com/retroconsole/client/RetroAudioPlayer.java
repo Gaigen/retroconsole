@@ -67,6 +67,12 @@ public class RetroAudioPlayer implements AutoCloseable {
         return gain;
     }
 
+    /** Move the OpenAL source when the console block moves. */
+    public RetroAudioPlayer updatePosition(double x, double y, double z) {
+        AL10.alSource3f(source, AL10.AL_POSITION, (float) x, (float) y, (float) z);
+        return this;
+    }
+
     /* Feed interleaved stereo PCM (16-bit signed LE). */
     public void feed(int sampleRate, byte[] pcmStereo16) {
         if (pcmStereo16 == null || pcmStereo16.length < 4 || (pcmStereo16.length & 3) != 0) {

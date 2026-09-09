@@ -2,17 +2,16 @@ package com.retroconsole.client;
 
 import com.retroconsole.client.library.SoundPrefs;
 import com.retroconsole.network.RetroAudioPayload;
-import net.minecraft.core.BlockPos;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class ClientAudioHandler {
-    private static final Map<BlockPos, RetroAudioPlayer> PLAYERS = new ConcurrentHashMap<>();
-    /* OpenAL feed off the MC main thread — avoids burst-delivery when the renderer is busy. */
+    private static final Map<UUID, RetroAudioPlayer> PLAYERS = new ConcurrentHashMap<>();
     private static final ExecutorService AUDIO_EXEC = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "retro-console-audio");
         t.setDaemon(true);
@@ -22,29 +21,27 @@ public final class ClientAudioHandler {
     private ClientAudioHandler() {}
 
     public static void handle(RetroAudioPayload payload, IPayloadContext ctx) {
-        BlockPos pos = payload.pos().immutable();
+        UUID consoleId = payload.consoleId();
+        var pos = payload.pos();
         AUDIO_EXEC.execute(() -> PLAYERS
-                .computeIfAbsent(pos, p -> {
+                .computeIfAbsent(consoleId, id -> {
                     RetroAudioPlayer player = new RetroAudioPlayer(
-                            p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5);
-                    player.setGain(SoundPrefs.volume()); // saved volume for new sources
+                            pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+                    player.setGain(SoundPrefs.volume());
                     return player;
                 })
+                .updatePosition(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5)
                 .feed(payload.sampleRate(), payload.pcm()));
     }
 
-    /**
-     * Live volume from the TvScreen slider. Persistence is separate via
-     * SoundPrefs.setVolume() — do not write to disk on every drag pixel.
-     */
     public static void setVolume(float volume) {
         AUDIO_EXEC.execute(() -> PLAYERS.values().forEach(p -> p.setGain(volume)));
     }
 
-    public static void stop(BlockPos pos) {
-        BlockPos key = pos.immutable();
+    public static void stop(UUID consoleId) {
+        if (consoleId == null) return;
         AUDIO_EXEC.execute(() -> {
-            RetroAudioPlayer p = PLAYERS.remove(key);
+            RetroAudioPlayer p = PLAYERS.remove(consoleId);
             if (p != null) p.close();
         });
     }

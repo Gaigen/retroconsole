@@ -17,6 +17,8 @@ import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -61,6 +63,18 @@ public class RetroConsoleBlock extends BaseEntityBlock {
         return new RetroConsoleBlockEntity(pos, state);
     }
 
+    @Nullable
+    @Override
+    public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state,
+                                                                   BlockEntityType<T> type) {
+        if (level.isClientSide()) return null;
+        return (lvl, pos, st, be) -> {
+            if (be instanceof RetroConsoleBlockEntity console) {
+                RetroConsoleBlockEntity.serverTick(console);
+            }
+        };
+    }
+
     @Override
     protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level,
                                                BlockPos pos, Player player,
@@ -78,7 +92,8 @@ public class RetroConsoleBlock extends BaseEntityBlock {
         }
 
         String romId = console.getRomId();
-        if (!romId.isEmpty() && !ServerConsoles.hasEmulator(pos)) {
+        if (!romId.isEmpty() && console.getConsoleId() != null
+                && !ServerConsoles.hasEmulator(console.getConsoleId())) {
             if (!console.getCoreName().isEmpty()) {
                 UUID owner = console.getOwnerId() != null ? console.getOwnerId() : serverPlayer.getUUID();
                 console.selectGame(console.getCoreName(), romId, owner, true);
@@ -88,7 +103,8 @@ public class RetroConsoleBlock extends BaseEntityBlock {
         }
 
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
-                serverPlayer, new RetroOpenScreenPacket(pos, console.getRomId(),
+                serverPlayer, new RetroOpenScreenPacket(
+                        pos, console.getOrAssignConsoleId(), console.getRomId(),
                         RomLibrary.systemIdForRomPath(console.getRomId())));
         return ItemInteractionResult.SUCCESS;
     }

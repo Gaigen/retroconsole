@@ -4,6 +4,7 @@ import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
@@ -75,8 +76,20 @@ public class ScreenBlock extends BaseEntityBlock {
     @Override
     public void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
         super.onPlace(state, level, pos, oldState, movedByPiston);
-        if (!level.isClientSide() && !oldState.is(this)) {
-            ScreenMultiblocks.rebuildAround(level, pos);
+        if (!level.isClientSide() && !oldState.is(this) && level instanceof ServerLevel sl) {
+            scheduleAdjacentRebuilds(sl, pos, state);
+        }
+    }
+
+    private static void scheduleAdjacentRebuilds(ServerLevel level, BlockPos pos, BlockState state) {
+        ScreenMultiblocks.scheduleRebuild(level, pos);
+        Direction right = ScreenMultiblocks.rightOf(state);
+        Direction down = ScreenMultiblocks.downOf(state);
+        for (Direction d : new Direction[]{right, right.getOpposite(), down, down.getOpposite()}) {
+            BlockPos n = pos.relative(d);
+            if (level.getBlockState(n).getBlock() instanceof ScreenBlock) {
+                ScreenMultiblocks.scheduleRebuild(level, n);
+            }
         }
     }
 

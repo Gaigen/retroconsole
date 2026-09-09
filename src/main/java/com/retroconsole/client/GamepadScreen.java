@@ -1,12 +1,14 @@
 package com.retroconsole.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.client.input.GamepadPoller;
 import com.retroconsole.client.input.RetroInputSender;
 import com.retroconsole.config.ModConfig;
 import com.retroconsole.item.GamepadItem;
 import com.retroconsole.network.RetroSaveStatePacket;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -14,6 +16,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Minimal invisible screen that captures keyboard input for in-world TV play.
@@ -25,6 +28,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     private static final int COL_EDGE = 0xFF2A2F3A;
 
     private final BlockPos consolePos;
+    private final UUID consoleId;
     private final RetroInputSender input;
     private final GamepadPoller gamepad;
     private boolean closed;
@@ -33,6 +37,12 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     public GamepadScreen(BlockPos consolePos) {
         super(ModTexts.c("gamepad.title"));
         this.consolePos = consolePos;
+        UUID id = null;
+        var level = Minecraft.getInstance().level;
+        if (level != null && level.getBlockEntity(consolePos) instanceof RetroConsoleBlockEntity console) {
+            id = console.getConsoleId();
+        }
+        this.consoleId = id;
         this.input = new RetroInputSender(consolePos);
         this.gamepad = new GamepadPoller(this.input);
     }
@@ -125,8 +135,8 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
             return;
         }
 
-        boolean stillHolding = GamepadItem.isLinkedTo(player.getMainHandItem(), consolePos)
-                || GamepadItem.isLinkedTo(player.getOffhandItem(), consolePos);
+        boolean stillHolding = GamepadItem.isLinkedTo(player.getMainHandItem(), consolePos, consoleId)
+                || GamepadItem.isLinkedTo(player.getOffhandItem(), consolePos, consoleId);
         if (!stillHolding) {
             player.displayClientMessage(Component.translatable("retroconsole.gamepad.lost"), true);
             onClose();

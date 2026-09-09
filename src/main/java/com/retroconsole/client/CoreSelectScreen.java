@@ -1,6 +1,8 @@
 package com.retroconsole.client;
 
 import com.retroconsole.library.GameSystem;
+import com.retroconsole.block.RetroConsoleBlockEntity;
+import com.retroconsole.block.ScreenBlockEntity;
 import com.retroconsole.client.library.ClientPlayerData;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.library.RomLibrary;
@@ -16,6 +18,7 @@ import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -29,6 +32,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 
 public class CoreSelectScreen extends Screen {
 
@@ -250,7 +254,24 @@ public class CoreSelectScreen extends Screen {
         PacketDistributor.sendToServer(
                 new RetroCoreSelectPacket(consolePos, core.id(), selectedRom.id(), loadAuto));
         Minecraft.getInstance().setScreen(
-                new TvScreen(consolePos, selectedRom.id(), selectedRom.system().id));
+                new TvScreen(consolePos, resolveConsoleId(), selectedRom.id(), selectedRom.system().id));
+    }
+
+    private UUID resolveConsoleId() {
+        var level = Minecraft.getInstance().level;
+        if (level == null) return null;
+        if (level.getBlockEntity(consolePos) instanceof RetroConsoleBlockEntity console) {
+            UUID id = console.getConsoleId();
+            if (id != null) return id;
+        }
+        for (Direction d : Direction.values()) {
+            BlockPos n = consolePos.relative(d);
+            if (level.getBlockEntity(n) instanceof ScreenBlockEntity screen) {
+                UUID id = screen.getConsoleId();
+                if (id != null) return id;
+            }
+        }
+        return null;
     }
 
     private List<RomLibrary.Rom> romsOf(GameSystem s) {

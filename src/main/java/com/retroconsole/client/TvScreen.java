@@ -34,6 +34,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Fullscreen GUI for viewing and playing a retro console game.
@@ -46,6 +47,7 @@ public class TvScreen extends Screen {
     private static final int COL_EDGE = 0xFF2A2F3A;
 
     private final BlockPos consolePos;
+    private final UUID consoleId;
     private final String romId;
     private final String displayName;
     private final CoreInputProfile inputProfile;
@@ -71,13 +73,14 @@ public class TvScreen extends Screen {
     private boolean virtualStylus;
     private boolean coopP2;
 
-    public TvScreen(BlockPos consolePos, String romId) {
-        this(consolePos, romId, null);
+    public TvScreen(BlockPos consolePos, UUID consoleId, String romId) {
+        this(consolePos, consoleId, romId, null);
     }
 
-    public TvScreen(BlockPos consolePos, String romId, String systemId) {
+    public TvScreen(BlockPos consolePos, UUID consoleId, String romId, String systemId) {
         super(ModTexts.c("gui.title"));
         this.consolePos = consolePos;
+        this.consoleId = consoleId;
         this.romId = romId != null ? romId : "";
         this.displayName = prettyName(this.romId);
         this.inputProfile = CoreInputProfile.forSystemId(systemId);
@@ -159,7 +162,7 @@ public class TvScreen extends Screen {
     }
 
     private void renderTvFrame(GuiGraphics guiGraphics) {
-        ClientConsoles.ScreenEntry entry = ClientConsoles.getScreen(consolePos);
+        ClientConsoles.ScreenEntry entry = ClientConsoles.getScreen(consoleId);
         int screenH = this.height - BAR_HEIGHT;
 
         if (entry != null) {
@@ -334,7 +337,7 @@ public class TvScreen extends Screen {
         if (!romId.isEmpty()) {
             PlayStats.addPlaytime(romId, (Util.getMillis() - lastFlush) / 1000);
             lastFlush = Util.getMillis();
-            ClientConsoles.ScreenEntry entry = ClientConsoles.peekScreen(consolePos);
+            ClientConsoles.ScreenEntry entry = ClientConsoles.peekScreen(consoleId);
             if (entry != null) snapshotThumb(entry);
             saveThumbnail();
         }

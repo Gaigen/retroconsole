@@ -48,18 +48,22 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
     public void runFrame() {
         core.runFrame();
 
-        // Copy frame from core's internal buffer to our buffer
-        core.pollFrame(frameBuffer);
-
-        // Check if resolution changed
         int newW = core.getWidth();
         int newH = core.getHeight();
+        int needed = Math.max(newW * newH, 1);
+        if (frameBuffer.length != needed) {
+            frameBuffer = new int[needed];
+            width = newW;
+            height = newH;
+        }
+
+        core.pollFrame(frameBuffer);
+
         if (newW != width || newH != height) {
             LOGGER.info("Resolution changed: {}x{} -> {}x{}", width, height, newW, newH);
             width = newW;
             height = newH;
-            // Resize our frame buffer
-            int needed = Math.max(width * height, 1);
+            needed = Math.max(width * height, 1);
             if (frameBuffer.length != needed) {
                 frameBuffer = new int[needed];
             }

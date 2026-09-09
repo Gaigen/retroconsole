@@ -34,12 +34,14 @@ public class ServerConsoles {
     private static final Logger LOGGER = LoggerFactory.getLogger("RetroConsole-Server");
 
     // ConcurrentHashMap: mutations on server thread, reads from FrameSender threads.
-    private static final ConcurrentHashMap<BlockPos, Entry> ENTRIES = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<BlockPos, Set<UUID>> VIEWERS = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<BlockPos, FrameSenderThread> FRAME_SENDERS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, Entry> ENTRIES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, BlockPos> POSITIONS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, Set<UUID>> VIEWERS = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<UUID, FrameSenderThread> FRAME_SENDERS = new ConcurrentHashMap<>();
 
-    /** Co-op port assignments: pos -> (player UUID -> libretro port). Owner = port 0, P2 = port 1. */
-    private static final ConcurrentHashMap<BlockPos, ConcurrentHashMap<UUID, Integer>> PORTS = new ConcurrentHashMap<>();
+    /** Co-op port assignments: consoleId -> (player UUID -> libretro port). Owner = port 0, P2 = port 1. */
+    private static final ConcurrentHashMap<UUID, ConcurrentHashMap<UUID, Integer>> PORTS =
+            new ConcurrentHashMap<>();
 
     private static CoreManager coreManager;
 
@@ -62,8 +64,6 @@ public class ServerConsoles {
     ) {}
 
     public static void init() {
-        // Directories are created lazily by RetroConsolePaths on first read;
-        // we just resolve them through the same source of truth here.
         Path cores = RetroConsolePaths.coresDir();
         Path system = RetroConsolePaths.systemDir();
         Path save = RetroConsolePaths.saveDir();
@@ -77,19 +77,23 @@ public class ServerConsoles {
         }
     }
 
-    public static void startEmulator(BlockPos pos, String coreName, String romId, UUID ownerId) {
-        startEmulator(pos, coreName, romId, ownerId, false);
+    public static void startEmulator(UUID consoleId, BlockPos pos, String coreName, String romId, UUID ownerId) {
+        startEmulator(consoleId, pos, coreName, romId, ownerId, false);
     }
 
-    public static void startEmulator(BlockPos pos, String coreName, String romId, UUID ownerId, boolean loadAuto) {
+    public static void startEmulator(UUID consoleId, BlockPos pos, String coreName, String romId,
+                                     UUID ownerId, boolean loadAuto) {
+        consoleId = Objects.requireNonNull(consoleId);
         pos = pos.immutable();
-        Entry existing = ENTRIES.get(pos);
+        POSITIONS.put(consoleId, pos);
+
+        Entry existing = ENTRIES.get(consoleId);
         if (existing != null) {
             if (existing.romId().equals(romId) && existing.coreName().equals(coreName)
                     && Objects.equals(existing.ownerId(), ownerId)) {
                 return;
             }
-            stopEmulator(pos);
+            stopEmulator(consoleId);
         }
         if (coreManager == null) init();
 
@@ -132,37 +136,44 @@ public class ServerConsoles {
         ThreadedEmulatorRuntime threaded = new ThreadedEmulatorRuntime(runtime, w, h);
         threaded.start();
 
-        // FrameSenderThread runs at ~60 Hz independent of Minecraft's
-        // 20 Hz server tick — otherwise PS1 (and any interlaced core) shows
-        // severe flicker because the client only sees one frame per tick.
-        FrameSenderThread sender = new FrameSenderThread(pos, threaded, runtime);
+        FrameSenderThread sender = new FrameSenderThread(consoleId, threaded, runtime);
         sender.start();
 
-        ENTRIES.put(pos, new Entry(runtime, threaded, buf, coreName, romId, ownerId,
+        ENTRIES.put(consoleId, new Entry(runtime, threaded, buf, coreName, romId, ownerId,
                 System.currentTimeMillis()));
-        FRAME_SENDERS.put(pos, sender);
-        // Co-op: owner always gets port 0
+        FRAME_SENDERS.put(consoleId, sender);
         ConcurrentHashMap<UUID, Integer> portMap = new ConcurrentHashMap<>();
         if (ownerId != null) portMap.put(ownerId, 0);
-        PORTS.put(pos, portMap);
+        PORTS.put(consoleId, portMap);
         if (ownerId != null) {
             ServerPlayStats.onLaunch(ownerId, romId);
         }
-        LOGGER.info("Started {} emulator at {} ({}x{}, owner={}, loadAuto={})",
-                coreName, pos, w, h, ownerId, loadAuto);
+        LOGGER.info("Started {} emulator {} at {} ({}x{}, owner={}, loadAuto={})",
+                coreName, consoleId, pos, w, h, ownerId, loadAuto);
     }
 
-    public static void startEmulator(BlockPos pos, String coreName, String romId) {
-        startEmulator(pos, coreName, romId, null);
-    }
-
-    public static void stopEmulator(BlockPos pos) {
+    public static void updatePosition(UUID consoleId, BlockPos pos) {
+        if (consoleId == null) return;
         pos = pos.immutable();
-        Entry e = ENTRIES.remove(pos);
-        FrameSenderThread sender = FRAME_SENDERS.remove(pos);
+        BlockPos prev = POSITIONS.put(consoleId, pos);
+        if (prev != null && !prev.equals(pos)) {
+            LOGGER.debug("Console {} moved {} -> {}", consoleId, prev.toShortString(), pos.toShortString());
+        }
+    }
+
+    public static BlockPos getPosition(UUID consoleId) {
+        BlockPos pos = POSITIONS.get(consoleId);
+        return pos != null ? pos : BlockPos.ZERO;
+    }
+
+    public static void stopEmulator(UUID consoleId) {
+        if (consoleId == null) return;
+        Entry e = ENTRIES.remove(consoleId);
+        BlockPos pos = POSITIONS.get(consoleId);
+        FrameSenderThread sender = FRAME_SENDERS.remove(consoleId);
         if (sender != null) sender.stopAndJoin();
         if (e != null) {
-            LOGGER.info("stopEmulator({}): core={}, rom={}", pos, e.coreName(), e.romId());
+            LOGGER.info("stopEmulator({}): core={}, rom={}", consoleId, e.coreName(), e.romId());
             if (e.ownerId() != null) {
                 long sec = Math.max(0, (System.currentTimeMillis() - e.startedAtMillis()) / 1000);
                 ServerPlayStats.addPlaytime(e.ownerId(), e.romId(), sec);
@@ -171,20 +182,23 @@ public class ServerConsoles {
             boolean saved = SaveStateManager.saveAuto(
                     e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
             LOGGER.info("Auto save on stop {} -> {}", e.romId(), saved);
-            scheduleClose(e.runtime(), pos);
+            scheduleClose(e.runtime(), consoleId);
         }
-        notifyConsoleStopped(pos);
-        VIEWERS.remove(pos);
-        PORTS.remove(pos);
+        if (pos != null) {
+            notifyConsoleStopped(consoleId, pos);
+        }
+        VIEWERS.remove(consoleId);
+        PORTS.remove(consoleId);
+        POSITIONS.remove(consoleId);
     }
 
-    private static void scheduleClose(LibretroRuntime runtime, BlockPos pos) {
+    private static void scheduleClose(LibretroRuntime runtime, UUID consoleId) {
         SHUTDOWN_EXECUTOR.submit(() -> {
             try {
                 runtime.close();
-                LOGGER.info("Core shutdown finished for {}", pos);
+                LOGGER.info("Core shutdown finished for {}", consoleId);
             } catch (Exception ex) {
-                LOGGER.warn("Core shutdown failed for {}: {}", pos, ex.getMessage());
+                LOGGER.warn("Core shutdown failed for {}: {}", consoleId, ex.getMessage());
             }
         });
     }
@@ -237,15 +251,10 @@ public class ServerConsoles {
         player.sendSystemMessage(Component.literal("[RetroConsole] ").append(message));
     }
 
-    private static void notifyOwner(UUID ownerId, String message) {
-        if (message == null || message.isBlank()) return;
-        notifyOwner(ownerId, Component.literal(message));
-    }
-
-    private static void notifyConsoleStopped(BlockPos pos) {
+    private static void notifyConsoleStopped(UUID consoleId, BlockPos pos) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null || !server.isRunning()) return;
-        RetroStopConsolePacket packet = new RetroStopConsolePacket(pos);
+        RetroStopConsolePacket packet = new RetroStopConsolePacket(consoleId);
         long radiusSq = (long) ModConfig.notifyDistance() * ModConfig.notifyDistance();
         for (ServerPlayer player : new ArrayList<>(server.getPlayerList().getPlayers())) {
             if (player.hasDisconnected()) continue;
@@ -256,160 +265,136 @@ public class ServerConsoles {
     }
 
     public static void tick(ServerLevel level) {
-        // Frame sending moved off the Minecraft server tick — see
-        // FrameSenderThread. Tick is kept as a registered no-op so the
-        // existing @SubscribeEvent wiring stays valid and easy to extend.
+        // Frame sending runs in FrameSenderThread; tick kept for future extensions.
     }
 
-    public static LibretroCore getCore(BlockPos pos) {
-        Entry e = ENTRIES.get(pos.immutable());
+    public static LibretroCore getCore(UUID consoleId) {
+        Entry e = ENTRIES.get(consoleId);
         return e != null ? e.runtime().getCore() : null;
     }
 
-    public static void handleInput(BlockPos pos, int buttonId, boolean pressed) {
-        handleInput(pos, 0, buttonId, pressed);
+    public static void handleInput(UUID consoleId, int buttonId, boolean pressed) {
+        handleInput(consoleId, 0, buttonId, pressed);
     }
 
-    public static void handleInput(BlockPos pos, int port, int buttonId, boolean pressed) {
-        Entry e = ENTRIES.get(pos.immutable());
+    public static void handleInput(UUID consoleId, int port, int buttonId, boolean pressed) {
+        Entry e = ENTRIES.get(consoleId);
         if (e != null) e.runtime().setButton(port, buttonId, pressed);
     }
 
-    public static void handleAnalog(BlockPos pos, int stick, int axis, short value) {
-        handleAnalog(pos, 0, stick, axis, value);
+    public static void handleAnalog(UUID consoleId, int stick, int axis, short value) {
+        handleAnalog(consoleId, 0, stick, axis, value);
     }
 
-    public static void handleAnalog(BlockPos pos, int port, int stick, int axis, short value) {
-        Entry e = ENTRIES.get(pos.immutable());
+    public static void handleAnalog(UUID consoleId, int port, int stick, int axis, short value) {
+        Entry e = ENTRIES.get(consoleId);
         if (e != null) e.runtime().setAnalog(port, stick, axis, value);
     }
 
-    public static void handlePointer(BlockPos pos, short x, short y, boolean pressed) {
-        Entry e = ENTRIES.get(pos.immutable());
+    public static void handlePointer(UUID consoleId, short x, short y, boolean pressed) {
+        Entry e = ENTRIES.get(consoleId);
         if (e != null) e.runtime().setPointer(x, y, pressed);
     }
 
-    public static void handleSaveState(BlockPos pos, int slot, boolean save, boolean auto) {
-        Entry e = ENTRIES.get(pos.immutable());
+    public static void handleSaveState(UUID consoleId, int slot, boolean save, boolean auto) {
+        Entry e = ENTRIES.get(consoleId);
         if (e == null) return;
         if (auto) {
             if (!save) return;
             boolean ok = SaveStateManager.saveAuto(
                     e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
-            LOGGER.info("Auto save state @ {} -> {}", pos, ok);
+            LOGGER.info("Auto save state @ {} -> {}", consoleId, ok);
             return;
         }
         if (slot < 0 || slot > SaveStateManager.MAX_SLOT) return;
         boolean ok = save ? e.runtime().saveState(slot) : e.runtime().loadState(slot);
-        LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, pos, ok);
+        LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, consoleId, ok);
     }
 
-    public static void addViewer(BlockPos pos, UUID playerId) {
-        VIEWERS.computeIfAbsent(pos.immutable(), k -> ConcurrentHashMap.newKeySet()).add(playerId);
+    public static void addViewer(UUID consoleId, UUID playerId) {
+        VIEWERS.computeIfAbsent(consoleId, k -> ConcurrentHashMap.newKeySet()).add(playerId);
     }
 
-    public static void removeViewer(BlockPos pos, UUID playerId) {
-        Set<UUID> viewers = VIEWERS.get(pos.immutable());
+    public static void removeViewer(UUID consoleId, UUID playerId) {
+        Set<UUID> viewers = VIEWERS.get(consoleId);
         if (viewers != null) viewers.remove(playerId);
     }
 
-    /** Remove player from viewers of ALL consoles (disconnect / dimension change). */
     public static void removeViewerEverywhere(UUID playerId) {
         for (Set<UUID> viewers : VIEWERS.values()) {
             viewers.remove(playerId);
         }
     }
 
-    // --- Co-op port management ---
-
-    /** Get the libretro port assigned to a player at a console. Default 0 (shared). */
-    public static int getPort(BlockPos pos, UUID playerId) {
-        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(pos.immutable());
+    public static int getPort(UUID consoleId, UUID playerId) {
+        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(consoleId);
         if (portMap == null) return 0;
         Integer port = portMap.get(playerId);
         return port != null ? port : 0;
     }
 
-    /**
-     * Explicitly join as player 2 (port 1). Returns true if assigned.
-     * Fails if port 1 is already taken by someone else.
-     */
-    public static boolean joinCoop(BlockPos pos, UUID playerId) {
-        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(pos.immutable());
+    public static boolean joinCoop(UUID consoleId, UUID playerId) {
+        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(consoleId);
         if (portMap == null) return false;
-        // Already assigned?
         Integer existing = portMap.get(playerId);
         if (existing != null && existing == 1) return true;
-        // Check port 1 is free
         if (portMap.containsValue(1)) return false;
         portMap.put(playerId, 1);
-        LOGGER.info("Co-op: player {} joined as P2 at {}", playerId, pos);
+        LOGGER.info("Co-op: player {} joined as P2 at {}", playerId, consoleId);
         return true;
     }
 
-    /** Leave co-op — player goes back to shared port 0. */
-    public static void leaveCoop(BlockPos pos, UUID playerId) {
-        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(pos.immutable());
+    public static void leaveCoop(UUID consoleId, UUID playerId) {
+        ConcurrentHashMap<UUID, Integer> portMap = PORTS.get(consoleId);
         if (portMap == null) return;
         Integer removed = portMap.remove(playerId);
         if (removed != null && removed == 1) {
-            LOGGER.info("Co-op: player {} left P2 at {}", playerId, pos);
+            LOGGER.info("Co-op: player {} left P2 at {}", playerId, consoleId);
         }
     }
 
-    /** True if the player is the owner (started the emulator). */
-    public static boolean isOwner(BlockPos pos, UUID playerId) {
-        Entry e = ENTRIES.get(pos.immutable());
+    public static boolean isOwner(UUID consoleId, UUID playerId) {
+        Entry e = ENTRIES.get(consoleId);
         return e != null && playerId.equals(e.ownerId());
     }
 
-    /** Release a player's port on ALL consoles (disconnect). */
     public static void releasePortEverywhere(UUID playerId) {
         for (ConcurrentHashMap<UUID, Integer> portMap : PORTS.values()) {
             portMap.remove(playerId);
         }
     }
 
-    /** Snapshot of console viewers — read by FrameSender thread. */
-    public static Set<UUID> viewers(BlockPos pos) {
-        Set<UUID> v = VIEWERS.get(pos.immutable());
+    public static Set<UUID> viewers(UUID consoleId) {
+        Set<UUID> v = VIEWERS.get(consoleId);
         return v != null ? v : Set.of();
     }
 
-    public static boolean hasEmulator(BlockPos pos) { return ENTRIES.containsKey(pos.immutable()); }
+    public static boolean hasEmulator(UUID consoleId) {
+        return consoleId != null && ENTRIES.containsKey(consoleId);
+    }
 
     public static List<String> getAvailableCores() {
         if (coreManager == null) init();
         return coreManager.getCores().stream().map(CoreManager.CoreInfo::name).toList();
     }
 
-    /** In-world TV screen visibility radius (video frames). */
     public static int videoDistance() { return ModConfig.videoDistance(); }
 
-    /** Console audio hearing radius (audio packets). */
     public static int audioDistance() { return ModConfig.audioDistance(); }
 
-    /**
-     * OPTIMIZATION: stopAll used to wait up to 15s SEQUENTIALLY per core (4 consoles =
-     * up to a minute on world exit). Now:
-     * 1) signal all senders first, then join (in parallel);
-     * 2) autosave EVERY game (stopAll previously saved nothing — only stopEmulator did);
-     * 3) cores close in parallel with a shared 20s deadline.
-     */
     public static void stopAll() {
         LOGGER.info("stopAll(): shutting down {} emulator(s)", ENTRIES.size());
 
-        // 1. Senders: signal all, then wait.
         List<FrameSenderThread> senders = new ArrayList<>(FRAME_SENDERS.values());
         FRAME_SENDERS.clear();
         for (FrameSenderThread sender : senders) sender.stopSender();
         for (FrameSenderThread sender : senders) sender.stopAndJoin();
 
-        // 2. Stop emulators + autosave.
         List<Entry> entries = new ArrayList<>(ENTRIES.values());
         ENTRIES.clear();
         VIEWERS.clear();
         PORTS.clear();
+        POSITIONS.clear();
         List<LibretroRuntime> runtimes = new ArrayList<>(entries.size());
         for (Entry e : entries) {
             if (e.ownerId() != null) {
@@ -428,7 +413,6 @@ public class ServerConsoles {
             return;
         }
 
-        // 3. Parallel core shutdown with shared deadline.
         java.util.concurrent.ExecutorService pool =
                 java.util.concurrent.Executors.newFixedThreadPool(
                         Math.min(runtimes.size(), 4), r2 -> {

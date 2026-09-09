@@ -7,6 +7,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
+import org.jetbrains.annotations.Nullable;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -14,11 +16,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Серверная сборка мультиблочных экранов (в духе мониторов CC:Tweaked).
  * Сервер — источник истины: каждому ScreenBlockEntity записываются
- * xIndex/yIndex/gridWidth/gridHeight/consolePos, клиент только читает.
+ * xIndex/yIndex/gridWidth/gridHeight/consoleId, клиент только читает.
  *
  * Инварианты:
  *  - группа = строгий прямоугольник в одной плоскости, одинаковые FACING+ORIENTATION;
@@ -120,27 +123,28 @@ public final class ScreenMultiblocks {
                 members.add(cells.get(key(u + du, v + dv)));
             }
         }
-        BlockPos console = findAdjacentConsole(level, members);
+        UUID consoleId = findAdjacentConsoleId(level, members);
         int i = 0;
         for (int dv = 0; dv < h; dv++) {
             for (int du = 0; du < w; du++) {
                 if (level.getBlockEntity(members.get(i++)) instanceof ScreenBlockEntity sbe) {
-                    sbe.setGrid(du, dv, w, h, console);
+                    sbe.setGrid(du, dv, w, h, consoleId);
                 }
             }
         }
     }
 
-    private static BlockPos findAdjacentConsole(Level level, List<BlockPos> members) {
+    @Nullable
+    private static UUID findAdjacentConsoleId(Level level, List<BlockPos> members) {
         for (BlockPos p : members) {
             for (Direction d : Direction.values()) {
                 BlockPos n = p.relative(d);
-                if (level.getBlockEntity(n) instanceof RetroConsoleBlockEntity) {
-                    return n.immutable();
+                if (level.getBlockEntity(n) instanceof RetroConsoleBlockEntity console) {
+                    return console.getOrAssignConsoleId();
                 }
             }
         }
-        return BlockPos.ZERO;
+        return null;
     }
 
     private static Set<BlockPos> collectCluster(Level level, BlockPos start, BlockState state,

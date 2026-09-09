@@ -1,12 +1,12 @@
 package com.retroconsole.network;
 
 import io.netty.handler.codec.DecoderException;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
 import java.util.zip.Inflater;
@@ -25,7 +25,7 @@ import java.util.zip.Inflater;
  * per-pixel pass in ClientConsoles.submitFrame.
  */
 public record RetroFramePacket(
-        BlockPos pos,
+        UUID consoleId,
         int width,
         int height,
         byte[] compressedFrame
@@ -50,7 +50,7 @@ public record RetroFramePacket(
             new StreamCodec<>() {
                 @Override
                 public RetroFramePacket decode(FriendlyByteBuf buf) {
-                    BlockPos pos = buf.readBlockPos();
+                    UUID consoleId = buf.readUUID();
                     int width = buf.readVarInt();
                     int height = buf.readVarInt();
                     if (width <= 0 || height <= 0 || width > MAX_DIM || height > MAX_DIM) {
@@ -65,12 +65,12 @@ public record RetroFramePacket(
                     }
                     byte[] compressedFrame = new byte[length];
                     buf.readBytes(compressedFrame);
-                    return new RetroFramePacket(pos, width, height, compressedFrame);
+                    return new RetroFramePacket(consoleId, width, height, compressedFrame);
                 }
 
                 @Override
                 public void encode(FriendlyByteBuf buf, RetroFramePacket pkt) {
-                    buf.writeBlockPos(pkt.pos);
+                    buf.writeUUID(pkt.consoleId);
                     buf.writeVarInt(pkt.width);
                     buf.writeVarInt(pkt.height);
                     buf.writeVarInt(pkt.compressedFrame.length);
@@ -87,10 +87,10 @@ public record RetroFramePacket(
      * Create a RetroFramePacket from an ARGB int[] frame buffer.
      * Strips alpha channel (RGB, 3 bytes/pixel) and compresses with Deflater at BEST_SPEED.
      */
-    public static RetroFramePacket create(BlockPos pos, int[] frame, int width, int height) {
+    public static RetroFramePacket create(UUID consoleId, int[] frame, int width, int height) {
         int pixelCount = width * height;
         if (pixelCount <= 0 || frame.length < pixelCount) {
-            return new RetroFramePacket(pos, width, height, new byte[0]);
+            return new RetroFramePacket(consoleId, width, height, new byte[0]);
         }
         byte[] rgb = takeRgbBuf(pixelCount * 3);
         for (int i = 0; i < pixelCount; i++) {
@@ -101,7 +101,7 @@ public record RetroFramePacket(
             rgb[base + 2] = (byte) (argb & 0xFF);         // B
         }
         byte[] compressed = compress(rgb, pixelCount * 3);
-        return new RetroFramePacket(pos, width, height, compressed);
+        return new RetroFramePacket(consoleId, width, height, compressed);
     }
 
     /**
