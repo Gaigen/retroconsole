@@ -1,6 +1,7 @@
 package com.retroconsole.bridge;
 
 import com.retroconsole.platform.Pcsx2BiosResolver;
+import com.retroconsole.platform.RetroConsolePaths;
 import com.retroconsole.platform.VideoQualityPresets;
 import com.sun.jna.*;
 import com.sun.jna.Library;
@@ -16,10 +17,6 @@ import java.util.Map;
 
 /** JNA interface to .libheadless_gl.so — multi-instance headless EGL/Mesa GL. */
 interface HeadlessGL extends Library {
-    HeadlessGL INSTANCE = Native.load(
-            Paths.get("config/retroconsole/cores/.libheadless_gl.so").toAbsolutePath().toString(),
-            HeadlessGL.class);
-
     /* Instance lifecycle — handle is the first parameter. */
     Pointer hlg_create();
     void    hlg_free(Pointer h);
@@ -86,6 +83,24 @@ public class LibretroCoreLinux extends LibretroCore {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("LibretroCore");
 
+    private static HeadlessGL HEADLESS_GL;
+
+    private static HeadlessGL rawHlg() {
+        HeadlessGL gl = HEADLESS_GL;
+        if (gl != null) return gl;
+        synchronized (LibretroCoreLinux.class) {
+            if (HEADLESS_GL == null) {
+                String bundled = com.retroconsole.platform.OsUtil.bundledHeadlessGlName();
+                if (bundled == null) {
+                    throw new IllegalStateException("Headless GL is not supported on this OS");
+                }
+                Path path = RetroConsolePaths.coresDir().resolve("." + bundled);
+                HEADLESS_GL = Native.load(path.toAbsolutePath().toString(), HeadlessGL.class);
+            }
+            return HEADLESS_GL;
+        }
+    }
+
     private LibretroBridge core;
     private final java.nio.file.Path corePath;
     private LibretroBridge.RetroEnvironment envCallback;
@@ -121,11 +136,11 @@ public class LibretroCoreLinux extends LibretroCore {
     private static final java.util.List<Object> PINNED_HW_CALLBACKS = new java.util.ArrayList<>();
 
     private final GetFramebufferCb hwGetFbCb = () -> {
-        if (glCtx != null) HeadlessGL.INSTANCE.hlg_make_current(glCtx);
-        return HeadlessGL.INSTANCE.hlg_get_framebuffer();
+        if (glCtx != null) rawHlg().hlg_make_current(glCtx);
+        return rawHlg().hlg_get_framebuffer();
     };
     private final GetProcAddressCb hwGetProcCb = sym -> {
-        Pointer p = HeadlessGL.INSTANCE.hlg_get_proc_address(sym);
+        Pointer p = rawHlg().hlg_get_proc_address(sym);
         if (p == null || Pointer.nativeValue(p) == 0) {
             LOGGER.warn("get_proc_address -> NULL for symbol: {}", sym);
             return Pointer.NULL;
@@ -133,8 +148,6 @@ public class LibretroCoreLinux extends LibretroCore {
         return p;
     };
 
-    private LibretroBridge.RetroLogCallback logCallback;
-    private LibretroBridge.RetroLogCallbackStruct logCallbackStruct;
     private static final Pointer RETRO_HW_FRAME_BUFFER_VALID = Pointer.createConstant(-1);
 
     // Audio pacing (Flycast uses audio consumption as timing)
@@ -346,15 +359,15 @@ public class LibretroCoreLinux extends LibretroCore {
             int surfW = Math.max(width, hwPbufW);
             int surfH = Math.max(height, hwPbufH);
             if (surfW != hwPbufW || surfH != hwPbufH) {
-                HeadlessGL.INSTANCE.hlg_resize(glCtx, surfW, surfH);
+                rawHlg().hlg_resize(glCtx, surfW, surfH);
                 hwPbufW = surfW;
                 hwPbufH = surfH;
             }
-            HeadlessGL.INSTANCE.hlg_debug_fbo(glCtx);
+            rawHlg().hlg_debug_fbo(glCtx);
             int[] vp = new int[4];
             int maxPixels = width * height;
             Memory nativePixels = new Memory((long) maxPixels * 4L);
-            HeadlessGL.INSTANCE.hlg_read_pixels(glCtx, vp, nativePixels, maxPixels, width, height);
+            rawHlg().hlg_read_pixels(glCtx, vp, nativePixels, maxPixels, width, height);
 
             // Grow GL storage if core renders to a larger viewport (PCSX2/Flycast)
             int vpW = vp[2] > 0 ? vp[2] : width;
@@ -362,7 +375,7 @@ public class LibretroCoreLinux extends LibretroCore {
             if (vpW > hwPbufW || vpH > hwPbufH) {
                 hwPbufW = Math.max(hwPbufW, vpW);
                 hwPbufH = Math.max(hwPbufH, vpH);
-                HeadlessGL.INSTANCE.hlg_resize(glCtx, hwPbufW, hwPbufH);
+                rawHlg().hlg_resize(glCtx, hwPbufW, hwPbufH);
             }
             for (int y = 0; y < height; y++) {
                 int srcY = hwBottomLeftOrigin ? (height - 1 - y) : y;
@@ -520,7 +533,7 @@ public class LibretroCoreLinux extends LibretroCore {
         if (headlessGlReady && headlessGlApi == profileKey) return true;
 
         if (glCtx == null) {
-            glCtx = HeadlessGL.INSTANCE.hlg_create();
+            glCtx = rawHlg().hlg_create();
             if (glCtx == null || Pointer.nativeValue(glCtx) == 0) {
                 LOGGER.error("hlg_create() failed — no headless GL instance");
                 glCtx = null;
@@ -528,19 +541,19 @@ public class LibretroCoreLinux extends LibretroCore {
             }
         }
         if (headlessGlReady) {
-            try { HeadlessGL.INSTANCE.hlg_destroy(glCtx); } catch (Throwable ignored) {}
+            try { rawHlg().hlg_destroy(glCtx); } catch (Throwable ignored) {}
             headlessGlReady = false;
             headlessGlApi = -1;
         }
         try {
-            int glOk = HeadlessGL.INSTANCE.hlg_init_ex(glCtx, api, major, minor, flags);
+            int glOk = rawHlg().hlg_init_ex(glCtx, api, major, minor, flags);
             headlessGlReady = glOk != 0;
             if (headlessGlReady) headlessGlApi = profileKey;
             String apiName = isPpssppCore() ? "GL 3.3 Compat"
                     : (api == 1 ? "GLES" + major : "GL " + major + "." + minor);
             LOGGER.info("Headless GL context ({}): {}", apiName, headlessGlReady ? "OK" : "FAILED");
             if (headlessGlReady)
-                LOGGER.info("Headless GL GPU: {}", HeadlessGL.INSTANCE.hlg_get_gpu_info(glCtx));
+                LOGGER.info("Headless GL GPU: {}", rawHlg().hlg_get_gpu_info(glCtx));
             return headlessGlReady;
         } catch (Throwable t) {
             LOGGER.warn("Headless GL init failed: {}", t.getMessage());
@@ -742,34 +755,17 @@ public class LibretroCoreLinux extends LibretroCore {
                 if (isFlycastCore()) return false; // Flycast: logging disabled by NOP patches
                 if (data == null) return false;
                 /* Native variadic log callback from headless_gl.so: JNA cannot bind
-                 * retro_log_printf_t (variadic), so we write the C pointer directly —
-                 * real core logs instead of "%s %s". */
+                 * retro_log_printf_t (variadic), so pass the C pointer directly. */
                 try {
-                    Pointer nativeLogCb = HeadlessGL.INSTANCE.hlg_get_log_cb_ptr();
+                    Pointer nativeLogCb = rawHlg().hlg_get_log_cb_ptr();
                     if (nativeLogCb != null && Pointer.nativeValue(nativeLogCb) != 0) {
                         data.setPointer(0, nativeLogCb);
                         return true;
                     }
                 } catch (Throwable t) {
-                    LOGGER.warn("Native log cb unavailable, falling back to JNA: {}", t.getMessage());
+                    LOGGER.debug("Native log cb unavailable: {}", t.getMessage());
                 }
-                if (logCallback == null) {
-                    logCallback = (level, fmt) -> {
-                        String msg = fmt != null ? fmt.trim() : "";
-                        switch (level) {
-                            case 0 -> LOGGER.error("[core] {}", msg);
-                            case 1 -> LOGGER.warn("[core] {}", msg);
-                            case 2 -> LOGGER.info("[core] {}", msg);
-                            default -> LOGGER.debug("[core] {}", msg);
-                        }
-                    };
-                    logCallbackStruct = new LibretroBridge.RetroLogCallbackStruct();
-                    logCallbackStruct.log = logCallback;
-                    logCallbackStruct.write();
-                }
-                data.write(0, logCallbackStruct.getPointer().getByteArray(0, Native.POINTER_SIZE),
-                        0, Native.POINTER_SIZE);
-                return true;
+                return false;
             }
             case LibretroEnvironment.SET_SYSTEM_AV_INFO -> {
                 if (data != null) {
@@ -979,7 +975,7 @@ public class LibretroCoreLinux extends LibretroCore {
             default -> isPpssppCore() ? 3 : 0;
         };
 
-        HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
+        rawHlg().hlg_dump_hw_render(data, 80);
 
         pinHwCallbacks();
         Pointer fbFn = CallbackReference.getFunctionPointer(hwGetFbCb);
@@ -991,7 +987,7 @@ public class LibretroCoreLinux extends LibretroCore {
         data.setInt(40, glMinor);
         data.setByte(44, (byte) 1);
 
-        HeadlessGL.INSTANCE.hlg_dump_hw_render(data, 80);
+        rawHlg().hlg_dump_hw_render(data, 80);
 
         hwContextReset = data.getPointer(8);
         hwContextResetDone = false;
@@ -1024,9 +1020,9 @@ public class LibretroCoreLinux extends LibretroCore {
     private void resizeHwFramebuffer(int w, int h) {
         if (!headlessGlReady || glCtx == null || w <= 0 || h <= 0) return;
         try {
-            if (HeadlessGL.INSTANCE.hlg_make_current(glCtx) == 0) return;
+            if (rawHlg().hlg_make_current(glCtx) == 0) return;
             if (w != hwPbufW || h != hwPbufH) {
-                HeadlessGL.INSTANCE.hlg_resize(glCtx, w, h);
+                rawHlg().hlg_resize(glCtx, w, h);
                 hwPbufW = w;
                 hwPbufH = h;
                 LOGGER.info("HW offscreen FBO resized to {}x{}", w, h);
@@ -1310,7 +1306,7 @@ public class LibretroCoreLinux extends LibretroCore {
             // Release OUR instance from the load thread — core render thread will take it.
             if (hwRenderActive && glCtx != null) {
                 try {
-                    HeadlessGL.INSTANCE.hlg_release(glCtx);
+                    rawHlg().hlg_release(glCtx);
                     LOGGER.info("EGL context released from init thread");
                 } catch (Throwable t) {
                     LOGGER.warn("Failed to release EGL context: {}", t.getMessage());
@@ -1346,9 +1342,9 @@ public class LibretroCoreLinux extends LibretroCore {
         if (hwRenderActive && glCtx != null) {
             // Our GL instance must be current on the emulator thread
             try {
-                if (HeadlessGL.INSTANCE.hlg_make_current(glCtx) != 0 && !hwGpuLoggedOnEmulatorThread) {
+                if (rawHlg().hlg_make_current(glCtx) != 0 && !hwGpuLoggedOnEmulatorThread) {
                     hwGpuLoggedOnEmulatorThread = true;
-                    LOGGER.info("Emulator thread GPU: {}", HeadlessGL.INSTANCE.hlg_get_gpu_info(glCtx));
+                    LOGGER.info("Emulator thread GPU: {}", rawHlg().hlg_get_gpu_info(glCtx));
                 }
             } catch (Throwable ignored) {}
             // PPSSPP/PCSX2: context_reset strictly on emulator thread (needs current GL)
@@ -1594,7 +1590,7 @@ public class LibretroCoreLinux extends LibretroCore {
         // Fully release OUR GL instance (singleton context used to leak)
         if (glCtx != null) {
             try {
-                HeadlessGL.INSTANCE.hlg_free(glCtx);
+                rawHlg().hlg_free(glCtx);
             } catch (Throwable t) {
                 LOGGER.warn("hlg_free failed: {}", t.getMessage());
             }
