@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  native-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native build deps
+        run: sudo apt-get update && sudo apt-get install -y libegl-dev libgl-dev
+
+      - name: Build Linux native from source
+        run: bash build_headless_gl.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-linux
+          path: src/main/resources/natives/libheadless_gl.so
+          if-no-files-found: error
+
+  native-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - name: Build Windows native from source
+        shell: msys2 {0}
+        run: |
+          mkdir -p runs/client/config/retroconsole/cores
+          mkdir -p src/main/resources/natives
+          gcc -shared -O2 -o runs/client/config/retroconsole/cores/.libheadless_gl.dll headless_gl_win.c -lopengl32 -lgdi32 -luser32
+          cp runs/client/config/retroconsole/cores/.libheadless_gl.dll src/main/resources/natives/libheadless_gl.dll
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-windows
+          path: src/main/resources/natives/libheadless_gl.dll
+          if-no-files-found: error
+
+  release:
+    needs: [native-linux, native-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built natives
+        uses: actions/download-artifact@v4
+        with:
+          path: natives-out
+
+      - name: Install natives into resources
+        run: |
+          mkdir -p src/main/resources/natives
+          cp natives-out/native-linux/libheadless_gl.so src/main/resources/natives/
+          cp natives-out/native-windows/libheadless_gl.dll src/main/resources/natives/
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Read mod version
+        id: version
+        run: echo "mod_version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Build mod
+        run: ./gradlew build --no-daemon
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: RetroConsole ${{ steps.version.outputs.mod_version }}
+          files: build/libs/retroconsole-${{ steps.version.outputs.mod_version }}.jar
+          generate_release_notes: true
