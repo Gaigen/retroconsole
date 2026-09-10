@@ -874,6 +874,12 @@ public class LibretroCoreWindows extends LibretroCore {
     private static final int OPT_DEF_V1_STRIDE = Native.POINTER_SIZE * 3 + 128 * OPT_VALUE_SIZE + Native.POINTER_SIZE;
     private static final int OPT_DEF_V2_STRIDE = Native.POINTER_SIZE * 6 + 128 * OPT_VALUE_SIZE + Native.POINTER_SIZE;
     private boolean audioBufferStatusRequested = false;
+    /** EasyRPG and other async cores: frontend drives clock/audio via env callbacks. */
+    private Pointer frameTimeCallbackFn;
+    private long frameTimeReferenceUs;
+    private long lastFrameTimeNs;
+    private Pointer asyncAudioCallbackFn;
+    private Pointer asyncAudioSetStateFn;
 
     private boolean handleEnvironment(int cmd, Pointer data) {
         // Handle by raw code (switch on normalized base won't catch these):
@@ -1005,9 +1011,12 @@ public class LibretroCoreWindows extends LibretroCore {
                     if (k != null && !k.isEmpty()) coreOptions.put(k, v != null ? v : "");
                 }
                 return true;
+            case LibretroEnvironment.SET_FRAME_TIME_CALLBACK:
+                return handleSetFrameTimeCallback(data);
+            case LibretroEnvironment.SET_AUDIO_CALLBACK:
+                return handleSetAsyncAudioCallback(data);
             case LibretroEnvironment.SET_CORE_OPTIONS_DISPLAY:
             case LibretroEnvironment.SET_MINIMUM_AUDIO_LATENCY:
-            case LibretroEnvironment.SET_AUDIO_CALLBACK:
             case LibretroEnvironment.SET_INPUT_DESCRIPTORS:
             case LibretroEnvironment.SET_MESSAGE:
             case LibretroEnvironment.SET_SERIALIZATION_QUIRKS:
@@ -1091,6 +1100,57 @@ public class LibretroCoreWindows extends LibretroCore {
                         LibretroEnvironment.name(cmd), Integer.toHexString(cmd),
                         LibretroEnvironment.normalize(cmd));
                 return false;
+        }
+    }
+
+    private boolean handleSetFrameTimeCallback(Pointer data) {
+        if (data == null) return false;
+        frameTimeCallbackFn = data.getPointer(0);
+        frameTimeReferenceUs = Native.POINTER_SIZE == 8
+                ? data.getLong(Native.POINTER_SIZE)
+                : data.getInt(Native.POINTER_SIZE) & 0xFFFFFFFFL;
+        lastFrameTimeNs = 0;
+        LOGGER.info("SET_FRAME_TIME_CALLBACK: ref={}us", frameTimeReferenceUs);
+        return frameTimeCallbackFn != null && Pointer.nativeValue(frameTimeCallbackFn) != 0;
+    }
+
+    private boolean handleSetAsyncAudioCallback(Pointer data) {
+        if (data == null) return false;
+        asyncAudioCallbackFn = data.getPointer(0);
+        asyncAudioSetStateFn = data.getPointer(Native.POINTER_SIZE);
+        LOGGER.info("SET_AUDIO_CALLBACK registered");
+        return true;
+    }
+
+    private void tickFrameTimeBeforeRun() {
+        if (frameTimeCallbackFn == null || Pointer.nativeValue(frameTimeCallbackFn) == 0) return;
+        long now = System.nanoTime();
+        long usec = lastFrameTimeNs == 0
+                ? (frameTimeReferenceUs > 0 ? frameTimeReferenceUs : 16_666L)
+                : (now - lastFrameTimeNs) / 1_000L;
+        lastFrameTimeNs = now;
+        try {
+            com.sun.jna.Function.getFunction(frameTimeCallbackFn).invokeVoid(new Object[]{ usec });
+        } catch (Throwable t) {
+            LOGGER.warn("frame_time callback failed: {}", t.getMessage());
+        }
+    }
+
+    private void invokeAsyncAudioCallback() {
+        if (asyncAudioCallbackFn == null || Pointer.nativeValue(asyncAudioCallbackFn) == 0) return;
+        try {
+            com.sun.jna.Function.getFunction(asyncAudioCallbackFn).invokeVoid(new Object[0]);
+        } catch (Throwable t) {
+            LOGGER.warn("async audio callback failed: {}", t.getMessage());
+        }
+    }
+
+    private void setAsyncAudioEnabled(boolean enabled) {
+        if (asyncAudioSetStateFn == null || Pointer.nativeValue(asyncAudioSetStateFn) == 0) return;
+        try {
+            com.sun.jna.Function.getFunction(asyncAudioSetStateFn).invokeVoid(new Object[]{ enabled ? 1 : 0 });
+        } catch (Throwable t) {
+            LOGGER.warn("async audio set_state failed: {}", t.getMessage());
         }
     }
 
@@ -1507,6 +1567,7 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         this.gameLoaded = true;
         audioPacing.reset();
+        setAsyncAudioEnabled(true);
         LOGGER.info("Game loaded: {} ({}x{}, FPS={}, sampleRate={})",
                 romPath.getFileName(), width, height,
                 avInfo.timing_fps, avInfo.timing_sample_rate);
@@ -1726,7 +1787,9 @@ public class LibretroCoreWindows extends LibretroCore {
                 return;
             }
             try {
+                tickFrameTimeBeforeRun();
                 core.retro_run();
+                invokeAsyncAudioCallback();
                 if (hwRenderActive) drainHwFrame();
                 maybeLoadPendingBattery();
             } catch (Throwable t) {
@@ -1920,6 +1983,11 @@ public class LibretroCoreWindows extends LibretroCore {
         }
         this.gameLoaded = false;
         audioPacing.reset();
+        frameTimeCallbackFn = null;
+        asyncAudioCallbackFn = null;
+        asyncAudioSetStateFn = null;
+        lastFrameTimeNs = 0;
+        frameTimeReferenceUs = 0;
 
         // Flycast globals are only reset by a fresh LoadLibrary — unload the
         // slot module. Order above is already correct: unload_game ->

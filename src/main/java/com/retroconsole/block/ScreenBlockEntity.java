@@ -8,7 +8,6 @@ import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
@@ -16,8 +15,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.UUID;
 
 public class ScreenBlockEntity extends BlockEntity {
-
-    private static final int CLIENTS_ONLY = Block.UPDATE_CLIENTS;
 
     @Nullable
     private UUID consoleId;
@@ -59,7 +56,7 @@ public class ScreenBlockEntity extends BlockEntity {
 
     /** Push grid/consoleId to clients already watching this chunk (not only on rejoin). */
     private void syncToTrackingClients(ServerLevel serverLevel) {
-        serverLevel.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), CLIENTS_ONLY);
+        // Do not sendBlockUpdated here — same-state updates reset client-side block breaking.
         ClientboundBlockEntityDataPacket packet = ClientboundBlockEntityDataPacket.create(this);
         BlockPos pos = worldPosition;
         for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {

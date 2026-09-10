@@ -160,6 +160,12 @@ public class LibretroCoreLinux extends LibretroCore {
     private short[] audioBulkScratch = new short[4096];
     private volatile double audioSampleRate = 48000.0;
     private volatile double timingFps = 60.0;
+    /** EasyRPG and other async cores: frontend drives clock/audio via env callbacks. */
+    private Pointer frameTimeCallbackFn;
+    private long frameTimeReferenceUs;
+    private long lastFrameTimeNs;
+    private Pointer asyncAudioCallbackFn;
+    private Pointer asyncAudioSetStateFn;
 
     // Input — written by server thread, read by emulator thread (lock-free)
     private final java.util.concurrent.atomic.AtomicIntegerArray[] joypadState =
@@ -745,8 +751,10 @@ public class LibretroCoreLinux extends LibretroCore {
                 return true;
             }
             case LibretroEnvironment.SET_AUDIO_CALLBACK -> {
-                LOGGER.info("Core requesting SET_AUDIO_CALLBACK — accepting");
-                return true;
+                return handleSetAsyncAudioCallback(data);
+            }
+            case LibretroEnvironment.SET_FRAME_TIME_CALLBACK -> {
+                return handleSetFrameTimeCallback(data);
             }
             case LibretroEnvironment.GET_RUMBLE_INTERFACE -> {
                 return false;
@@ -931,6 +939,57 @@ public class LibretroCoreLinux extends LibretroCore {
                         LibretroEnvironment.normalize(cmd), Long.toHexString(dataAddr));
                 return false;
             }
+        }
+    }
+
+    private boolean handleSetFrameTimeCallback(Pointer data) {
+        if (data == null) return false;
+        frameTimeCallbackFn = data.getPointer(0);
+        frameTimeReferenceUs = Native.POINTER_SIZE == 8
+                ? data.getLong(Native.POINTER_SIZE)
+                : data.getInt(Native.POINTER_SIZE) & 0xFFFFFFFFL;
+        lastFrameTimeNs = 0;
+        LOGGER.info("SET_FRAME_TIME_CALLBACK: ref={}us", frameTimeReferenceUs);
+        return frameTimeCallbackFn != null && Pointer.nativeValue(frameTimeCallbackFn) != 0;
+    }
+
+    private boolean handleSetAsyncAudioCallback(Pointer data) {
+        if (data == null) return false;
+        asyncAudioCallbackFn = data.getPointer(0);
+        asyncAudioSetStateFn = data.getPointer(Native.POINTER_SIZE);
+        LOGGER.info("SET_AUDIO_CALLBACK registered");
+        return true;
+    }
+
+    private void tickFrameTimeBeforeRun() {
+        if (frameTimeCallbackFn == null || Pointer.nativeValue(frameTimeCallbackFn) == 0) return;
+        long now = System.nanoTime();
+        long usec = lastFrameTimeNs == 0
+                ? (frameTimeReferenceUs > 0 ? frameTimeReferenceUs : 16_666L)
+                : (now - lastFrameTimeNs) / 1_000L;
+        lastFrameTimeNs = now;
+        try {
+            com.sun.jna.Function.getFunction(frameTimeCallbackFn).invokeVoid(new Object[]{ usec });
+        } catch (Throwable t) {
+            LOGGER.warn("frame_time callback failed: {}", t.getMessage());
+        }
+    }
+
+    private void invokeAsyncAudioCallback() {
+        if (asyncAudioCallbackFn == null || Pointer.nativeValue(asyncAudioCallbackFn) == 0) return;
+        try {
+            com.sun.jna.Function.getFunction(asyncAudioCallbackFn).invokeVoid(new Object[0]);
+        } catch (Throwable t) {
+            LOGGER.warn("async audio callback failed: {}", t.getMessage());
+        }
+    }
+
+    private void setAsyncAudioEnabled(boolean enabled) {
+        if (asyncAudioSetStateFn == null || Pointer.nativeValue(asyncAudioSetStateFn) == 0) return;
+        try {
+            com.sun.jna.Function.getFunction(asyncAudioSetStateFn).invokeVoid(new Object[]{ enabled ? 1 : 0 });
+        } catch (Throwable t) {
+            LOGGER.warn("async audio set_state failed: {}", t.getMessage());
         }
     }
 
@@ -1302,6 +1361,7 @@ public class LibretroCoreLinux extends LibretroCore {
                 audioPacing.setSampleRate((int) Math.round(audioSampleRate));
             }
             audioPacing.reset();
+            setAsyncAudioEnabled(true);
 
             // Release OUR instance from the load thread — core render thread will take it.
             if (hwRenderActive && glCtx != null) {
@@ -1360,7 +1420,9 @@ public class LibretroCoreLinux extends LibretroCore {
             }
         }
         long t0 = System.nanoTime();
+        tickFrameTimeBeforeRun();
         core.retro_run();
+        invokeAsyncAudioCallback();
         long dtMs = (System.nanoTime() - t0) / 1_000_000;
         if (dtMs > 100 && hwRenderActive && isPpssppCore())
             LOGGER.warn("retro_run took {}ms (possible ThreadFrame stall)", dtMs);
@@ -1605,5 +1667,11 @@ public class LibretroCoreLinux extends LibretroCore {
         hwContextResetDone = false;
         hwPbufW = 0;
         hwPbufH = 0;
+        gameLoaded = false;
+        frameTimeCallbackFn = null;
+        asyncAudioCallbackFn = null;
+        asyncAudioSetStateFn = null;
+        lastFrameTimeNs = 0;
+        frameTimeReferenceUs = 0;
     }
 }

@@ -93,6 +93,7 @@ public final class LibretroEnvironment {
             case GET_VARIABLE_UPDATE -> "GET_VARIABLE_UPDATE";
             case SET_SUPPORT_NO_GAME -> "SET_SUPPORT_NO_GAME";
             case GET_LIBRETRO_PATH -> "GET_LIBRETRO_PATH";
+            case SET_FRAME_TIME_CALLBACK -> "SET_FRAME_TIME_CALLBACK";
             case SET_AUDIO_CALLBACK -> "SET_AUDIO_CALLBACK";
             case GET_RUMBLE_INTERFACE -> "GET_RUMBLE_INTERFACE";
             case GET_LOG_INTERFACE -> "GET_LOG_INTERFACE";

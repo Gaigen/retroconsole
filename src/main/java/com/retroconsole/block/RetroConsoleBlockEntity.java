@@ -5,21 +5,18 @@ import com.retroconsole.reg.ModBlockEntities;
 import com.retroconsole.server.ServerConsoles;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.UUID;
 
 public class RetroConsoleBlockEntity extends BlockEntity {
-
-    /** Sync BE data to clients without Block.UPDATE_NEIGHBORS (breaks block breaking). */
-    private static final int CLIENTS_ONLY = Block.UPDATE_CLIENTS;
 
     private UUID consoleId;
     private BlockPos lastTrackedPos;
@@ -60,9 +57,13 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     }
 
     private void syncBlockEntityToClients() {
-        if (level instanceof ServerLevel serverLevel) {
-            serverLevel.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), CLIENTS_ONLY);
-            serverLevel.blockEntityChanged(worldPosition);
+        if (!(level instanceof ServerLevel serverLevel)) return;
+        ClientboundBlockEntityDataPacket packet = ClientboundBlockEntityDataPacket.create(this);
+        BlockPos pos = worldPosition;
+        for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {
+            if (player.level() != serverLevel || player.connection == null) continue;
+            if (!player.getChunkTrackingView().contains(new ChunkPos(pos))) continue;
+            player.connection.send(packet);
         }
     }
 
