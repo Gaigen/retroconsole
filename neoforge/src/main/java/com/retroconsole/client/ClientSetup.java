@@ -17,7 +17,7 @@ public class ClientSetup {
     @SubscribeEvent
     public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerBlockEntityRenderer(
-                ModBlockEntities.SCREEN_BE.get(),
+                ModBlockEntities.SCREEN_BE,
                 ScreenBlockEntityRenderer::new
         );
     }

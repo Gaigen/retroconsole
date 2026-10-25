@@ -4,6 +4,7 @@ import com.retroconsole.RetroConsole;
 import com.retroconsole.reg.ModBlockEntities;
 import com.retroconsole.reg.ModBlocks;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.neoforged.neoforge.gametest.GameTestHolder;
@@ -22,19 +23,21 @@ public final class RetroConsoleGameTests {
 
     @GameTest(template = "empty", timeoutTicks = 200)
     public static void consoleRegistersOnDedicatedServer(GameTestHelper helper) {
-        if (ModBlocks.RETRO_CONSOLE.get() == null) {
+        // The instances are shared with common/, so what matters here is that
+        // NeoForge actually put them into the game registries.
+        if (BuiltInRegistries.BLOCK.getKey(ModBlocks.RETRO_CONSOLE) == null) {
             helper.fail("retro_console block is not registered");
             return;
         }
-        if (ModBlockEntities.RETRO_CONSOLE_BE.get() == null) {
+        if (BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(ModBlockEntities.RETRO_CONSOLE_BE) == null) {
             helper.fail("retro_console block entity is not registered");
             return;
         }
 
         // Relative coordinates start at the structure block; the area is above it.
         BlockPos pos = new BlockPos(1, 2, 1);
-        helper.setBlock(pos, ModBlocks.RETRO_CONSOLE.get());
-        helper.assertBlockPresent(ModBlocks.RETRO_CONSOLE.get(), pos);
+        helper.setBlock(pos, ModBlocks.RETRO_CONSOLE);
+        helper.assertBlockPresent(ModBlocks.RETRO_CONSOLE, pos);
         if (helper.getBlockEntity(pos) == null) {
             helper.fail("retro_console block entity missing at " + pos);
             return;

@@ -4,7 +4,7 @@ import com.retroconsole.client.NeoForgeConfigScreen;
 import com.retroconsole.config.ModConfig;
 import com.retroconsole.platform.NeoForgeConfig;
 import com.retroconsole.platform.NeoForgePlatform;
-import com.retroconsole.reg.ModBlockEntities;
+import com.retroconsole.platform.NeoForgeRegistries;
 import com.retroconsole.reg.ModBlocks;
 import com.retroconsole.reg.ModItems;
 import net.minecraft.core.registries.Registries;
@@ -36,11 +36,11 @@ public class RetroConsole {
             "retroconsole_tab",
             () -> CreativeModeTab.builder()
                     .title(Component.translatable("itemGroup.retroconsole"))
-                    .icon(() -> new ItemStack(ModBlocks.RETRO_CONSOLE.get()))
+                    .icon(() -> new ItemStack(ModBlocks.RETRO_CONSOLE))
                     .displayItems((params, output) -> {
-                        output.accept(ModBlocks.RETRO_CONSOLE_ITEM.get());
-                        output.accept(ModBlocks.SCREEN_ITEM.get());
-                        output.accept(ModItems.GAMEPAD.get());
+                        output.accept(ModBlocks.RETRO_CONSOLE_ITEM);
+                        output.accept(ModBlocks.SCREEN_ITEM);
+                        output.accept(ModItems.GAMEPAD);
                     })
                     .build()
     );
@@ -74,9 +74,7 @@ public class RetroConsole {
             NeoForgeConfigScreen.register(modContainer);
         }
 
-        ModBlocks.register(modEventBus);
-        ModItems.register(modEventBus);
-        ModBlockEntities.register(modEventBus);
+        NeoForgeRegistries.register(modEventBus);
         CREATIVE_TABS.register(modEventBus);
         // NeoForgeNetwork + NeoForgeSetup + ModKeys register via @SubscribeEvent on the MOD bus
     }

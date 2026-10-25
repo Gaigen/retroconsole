@@ -8,13 +8,12 @@ plugins {
 //
 // The loader projects compile these sources as part of their own source set
 // (see the srcDir entries in neoforge/build.gradle), so this project on its own
-// is a compile check: it catches code that touches a loader API or misses a
-// dependency before a loader module gets a chance to hide the mistake.
+// is a compile check: it catches code that names a loader API, which would then
+// fail on the other loader. `grep -r net.neoforged common/src` must stay empty.
 //
-// The NeoForge dev classpath is only a classpath provider here — nothing in this
-// module is supposed to touch a loader API, so the same classes ship with the
-// Fabric jar. The remaining violations (reg/ DeferredRegisters and the two block
-// entities that read them) are the next step on the board.
+// The NeoForge dev classpath is only a Minecraft classpath provider here; the
+// sources themselves only use vanilla classes and the facades in
+// com.retroconsole.{network,server,client,config}.
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 

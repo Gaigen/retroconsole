@@ -4,36 +4,33 @@ import com.retroconsole.block.RetroConsoleBlock;
 import com.retroconsole.block.ScreenBlock;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.properties.NoteBlockInstrument;
 import net.minecraft.world.level.material.MapColor;
-import net.neoforged.bus.api.IEventBus;
-import net.neoforged.neoforge.registries.DeferredBlock;
-import net.neoforged.neoforge.registries.DeferredItem;
-import net.neoforged.neoforge.registries.DeferredRegister;
 
+/**
+ * Block and block-item instances shared by every loader.
+ *
+ * <p>Only the definitions live here. Each loader hands these exact objects to
+ * its own registry (NeoForge in {@code NeoForgeRegistries}, Fabric via
+ * {@code Registry.register}), so shared code never has to name a loader API or
+ * wait for a deferred holder.
+ */
 public final class ModBlocks {
 
-    public static final DeferredRegister.Blocks BLOCKS = DeferredRegister.createBlocks("retroconsole");
-    public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems("retroconsole");
-
-    public static final DeferredBlock<RetroConsoleBlock> RETRO_CONSOLE = BLOCKS.register(
-            "retro_console",
-            () -> new RetroConsoleBlock(BlockBehaviour.Properties.of()
+    public static final RetroConsoleBlock RETRO_CONSOLE = new RetroConsoleBlock(
+            BlockBehaviour.Properties.of()
                     .mapColor(MapColor.METAL)
                     .instrument(NoteBlockInstrument.IRON_XYLOPHONE)
                     .requiresCorrectToolForDrops()
                     .strength(3.5F)
                     .sound(SoundType.METAL)
                     .noOcclusion()
-            )
     );
 
-    public static final DeferredBlock<ScreenBlock> SCREEN = BLOCKS.register(
-            "screen",
-            () -> new ScreenBlock(BlockBehaviour.Properties.of()
+    public static final ScreenBlock SCREEN = new ScreenBlock(
+            BlockBehaviour.Properties.of()
                     .mapColor(MapColor.METAL)
                     .instrument(NoteBlockInstrument.IRON_XYLOPHONE)
                     .requiresCorrectToolForDrops()
@@ -41,23 +38,11 @@ public final class ModBlocks {
                     .sound(SoundType.METAL)
                     .noOcclusion()
                     .isViewBlocking((state, getter, pos) -> false)
-            )
     );
 
-    public static final DeferredItem<BlockItem> RETRO_CONSOLE_ITEM = ITEMS.register(
-            "retro_console",
-            () -> new BlockItem(RETRO_CONSOLE.get(), new Item.Properties())
-    );
+    public static final BlockItem RETRO_CONSOLE_ITEM = new BlockItem(RETRO_CONSOLE, new Item.Properties());
 
-    public static final DeferredItem<BlockItem> SCREEN_ITEM = ITEMS.register(
-            "screen",
-            () -> new BlockItem(SCREEN.get(), new Item.Properties())
-    );
-
-    public static void register(IEventBus bus) {
-        BLOCKS.register(bus);
-        ITEMS.register(bus);
-    }
+    public static final BlockItem SCREEN_ITEM = new BlockItem(SCREEN, new Item.Properties());
 
     private ModBlocks() {}
 }

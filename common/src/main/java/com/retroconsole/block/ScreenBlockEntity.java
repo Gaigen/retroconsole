@@ -25,7 +25,7 @@ public class ScreenBlockEntity extends BlockEntity {
     private boolean assembled;
 
     public ScreenBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlockEntities.SCREEN_BE.get(), pos, state);
+        super(ModBlockEntities.SCREEN_BE, pos, state);
     }
 
     @Nullable

@@ -39,7 +39,7 @@ public class GamepadItem extends Item {
     }
 
     public static boolean isGamepad(ItemStack stack) {
-        return stack.is(ModItems.GAMEPAD.get());
+        return stack.is(ModItems.GAMEPAD);
     }
 
     @Nullable

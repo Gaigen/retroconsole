@@ -26,7 +26,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     private boolean pendingLoadAuto;
 
     public RetroConsoleBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlockEntities.RETRO_CONSOLE_BE.get(), pos, state);
+        super(ModBlockEntities.RETRO_CONSOLE_BE, pos, state);
     }
 
     /** Synced id; null on client until chunk/BE packet arrives. */
