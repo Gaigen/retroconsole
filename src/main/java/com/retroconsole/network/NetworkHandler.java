@@ -57,6 +57,10 @@ public final class NetworkHandler {
 
         r.playToServer(RetroPointerPacket.TYPE, RetroPointerPacket.STREAM_CODEC,
                 NetworkHandler::handlePointer);
+        r.playToServer(RetroKeyPacket.TYPE, RetroKeyPacket.STREAM_CODEC,
+                NetworkHandler::handleKey);
+        r.playToServer(RetroMousePacket.TYPE, RetroMousePacket.STREAM_CODEC,
+                NetworkHandler::handleMouse);
         r.playToServer(RetroInputPacket.TYPE, RetroInputPacket.STREAM_CODEC,
                 NetworkHandler::handleInput);
         r.playToServer(RetroAnalogPacket.TYPE, RetroAnalogPacket.STREAM_CODEC,
@@ -80,6 +84,17 @@ public final class NetworkHandler {
             UUID consoleId = console.getOrAssignConsoleId();
             ServerConsoles.handlePointer(consoleId, pkt.x(), pkt.y(), pkt.pressed());
         }));
+    }
+
+    private static void handleKey(RetroKeyPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> withConsole(ctx, pkt.pos(), console ->
+                ServerConsoles.handleKey(console.getOrAssignConsoleId(), pkt.key(), pkt.pressed())));
+    }
+
+    private static void handleMouse(RetroMousePacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> withConsole(ctx, pkt.pos(), console ->
+                ServerConsoles.handleMouse(console.getOrAssignConsoleId(),
+                        pkt.dx(), pkt.dy(), pkt.buttons(), pkt.wheel())));
     }
 
     private static void handleInput(RetroInputPacket pkt, IPayloadContext ctx) {

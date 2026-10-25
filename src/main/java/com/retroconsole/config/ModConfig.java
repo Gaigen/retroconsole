@@ -42,6 +42,8 @@ public final class ModConfig {
     public static final ModConfigSpec.ConfigValue<String> PCSX2_UPSCALE_MULTIPLIER;
     public static final ModConfigSpec.ConfigValue<String> PCSX2_ANISOTROPIC;
     public static final ModConfigSpec.ConfigValue<String> CITRA_RESOLUTION;
+    public static final ModConfigSpec.ConfigValue<String> DOOM3_RESOLUTION;
+    public static final ModConfigSpec.BooleanValue DOOM3_INVERT_Y;
     public static final ModConfigSpec.BooleanValue ENABLE_3DS;
 
     public static final ModConfigSpec.BooleanValue GAMEPAD_ENABLED;
@@ -161,6 +163,15 @@ public final class ModConfig {
                 .comment("Citra resolution factor (1–10). Empty = preset.")
                 .translation(T + "citraResolution")
                 .define("citraResolution", "");
+        DOOM3_RESOLUTION = server
+                .comment("Doom 3 (boom3) internal resolution, e.g. 640x360, 960x540, 1920x1080. Empty = preset. "
+                        + "Every frame is read back from the GPU and streamed, so this is the main cost knob.")
+                .translation(T + "doom3Resolution")
+                .define("doom3Resolution", "");
+        DOOM3_INVERT_Y = server
+                .comment("Invert Doom 3 mouse / right-stick Y axis (boom3 doom_invert_y_axis).")
+                .translation(T + "doom3InvertY")
+                .define("doom3InvertY", false);
         server.pop();
 
         SERVER_SPEC = server.build();
@@ -241,6 +252,14 @@ public final class ModConfig {
             return s.isEmpty() ? null : s;
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    public static boolean doom3InvertY() {
+        try {
+            return DOOM3_INVERT_Y.get();
+        } catch (Exception e) {
+            return false;
         }
     }
 

@@ -7,11 +7,14 @@ import com.retroconsole.client.bezel.TvBezelRenderer;
 import com.retroconsole.client.input.CoreInputProfile;
 import com.retroconsole.client.input.PointerMapper;
 import com.retroconsole.client.input.GamepadPoller;
+import com.retroconsole.client.input.KeyboardMapper;
+import com.retroconsole.client.input.MouseCapture;
 import com.retroconsole.client.input.RetroInputSender;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.client.library.SaveStates;
 import com.retroconsole.client.library.SoundPrefs;
 import com.retroconsole.network.RetroCoopPacket;
+import com.retroconsole.network.RetroKeyPacket;
 import com.retroconsole.network.RetroPointerPacket;
 import com.retroconsole.network.RetroPowerOffPacket;
 import com.retroconsole.network.RetroSaveStatePacket;
@@ -33,7 +36,9 @@ import net.minecraft.util.Mth;
 import net.neoforged.neoforge.network.PacketDistributor;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -45,6 +50,7 @@ public class TvScreen extends Screen {
     private static final int BAR_HEIGHT = 24;
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE = 0xFF2A2F3A;
+    private static final int COL_CAPTURE_HINT = 0xFFD8B45C;
 
     private final BlockPos consolePos;
     private final UUID consoleId;
@@ -65,6 +71,8 @@ public class TvScreen extends Screen {
     private final GamepadPoller gamepad;
 
     private int frameX, frameY, frameW, frameH;
+    /** Free stretch of the bottom bar between the left buttons and the volume slider. */
+    private int barTextLeft, barTextRight;
     private boolean pointerDown;
     private PointerMapper.LibretroPointer pointer = new PointerMapper.LibretroPointer((short) 0, (short) 0);
     private short sentPx, sentPy;
@@ -72,6 +80,11 @@ public class TvScreen extends Screen {
     private long lastPointerSendMs;
     private boolean virtualStylus;
     private boolean coopP2;
+
+    /** Relative-mouse capture for keyboard+mouse cores (Doom 3); unused otherwise. */
+    private final MouseCapture mouse;
+    /** RETROK codes currently held down, so releasing the capture can lift them all. */
+    private final Set<Integer> heldKeys = new HashSet<>();
 
     public TvScreen(BlockPos consolePos, UUID consoleId, String romId) {
         this(consolePos, consoleId, romId, null);
@@ -86,6 +99,7 @@ public class TvScreen extends Screen {
         this.inputProfile = CoreInputProfile.forSystemId(systemId);
         this.input = new RetroInputSender(consolePos);
         this.gamepad = new GamepadPoller(this.input);
+        this.mouse = new MouseCapture(consolePos);
     }
 
     private static String prettyName(String romId) {
@@ -127,6 +141,9 @@ public class TvScreen extends Screen {
 
         int barRight = this.width - 4;
         barRight = addRight(new VolumeSlider(0, y, 110, h, SoundPrefs.volume()), barRight);
+
+        barTextLeft = barLeft;
+        barTextRight = barRight;
     }
 
     private int addLeft(Button.Builder builder, int x, int y, int w, int h) {
@@ -142,6 +159,7 @@ public class TvScreen extends Screen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+        mouse.poll(minecraft);
         renderBackground(guiGraphics, mouseX, mouseY, partialTick);
         renderTvFrame(guiGraphics);
         TvBezelRenderer.render(guiGraphics, width, height, BAR_HEIGHT,
@@ -194,11 +212,22 @@ public class TvScreen extends Screen {
     private void renderBar(GuiGraphics guiGraphics) {
         guiGraphics.fill(0, this.height - BAR_HEIGHT, this.width, this.height, COL_PANEL_2);
         guiGraphics.fill(0, this.height - BAR_HEIGHT, this.width, this.height - BAR_HEIGHT + 1, COL_EDGE);
+        // Draw only into the gap the widgets leave free, otherwise a narrow
+        // window pushes the text over the P2 Join button.
+        int avail = barTextRight - barTextLeft;
+        if (avail < 16) return;
+        int centerY = this.height - BAR_HEIGHT / 2 - 4;
+        if (isKeyboardMouse()) {
+            // The capture hint takes the game-name slot; the picture is never covered.
+            String hint = this.font.plainSubstrByWidth(
+                    ModTexts.s(mouse.isActive() ? "tv.capture_active" : "tv.capture"), avail);
+            guiGraphics.drawCenteredString(this.font, hint,
+                    barTextLeft + avail / 2, centerY, COL_CAPTURE_HINT);
+            return;
+        }
         if (!displayName.isEmpty()) {
-            int avail = Math.max(40, this.width - 2 * 200);
             String title = this.font.plainSubstrByWidth(displayName, avail);
-            guiGraphics.drawCenteredString(this.font, title,
-                    this.width / 2, this.height - BAR_HEIGHT / 2 - 4, 0xC8C8C8);
+            guiGraphics.drawCenteredString(this.font, title, barTextLeft + avail / 2, centerY, 0xC8C8C8);
         }
     }
 
@@ -236,6 +265,10 @@ public class TvScreen extends Screen {
         right.add(ModTexts.s("tv.hints.load"));
         right.add(ModTexts.s("tv.hints.help"));
         right.add(ModTexts.s("tv.hints.exit"));
+        if (isKeyboardMouse()) {
+            right.add("");
+            right.add(ModTexts.s("tv.hints.mouse"));
+        }
 
         int colW1 = 0;
         int colW2 = 0;
@@ -287,6 +320,49 @@ public class TvScreen extends Screen {
                 label);
     }
 
+    // ------------------------------------------------------------------
+    // Keyboard + mouse capture (Doom 3 and other keyboard+mouse cores)
+    // ------------------------------------------------------------------
+
+    private boolean isKeyboardMouse() {
+        return inputProfile == CoreInputProfile.KEYBOARD_MOUSE;
+    }
+
+    /** True when the click landed on the game picture (or anywhere above the bar before the first frame). */
+    private boolean insideVideoArea(double x, double y) {
+        if (frameW > 0 && frameH > 0) {
+            return PointerMapper.insideFrame(x, y, frameX, frameY, frameW, frameH);
+        }
+        return y < this.height - BAR_HEIGHT;
+    }
+
+    /**
+     * Captured input is fully owned by the game: no hotkeys, no screen buttons.
+     * Esc is Doom's menu key and is forwarded; Delete hands the cursor back, so
+     * opening the in-game menu never drops the capture.
+     */
+    private boolean handleCapturedKeyPress(int keyCode) {
+        if (keyCode == InputConstants.KEY_DELETE) {
+            releaseInputCapture();
+            return true;
+        }
+        int retroKey = KeyboardMapper.toRetroKey(keyCode);
+        if (retroKey >= 0 && heldKeys.add(retroKey)) sendKey(retroKey, true);
+        return true;
+    }
+
+    private void sendKey(int retroKey, boolean pressed) {
+        PacketDistributor.sendToServer(new RetroKeyPacket(consolePos, retroKey, pressed));
+    }
+
+    private void releaseInputCapture() {
+        if (!heldKeys.isEmpty()) {
+            for (int key : heldKeys) sendKey(key, false);
+            heldKeys.clear();
+        }
+        mouse.release(Minecraft.getInstance());
+    }
+
     private static class VolumeSlider extends AbstractSliderButton {
         VolumeSlider(int x, int y, int w, int h, double initial) {
             super(x, y, w, h, Component.empty(), Mth.clamp(initial, 0.0, 1.0));
@@ -334,6 +410,7 @@ public class TvScreen extends Screen {
 
     @Override
     public void removed() {
+        releaseInputCapture();
         if (!romId.isEmpty()) {
             PlayStats.addPlaytime(romId, (Util.getMillis() - lastFlush) / 1000);
             lastFlush = Util.getMillis();
@@ -346,6 +423,7 @@ public class TvScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (mouse.isActive()) return handleCapturedKeyPress(keyCode);
         if (keyCode == InputConstants.KEY_ESCAPE) {
             if (showHints) {
                 showHints = false;
@@ -392,6 +470,11 @@ public class TvScreen extends Screen {
 
     @Override
     public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
+        if (mouse.isActive()) {
+            int retroKey = KeyboardMapper.toRetroKey(keyCode);
+            if (retroKey >= 0 && heldKeys.remove(retroKey)) sendKey(retroKey, false);
+            return true;
+        }
         InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
         if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
                 && ModKeys.BTN_CURSOR_TOUCH.isActiveAndMatches(key)) {
@@ -405,9 +488,17 @@ public class TvScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (mouse.isActive()) {
+            mouse.setButton(button, true);
+            return true;
+        }
         if (super.mouseClicked(mouseX, mouseY, button)) return true;
         if (showHints) {
             showHints = false;
+            return true;
+        }
+        if (isKeyboardMouse() && button == 0 && insideVideoArea(mouseX, mouseY)) {
+            mouse.grab(minecraft);
             return true;
         }
         if (button == 0 && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
@@ -433,6 +524,10 @@ public class TvScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (mouse.isActive()) {
+            mouse.setButton(button, false);
+            return true;
+        }
         if (pointerDown && button == 0) {
             pointerDown = false;
             setDragging(false);
@@ -444,6 +539,15 @@ public class TvScreen extends Screen {
         boolean handled = super.mouseReleased(mouseX, mouseY, button);
         setFocused(null);
         return handled;
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (mouse.isActive()) {
+            if (scrollY != 0) mouse.addWheel((int) Math.signum(scrollY));
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
     private void sendPointerState(boolean pressed) {
@@ -475,6 +579,7 @@ public class TvScreen extends Screen {
     private void powerOffToMenu() {
         if (closed) return;
         closed = true;
+        releaseInputCapture();
         input.releaseAll();
         input.sendAnalogZeros();
         sendPointerRelease();
@@ -487,6 +592,7 @@ public class TvScreen extends Screen {
     public void onClose() {
         if (closed) return;
         closed = true;
+        releaseInputCapture();
         if (!romId.isEmpty()) {
             PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true, true));
         }

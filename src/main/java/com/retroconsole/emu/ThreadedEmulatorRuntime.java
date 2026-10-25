@@ -74,28 +74,15 @@ public class ThreadedEmulatorRuntime {
     }
 
     /**
-     * Non-blocking frame poll. Copies latest frame into dst.
+     * Non-blocking frame poll. Copies the latest frame into dst.
      * Returns true if a new frame was copied.
      */
     public boolean pollFrame(int[] dst) {
         if (!newFrame) return false;
-
-        int[] src = source.getFrameBuffer();
-        if (src == null) return false;
-        int w = source.getWidth();
-        int h = source.getHeight();
-        if (w <= 0 || h <= 0) return false;
-
-        // If the frameBuffer size matches current geometry, copy it.
-        // If it does not (resolution just changed and we have not yet
-        // received the matching video_refresh callback), skip this
-        // frame — otherwise the client would see junk from the old
-        // resolution's contents (visible as a black frame every other
-        // tick on PSX with frequent geometry changes).
-        if (src.length != w * h) return false;
-
-        int copyLen = Math.min(src.length, dst.length);
-        System.arraycopy(src, 0, dst, 0, copyLen);
+        // Straight from the source: no intermediate buffer, so a hardware core
+        // copies out of its own (locked) framebuffer once per frame, and skips
+        // the GPU readback entirely while nobody is watching.
+        if (!source.pollFrame(dst)) return false;
         newFrame = false;
         return true;
     }

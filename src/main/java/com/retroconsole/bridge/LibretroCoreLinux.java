@@ -310,6 +310,14 @@ public class LibretroCoreLinux extends LibretroCore {
 
         inputStateCallback = (port, device, index, id) -> {
             if (port < 0 || port >= MAX_PORTS) return (short) 0;
+            if (device == LibretroBridge.RETRO_DEVICE_KEYBOARD) {
+                // One physical keyboard shared by all ports (boom3 polls it per port).
+                return pollKey(id);
+            }
+            if (device == LibretroBridge.RETRO_DEVICE_MOUSE) {
+                if (port != 0) return (short) 0; // pointer/mouse only on port 0
+                return pollMouse(id);
+            }
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
                     int mask = 0;
@@ -517,6 +525,7 @@ public class LibretroCoreLinux extends LibretroCore {
     private boolean isPpssppCore()      { return coreNameContains("ppsspp"); }
     private boolean isMelondsCore()     { return coreNameContains("melonds") || coreNameContains("desmume"); }
     private boolean isCitraCore()       { return coreNameContains("citra"); }
+    private boolean isBoom3Core()       { return coreNameContains("boom3"); }
 
     /** Headless EGL (Mesa) for HW-render cores. */
     private boolean supportsHwRender() { return true; }
@@ -527,7 +536,8 @@ public class LibretroCoreLinux extends LibretroCore {
     /** Lazily create/reinit our GL instance for the core context type. */
     private boolean ensureHeadlessGl(int ctxType) {
         int api, major, minor, flags;
-        if (isPpssppCore()) {
+        if (isPpssppCore() || isBoom3Core()) {
+            // boom3/dhewm3 needs ARB programs on desktop GL — the GLES path has no entry points for it.
             api = 0; major = 3; minor = 3; flags = HLG_FLAG_COMPAT_PROFILE;
         } else {
             api = (ctxType == 1 || ctxType == 2 || ctxType == 4) ? 1 : 0;
@@ -555,7 +565,7 @@ public class LibretroCoreLinux extends LibretroCore {
             int glOk = rawHlg().hlg_init_ex(glCtx, api, major, minor, flags);
             headlessGlReady = glOk != 0;
             if (headlessGlReady) headlessGlApi = profileKey;
-            String apiName = isPpssppCore() ? "GL 3.3 Compat"
+            String apiName = (isPpssppCore() || isBoom3Core()) ? "GL 3.3 Compat"
                     : (api == 1 ? "GLES" + major : "GL " + major + "." + minor);
             LOGGER.info("Headless GL context ({}): {}", apiName, headlessGlReady ? "OK" : "FAILED");
             if (headlessGlReady)
@@ -1042,6 +1052,9 @@ public class LibretroCoreLinux extends LibretroCore {
         LOGGER.info("  hw callbacks: get_framebuffer @ {}, get_proc_address @ {}", fbFn, procFn);
         data.setPointer(16, fbFn);
         data.setPointer(24, procFn);
+        // boom3 draws Doom 3's stencil shadow volumes — the EGL offscreen FBO has DEPTH24_STENCIL8.
+        data.setByte(32, (byte) (isBoom3Core() ? 1 : 0));  // depth
+        data.setByte(33, (byte) (isBoom3Core() ? 1 : 0));  // stencil
         data.setInt(36, glMajor);
         data.setInt(40, glMinor);
         data.setByte(44, (byte) 1);
@@ -1154,6 +1167,16 @@ public class LibretroCoreLinux extends LibretroCore {
         };
     }
 
+    private static String applyBoom3Default(String key, String defaultValue) {
+        String preset = VideoQualityPresets.boom3Default(key);
+        return preset != null ? preset : defaultValue;
+    }
+
+    private static String applyDesmumeDefault(String key, String defaultValue) {
+        String preset = VideoQualityPresets.desmumeDefault(key);
+        return preset != null ? preset : defaultValue;
+    }
+
     private static String applyPpssppDefault(String key, String defaultValue) {
         String preset = VideoQualityPresets.ppssppDefault(key);
         if (preset != null) return preset;
@@ -1251,6 +1274,10 @@ public class LibretroCoreLinux extends LibretroCore {
                 val = applyPcsxRearmedDefault(key, val != null ? val : "");
             if (key.startsWith("flycast_") || key.startsWith("reicast_"))
                 val = applyFlycastDefault(key, val != null ? val : "");
+            if (key.startsWith("doom_"))
+                val = applyBoom3Default(key, val != null ? val : "");
+            if (key.startsWith("desmume_"))
+                val = applyDesmumeDefault(key, val != null ? val : "");
             if ((val == null || val.isEmpty()) && "pcsx2_bios".equals(key)) {
                 val = findFirstPcsx2BiosFilename();
                 if (val != null) LOGGER.info("PCSX2 bios auto-selected: {}", val);
@@ -1275,13 +1302,14 @@ public class LibretroCoreLinux extends LibretroCore {
     /** Safety cap: refuse to slurp anything this big into memory even if need_fullpath=false. */
     private static final long MAX_IN_MEMORY_ROM = 512L * 1024 * 1024;
 
-    /** Disc-extension list kept as a safety net for cores that mis-report need_fullpath. */
+    /** Disc-extension list kept as a safety net for cores that mis-report need_fullpath.
+     *  {@code .pk4} included: boom3 mmaps Doom 3 paks itself instead of taking them in memory. */
     private static boolean isDiscExtension(String lowerPath) {
         return lowerPath.endsWith(".cue") || lowerPath.endsWith(".gdi")
                 || lowerPath.endsWith(".iso") || lowerPath.endsWith(".chd")
                 || lowerPath.endsWith(".cso") || lowerPath.endsWith(".mdf")
                 || lowerPath.endsWith(".nrg") || lowerPath.endsWith(".img")
-                || lowerPath.endsWith(".pbp");
+                || lowerPath.endsWith(".pbp") || lowerPath.endsWith(".pk4");
     }
 
     /**
@@ -1302,11 +1330,12 @@ public class LibretroCoreLinux extends LibretroCore {
         boolean discImage = isDiscExtension(lower);
         long romSize;
         try {
-            romSize = Files.size(romPath);
+            // boom3 accepts a game directory as content — a folder has no bytes to read.
+            romSize = Files.isDirectory(romPath) ? -1 : Files.size(romPath);
         } catch (IOException e) {
             romSize = -1;
         }
-        boolean pathOnly = needFullpath || discImage;
+        boolean pathOnly = needFullpath || discImage || romSize < 0;
 
         if (pathOnly) {
             LOGGER.info("load mode: path-only (need_fullpath={}, disc_ext={}, size={})",

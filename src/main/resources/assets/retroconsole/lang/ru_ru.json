@@ -78,6 +78,8 @@
   "retroconsole.configuration.pcsx2UpscaleMultiplier": "PCSX2: множитель апскейла",
   "retroconsole.configuration.pcsx2Anisotropic": "PCSX2: анизотропная фильтрация",
   "retroconsole.configuration.citraResolution": "Множитель разрешения Citra",
+  "retroconsole.configuration.doom3Resolution": "Внутреннее разрешение Doom 3",
+  "retroconsole.configuration.doom3InvertY": "Doom 3: инвертировать ось Y",
   "retroconsole.configuration.enable3ds": "Включить Nintendo 3DS (Citra)",
 
   "retroconsole.error.core_slot_cap": "Лимит слотов ядер (%s) для %s — остановите другую консоль или увеличьте limits.maxCoreSlots",
@@ -194,6 +196,7 @@
   "retroconsole.tv.hints.load": "§eF6§r — загрузить",
   "retroconsole.tv.hints.help": "§eF1§r — эта справка",
   "retroconsole.tv.hints.exit": "§eEsc§r — выход",
+  "retroconsole.tv.hints.mouse": "Мышь: §eклик§r по картинке — захват · §eEsc§r — меню игры · §eDel§r — отпустить",
   "retroconsole.tv.hints.touch": "Тач: клик/перетаскивание по экрану игры",
   "retroconsole.tv.hints.virtual_stylus": "§e;§r — виртуальный стилус (правый стик)",
   "retroconsole.tv.hints.virtual_stylus_action": "виртуальный стилус (правый стик)",
@@ -202,6 +205,8 @@
   "retroconsole.tv.hints.footer": "§8Клавиши меняются в Настройки → Управление. F1 или клик — закрыть",
   "retroconsole.tv.hint.bind": "§e%s§r — %s",
   "retroconsole.tv.hint.sticks": "§e%s/%s/%s/%s§r — %s",
+  "retroconsole.tv.capture": "§eКлик§r — захват мыши",
+  "retroconsole.tv.capture_active": "§eDel§r — отпустить мышь",
 
   "retroconsole.bezel.title": "Оформление полос",
   "retroconsole.bezel.left": "Картинка слева",

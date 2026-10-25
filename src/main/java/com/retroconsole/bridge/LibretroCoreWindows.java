@@ -101,7 +101,9 @@ public class LibretroCoreWindows extends LibretroCore {
         all.put("ppsspp", VideoQualityPresets.ppssppOverrides());
         all.put("pcsx2", VideoQualityPresets.pcsx2Overrides());
         all.put("melonds", VideoQualityPresets.melondsOverrides());
+        all.put("desmume", VideoQualityPresets.desmumeOverrides());
         all.put("citra", VideoQualityPresets.citraOverrides());
+        all.put("boom3", VideoQualityPresets.boom3Overrides());
         return java.util.Map.copyOf(all);
     }
 
@@ -510,6 +512,27 @@ public class LibretroCoreWindows extends LibretroCore {
         return coreName().contains("citra");
     }
 
+    private boolean isBoom3Core() {
+        return coreName().contains("boom3");
+    }
+
+    /**
+     * Cores whose process globals survive retro_deinit()/retro_unload_game() and
+     * therefore MUST be unmapped between sessions.
+     *
+     * <p>boom3 (dhewm3): {@code common->Shutdown()} tears the engine down but the
+     * globals it published ({@code cvarSystem} first of all) keep pointing at freed
+     * memory. The next {@code retro_load_game()} in the same JVM reads core options
+     * through {@code idCVar::Set*} — i.e. through that dangling pointer — and faults
+     * with "Invalid memory access" right after {@code boom3_vr_turn_angle}. Only a
+     * fresh LoadLibrary resets the module's .bss.
+     *
+     * <p>Flycast needs the same for its own globals (and its NOP-patched logging).
+     */
+    private boolean needsFreshModule() {
+        return isFlycastCore() || isBoom3Core();
+    }
+
     /**
      * Seeds shared Citra system files from {@code system/citra/} into the per-player Citra folder.
      * Copies only when missing or size differs (dump updates). Player saves ({@code nand/data}, {@code sdmc})
@@ -601,6 +624,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
         LOGGER.info("Native.load({})", absPath);
         try {
+            long loadStartNs = System.nanoTime();
             if (needsVehHook() && supportsHwRender()) {
                 captureJvmExceptionFilter();
                 hookAddVeh();
@@ -611,7 +635,10 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             this.core = Native.load(absPath, LibretroBridge.class);
             int apiVersion = core.retro_api_version();
-            LOGGER.info("Core loaded. API version: {} (corePath={})", apiVersion, corePath.getFileName());
+            // A few ms means a real LoadLibrary; 0 ms means JNA handed back the
+            // still-mapped module (see needsFreshModule) — stale globals again.
+            LOGGER.info("Core loaded in {} ms. API version: {} (corePath={})",
+                    (System.nanoTime() - loadStartNs) / 1_000_000L, apiVersion, corePath.getFileName());
             if (!KEEP_LOADED.contains(this.core)) {
                 KEEP_LOADED.add(this.core);
             }
@@ -638,7 +665,7 @@ public class LibretroCoreWindows extends LibretroCore {
                 KEEP_LOADED.remove(failed);
             }
             endVehSessionIfLast();
-            if (isFlycastCore()) {
+            if (needsFreshModule()) {
                 disposeCoreLibrary(failed); // slot module is dirty — unload for next try
             }
             CoreModulePool.release(moduleSlot);
@@ -761,6 +788,14 @@ public class LibretroCoreWindows extends LibretroCore {
 
         LibretroBridge.RetroInputState inputStateCb = (port, device, index, id) -> {
             if (port < 0 || port >= MAX_PORTS) return 0;
+            if (device == LibretroBridge.RETRO_DEVICE_KEYBOARD) {
+                // One physical keyboard shared by all ports (boom3 polls it per port).
+                return pollKey(id);
+            }
+            if (device == LibretroBridge.RETRO_DEVICE_MOUSE) {
+                if (port != 0) return 0; // pointer/mouse only on port 0
+                return pollMouse(id);
+            }
             if (device == LibretroBridge.RETRO_DEVICE_JOYPAD) {
                 if (id == LibretroBridge.RETRO_DEVICE_ID_JOYPAD_MASK) {
                     int mask = 0;
@@ -1205,8 +1240,6 @@ public class LibretroCoreWindows extends LibretroCore {
                 procFn = headlessGl().hlg_get_proc_address_ptr();
                 pinForever(fbFn);
                 pinForever(procFn);
-                data.setByte(32, (byte) 1);          // depth (offscreen FBO has depth_rb)
-                data.setByte(33, (byte) 1);          // stencil
             } else {
                 pinForever(hwGetFb);
                 pinForever(hwGetProc);
@@ -1215,6 +1248,11 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             data.setPointer(16, fbFn);
             data.setPointer(24, procFn);
+            // Citra and boom3 need depth+stencil from the frontend — boom3 draws Doom 3's
+            // stencil shadow volumes; the offscreen FBO has DEPTH24_STENCIL8 either way.
+            boolean depthStencil = isCitraCore() || isBoom3Core();
+            data.setByte(32, (byte) (depthStencil ? 1 : 0));  // depth
+            data.setByte(33, (byte) (depthStencil ? 1 : 0));  // stencil
             // Citra uses top-left framebuffer semantics; PPSSPP/PCSX2 expect bottom-left.
             data.setByte(34, (byte) (isCitraCore() ? 0 : 1));
             data.setInt(36, hwGlMajor);              // version_major (actual context)
@@ -1663,9 +1701,13 @@ public class LibretroCoreWindows extends LibretroCore {
                 || lower.endsWith(".iso") || lower.endsWith(".chd")
                 || lower.endsWith(".cso") || lower.endsWith(".mdf")
                 || lower.endsWith(".nrg") || lower.endsWith(".img")
-                || lower.endsWith(".pbp");
-        long size = java.nio.file.Files.size(romPath);
-        boolean pathOnly = needFullpath || discImage;
+                || lower.endsWith(".pbp")
+                // Doom 3 (boom3) mmaps its own pak files — never copy 400+ MB into a JNA Memory.
+                || lower.endsWith(".pk4");
+        // boom3 accepts a game directory as content — a folder has no bytes to slurp.
+        boolean isDir = java.nio.file.Files.isDirectory(romPath);
+        long size = isDir ? 0L : java.nio.file.Files.size(romPath);
+        boolean pathOnly = needFullpath || discImage || isDir;
         if (pathOnly) {
             LOGGER.info("load mode: path-only (need_fullpath={}, disc_ext={}, size={})",
                     needFullpath, discImage, size);
@@ -1734,13 +1776,21 @@ public class LibretroCoreWindows extends LibretroCore {
             hwActualW = aw;
             hwActualH = ah;
             // Bulk-read entire frame in one JNI call instead of getInt() per pixel.
-            if (hwReadbackInts.length < len) hwReadbackInts = new int[len];
+            // Exact size on purpose: pollFrame() hands this array to the sender, and
+            // an oversized buffer would read as a geometry mismatch there.
+            if (hwReadbackInts.length != len) hwReadbackInts = new int[len];
             hwReadbackBuf.read(0, hwReadbackInts, 0, len);
+            // Mask alpha in place — BGRA readback leaves 0x00 in the top byte and the
+            // client treats the frame as opaque. One pass, no second buffer.
+            for (int i = 0; i < len; i++)
+                hwReadbackInts[i] |= 0xFF000000;
             synchronized (frameLock) {
-                if (frameBuffer.length != len) frameBuffer = new int[len];
-                int[] dst = frameBuffer;
-                for (int i = 0; i < len; i++)
-                    dst[i] = 0xFF000000 | (hwReadbackInts[i] & 0x00FFFFFF);
+                // Swap instead of copy: the sender copies out of frameBuffer under
+                // this same lock, so the array it just released becomes the next
+                // readback scratch. Saves a full-frame copy per frame.
+                int[] scratch = frameBuffer.length == len ? frameBuffer : new int[len];
+                frameBuffer = hwReadbackInts;
+                hwReadbackInts = scratch;
                 this.width = aw;
                 this.height = ah;
                 newFrame = true;
@@ -1989,11 +2039,11 @@ public class LibretroCoreWindows extends LibretroCore {
         lastFrameTimeNs = 0;
         frameTimeReferenceUs = 0;
 
-        // Flycast globals are only reset by a fresh LoadLibrary — unload the
-        // slot module. Order above is already correct: unload_game ->
+        // Flycast/boom3 globals are only reset by a fresh LoadLibrary — unload
+        // the slot module. Order above is already correct: unload_game ->
         // context_destroy -> retro_deinit -> endVehSessionIfLast() (VEH must be
         // dead BEFORE FreeLibrary of the last session).
-        if (isFlycastCore()) {
+        if (needsFreshModule()) {
             disposeCoreLibrary(closed);
         }
         // PCSX2/others: do NOT dispose — LRPS2 may keep an MTGS thread after a

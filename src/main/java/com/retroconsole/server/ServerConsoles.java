@@ -296,6 +296,19 @@ public class ServerConsoles {
         if (e != null) e.runtime().setPointer(x, y, pressed);
     }
 
+    public static void handleKey(UUID consoleId, int retroKey, boolean pressed) {
+        Entry e = ENTRIES.get(consoleId);
+        if (e != null) e.runtime().setKey(retroKey, pressed);
+    }
+
+    public static void handleMouse(UUID consoleId, int dx, int dy, int buttons, int wheel) {
+        Entry e = ENTRIES.get(consoleId);
+        if (e == null) return;
+        e.runtime().setMouseDelta(dx, dy);
+        e.runtime().setMouseButtons(buttons);
+        e.runtime().setMouseWheel(wheel);
+    }
+
     public static void handleSaveState(UUID consoleId, int slot, boolean save, boolean auto) {
         Entry e = ENTRIES.get(consoleId);
         if (e == null) return;

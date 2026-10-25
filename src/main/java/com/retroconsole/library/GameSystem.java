@@ -125,6 +125,10 @@ public final class GameSystem {
         builtin("N3DS", "3DS", "Nintendo 3DS", "Nintendo 3DS", "3ds", 0xFFE03030,
                 List.of(".3ds", ".3dsx", ".cci", ".cxi", ".app", ".axf", ".elf"),
                 List.of("citra"));
+        // Doom 3 (boom3 core): one entry per game dir under roms/doom3/ — base/ launches
+        // pak000.pk4 (retail) or demo00.pk4 (free demo), d3xp/ is Resurrection of Evil.
+        builtin("DOOM3", "D3", "Doom 3", "Doom 3", "doom3", 0xFFA83830,
+                List.of(".pk4"), List.of("boom3"));
     }
 
     private static void finishRegistry() {

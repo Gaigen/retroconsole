@@ -38,6 +38,13 @@ runs {
         systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         argument '--nogui'
     }
+
+    // Only run RetroConsole's own tests when the GameTest server is launched.
+    // Without at least one @GameTest method (see RetroConsoleGameTests) the
+    // vanilla server dies with "No test functions were given!".
+    gameTestServer {
+        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+    }
 }
 
 sourceSets.main.resources { srcDir 'src/generated/resources' }

@@ -115,6 +115,86 @@ public abstract class LibretroCore implements AutoCloseable {
         if (port == 0) setAnalog(stick, axis, value);
     }
 
+    // --- Keyboard / mouse -------------------------------------------------
+    //
+    // Cores that poll RETRO_DEVICE_KEYBOARD (boom3/Doom 3, DOSBox, …) read raw
+    // RETROK codes; cores that poll RETRO_DEVICE_MOUSE read relative deltas plus
+    // button/wheel state. The state lives here so both platform bridges only
+    // have to translate the poll into a value — no duplicated arrays.
+
+    /** Highest RETROK code we keep state for (F-keys and modifiers sit above 300). */
+    public static final int KEY_STATE_SIZE = 512;
+
+    /** Bit index in the client mouse mask -> libretro mouse button id. */
+    public static final int[] MOUSE_MASK_TO_ID = {
+            LibretroBridge.RETRO_DEVICE_ID_MOUSE_LEFT,
+            LibretroBridge.RETRO_DEVICE_ID_MOUSE_RIGHT,
+            LibretroBridge.RETRO_DEVICE_ID_MOUSE_MIDDLE,
+            LibretroBridge.RETRO_DEVICE_ID_MOUSE_BUTTON_4,
+            LibretroBridge.RETRO_DEVICE_ID_MOUSE_BUTTON_5,
+    };
+
+    private final java.util.concurrent.atomic.AtomicIntegerArray keyState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(KEY_STATE_SIZE);
+    private final java.util.concurrent.atomic.AtomicIntegerArray mouseButtonState =
+            new java.util.concurrent.atomic.AtomicIntegerArray(16);
+    private final java.util.concurrent.atomic.AtomicInteger mouseDx =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger mouseDy =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger mouseWheelUp =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicInteger mouseWheelDown =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** Key press/release, {@code retroKey} is a RETROK code (see KeyboardMapper). */
+    public void setKey(int retroKey, boolean pressed) {
+        if (retroKey < 0 || retroKey >= KEY_STATE_SIZE) return;
+        keyState.set(retroKey, pressed ? 1 : 0);
+    }
+
+    /** Accumulate relative mouse movement; the core drains it on the next poll. */
+    public void setMouseDelta(int dx, int dy) {
+        if (dx != 0) mouseDx.addAndGet(dx);
+        if (dy != 0) mouseDy.addAndGet(dy);
+    }
+
+    /** Full button state as a bit mask: bit0 left, bit1 right, bit2 middle, bit3/4 back/forward. */
+    public void setMouseButtons(int mask) {
+        for (int i = 0; i < MOUSE_MASK_TO_ID.length; i++) {
+            int want = (mask >> i) & 1;
+            int id = MOUSE_MASK_TO_ID[i];
+            if (mouseButtonState.get(id) != want) mouseButtonState.set(id, want);
+        }
+    }
+
+    /** Wheel detents: positive = up, negative = down. */
+    public void setMouseWheel(int direction) {
+        if (direction > 0) mouseWheelUp.addAndGet(direction);
+        else if (direction < 0) mouseWheelDown.addAndGet(-direction);
+    }
+
+    /** Value for a RETRO_DEVICE_KEYBOARD poll; unknown RETROK codes read as released. */
+    protected final short pollKey(int retroKey) {
+        return (retroKey >= 0 && retroKey < KEY_STATE_SIZE) ? (short) keyState.get(retroKey) : (short) 0;
+    }
+
+    /**
+     * Value for a RETRO_DEVICE_MOUSE poll. X/Y are drained on read (the core
+     * consumes the delta once per frame), wheel is a one-frame pulse per detent.
+     */
+    protected final short pollMouse(int id) {
+        return switch (id) {
+            case LibretroBridge.RETRO_DEVICE_ID_MOUSE_X -> (short) mouseDx.getAndSet(0);
+            case LibretroBridge.RETRO_DEVICE_ID_MOUSE_Y -> (short) mouseDy.getAndSet(0);
+            case LibretroBridge.RETRO_DEVICE_ID_MOUSE_WHEELUP ->
+                    (short) (mouseWheelUp.getAndUpdate(v -> Math.max(0, v - 1)) > 0 ? 1 : 0);
+            case LibretroBridge.RETRO_DEVICE_ID_MOUSE_WHEELDOWN ->
+                    (short) (mouseWheelDown.getAndUpdate(v -> Math.max(0, v - 1)) > 0 ? 1 : 0);
+            default -> (id >= 0 && id < 16) ? (short) mouseButtonState.get(id) : (short) 0;
+        };
+    }
+
     /** Maximum number of controller ports exposed to libretro cores. */
     public static final int MAX_PORTS = 2;
 

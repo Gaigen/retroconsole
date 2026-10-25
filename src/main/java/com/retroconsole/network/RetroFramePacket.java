@@ -4,7 +4,6 @@ import io.netty.handler.codec.DecoderException;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.zip.DataFormatException;
@@ -43,8 +42,9 @@ public record RetroFramePacket(
     /** Per-thread RGB buffer: FrameSender compresses, network thread decompresses — no overlap. */
     private static final ThreadLocal<byte[]> RGB_BUF =
             ThreadLocal.withInitial(() -> new byte[0]);
-    private static final ThreadLocal<byte[]> CHUNK =
-            ThreadLocal.withInitial(() -> new byte[64 * 1024]);
+    /** Per-thread deflate scratch — avoids a ByteArrayOutputStream (+ regrowth) per frame. */
+    private static final ThreadLocal<byte[]> DEFLATE_OUT =
+            ThreadLocal.withInitial(() -> new byte[0]);
 
     public static final StreamCodec<FriendlyByteBuf, RetroFramePacket> STREAM_CODEC =
             new StreamCodec<>() {
@@ -152,17 +152,35 @@ public record RetroFramePacket(
         return b;
     }
 
+    /**
+     * Deflates {@code data} into a per-thread scratch buffer and returns an
+     * exact-size copy — the packet byte[] must stay immutable because the
+     * network layer encodes it later, on another thread. At 60 fps this saves
+     * a 100-300 KB ByteArrayOutputStream + toByteArray() per frame.
+     */
     private static byte[] compress(byte[] data, int len) {
         Deflater deflater = DEFLATER.get();
         deflater.reset();
         deflater.setInput(data, 0, len);
         deflater.finish();
-        ByteArrayOutputStream baos = new ByteArrayOutputStream(Math.max(4096, len / 8));
-        byte[] chunk = CHUNK.get();
-        while (!deflater.finished()) {
-            int n = deflater.deflate(chunk);
-            if (n > 0) baos.write(chunk, 0, n);
+        // zlib worst case on incompressible input is len + len/1000 + 6; grow on
+        // demand so a pathological frame cannot truncate.
+        byte[] out = DEFLATE_OUT.get();
+        int cap = len + (len >> 10) + 64;
+        if (out.length < cap) {
+            out = new byte[cap];
+            DEFLATE_OUT.set(out);
         }
-        return baos.toByteArray();
+        int written = 0;
+        while (!deflater.finished()) {
+            if (written == out.length) {
+                out = Arrays.copyOf(out, Math.max(1024, out.length * 2));
+                DEFLATE_OUT.set(out);
+            }
+            int n = deflater.deflate(out, written, out.length - written);
+            if (n == 0) break; // needs input / no progress
+            written += n;
+        }
+        return Arrays.copyOf(out, written);
     }
 }

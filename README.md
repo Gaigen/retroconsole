@@ -7,11 +7,11 @@
 
 NeoForge mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
-**Version:** 0.1.1 (early release — expect rough edges)
+**Version:** 0.2.5 (early release — expect rough edges)
 
 ## Download
 
-Pre-built JAR: **[GitHub Releases](https://github.com/Gaigen/retroconsole/releases)** → `retroconsole-0.1.1.jar`
+Pre-built JAR: **[GitHub Releases](https://github.com/Gaigen/retroconsole/releases)** → `retroconsole-0.2.5.jar`
 
 Requirements: Minecraft **1.21.1**, NeoForge **21.1.x**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs.
 
@@ -23,7 +23,9 @@ Requirements: Minecraft **1.21.1**, NeoForge **21.1.x**, Java **21**. The mod do
 - Server-side emulation with video/audio streaming to nearby players
 - Per-player saves, play-time stats, PS2 memory-card sync
 - In-game config UI (paths, streaming distances, session limits, video presets)
-- HW-render cores (PS2, PSP, Dreamcast) via bundled headless OpenGL helper
+- HW-render cores (PS2, PSP, Dreamcast, Doom 3) via bundled headless OpenGL helper
+- **Doom 3** through the boom3 core — retail or the free demo
+- Nintendo DS / 3DS with absolute touch pointer (DeSmuME, melonDS, Citra)
 
 ## Screenshots
 
@@ -42,7 +44,7 @@ macOS is **not** supported.
 
 ## Quick start (players)
 
-1. Install NeoForge 1.21.1 and drop `retroconsole-0.1.1.jar` into the `mods` folder.
+1. Install NeoForge 1.21.1 and drop `retroconsole-0.2.5.jar` into the `mods` folder.
 2. Start the game. On first launch the mod creates `config/retroconsole/` under your game directory.
 3. Download libretro cores (`.dll` on Windows, `.so` on Linux) from the [libretro buildbot](https://buildbot.libretro.com/) and place them in `config/retroconsole/cores/`.
 4. Add your legally obtained ROMs under `config/retroconsole/roms/`, preferably in subfolders (`nes/`, `gba/`, `ps2/`, …).
@@ -127,6 +129,18 @@ The mod auto-creates default `roms/` subfolders for built-in systems (`nes`, `sn
 - Disc-based systems accept common formats (`.iso`, `.bin`, `.cue`, `.chd`, `.gdi`, `.cdi`, …) — detection is extension-based.
 - **You are responsible for only using ROMs and BIOS files you have the legal right to use.** This mod does not include or endorse piracy.
 
+### Doom 3 (boom3)
+
+Doom 3 is not a single ROM file: the core (`boom3_libretro`) loads a game data folder.
+
+```
+config/retroconsole/roms/doom3/
+├── base/   # pak000.pk4 … pak008.pk4 (retail) or demo00.pk4 (free demo)
+└── d3xp/   # optional: Resurrection of Evil
+```
+
+Every folder under `roms/doom3/` becomes an entry in the **Doom 3** tab. The core renders through the bundled headless OpenGL helper, so a GPU with OpenGL 3.3+ is required. On Windows, `tools\setup-boom3.ps1` downloads the core and creates the folders. If the stream stutters, lower `doom3Resolution` in `[video]`.
+
 ### BIOS (PS2, Dreamcast, …)
 
 | System | Path | Notes |
@@ -153,10 +167,11 @@ The library UI recognizes these folders and suggests matching core name patterns
 | `dreamcast` | Dreamcast | `.cdi`, `.gdi`, `.chd` | flycast |
 | `segacd` | Sega CD | disc images | genesis_plus_gx, picodrive |
 | `saturn` | Saturn | disc images | mednafen_saturn, beetle_saturn, kronos |
+| `doom3` | Doom 3 | `.pk4` (game data folder) | boom3 |
 
 Custom tabs can be added via `systems.json` (on the machine that serves the library — your client in single-player, the server in multiplayer).
 
-### Tested cores (0.1.1)
+### Tested cores (0.2.5)
 
 Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has matching native helpers; treat HW cores there as “should work”, not as a full matrix.
 
@@ -170,8 +185,9 @@ Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has
 | `pcsx2_libretro` (LRPS2) | PS2 | HW OpenGL via `headless_gl`; needs BIOS under `system/pcsx2/bios/`; multi-console OK |
 | `ppsspp_libretro` | PSP | HW OpenGL via `headless_gl`; multi-console OK |
 | `flycast_libretro` | Dreamcast | HW OpenGL via `headless_gl`; needs DC BIOS under `system/dc/`; multi-console OK |
+| `boom3_libretro` | Doom 3 | HW OpenGL via `headless_gl`; game data under `roms/doom3/`; multi-console OK |
 
-Other cores from the catalog table above may work, but were **not** part of the 0.1.1 smoke set.
+Other cores from the catalog table above may work, but were **not** part of the 0.2.5 smoke set.
 
 ## Configuration
 
@@ -197,8 +213,8 @@ On a **dedicated server**, edit the server’s toml (or ask the host) — client
 | `audioDistance` | 32 | Max distance for emulator audio |
 | `viewSubscribeDistance` | 64 | Fullscreen TV subscribe radius |
 | `controlDistance` | 8 | Max distance to send controller input |
-| `notifyDistance` | 48 | Radius for “console stopped” notifications |
-| `worldMaxWidth` | 0 | Cap in-world frame width (0 = no cap) |
+| `notifyDistance` | 256 | Radius for “console stopped” notifications |
+| `worldMaxWidth` | 480 | Cap in-world frame width (fullscreen TV is not affected) |
 
 ### `[limits]` (defaults)
 
@@ -206,8 +222,8 @@ On a **dedicated server**, edit the server’s toml (or ask the host) — client
 |-----|---------|-------------|
 | `maxCoreSlots` | 0 | Max simultaneous copies of the same core DLL (0 = unlimited). On Windows each active console needs its own slot. |
 | `maxPcsx2Sessions` | 8 | Max parallel PS2 sessions (separate system dirs + memcards) |
-| `maxScreenCluster` | 256 | Max blocks in one linked screen wall |
-| `batteryAutosaveSeconds` | 120 | Interval for battery-save flush to disk |
+| `maxScreenCluster` | 1024 | Max blocks in one linked screen wall |
+| `batteryAutosaveSeconds` | 30 | Interval for battery-save flush to disk |
 
 When a limit is hit, the owner gets a chat message (e.g. core slot cap, PS2 session cap, missing BIOS) instead of a generic load failure.
 
@@ -223,6 +239,9 @@ When a limit is hit, the owner gets a chat message (e.g. core slot cap, PS2 sess
 | `ppssppTextureScaling` | *(preset)* | Override PPSSPP texture scaling |
 | `pcsx2UpscaleMultiplier` | *(preset)* | Override PCSX2 upscale (e.g. `"2"`, `"3"`) |
 | `pcsx2Anisotropic` | *(preset)* | Override PCSX2 anisotropic filtering |
+| `citraResolution` | *(preset)* | Override Citra resolution (e.g. `"2x"`) |
+| `doom3Resolution` | *(preset)* | Override Doom 3 internal res — the main cost knob (`640x360`, `960x540`, `1920x1080`) |
+| `doom3InvertY` | `false` | Invert Doom 3 mouse / right-stick Y axis |
 
 Video overrides apply the next time you **launch** a game. Leave override strings empty to keep the preset value.
 
@@ -281,7 +300,7 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 ./gradlew build
 ```
 
-Output: `build/libs/retroconsole-0.1.1.jar`
+Output: `build/libs/retroconsole-0.2.5.jar`
 
 To rebuild the bundled headless GL native library (developers only):
 

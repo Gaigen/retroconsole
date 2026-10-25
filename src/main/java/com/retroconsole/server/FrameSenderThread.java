@@ -44,6 +44,12 @@ public class FrameSenderThread extends Thread {
     private volatile boolean running = true;
     private long lastBatterySaveNs = System.nanoTime();
 
+    /* Video stats window: sent fps, bytes/frame and packet build cost. */
+    private long statsFrames;
+    private long statsBytes;
+    private long statsBuildNs;
+    private long statsWindowNs = System.nanoTime();
+
     FrameSenderThread(UUID consoleId, ThreadedEmulatorRuntime threaded, LibretroRuntime runtime) {
         super("retro-frame-sender-" + consoleId);
         setDaemon(true);
@@ -240,7 +246,9 @@ public class FrameSenderThread extends Thread {
 
         RetroFramePacket fullPacket = null;
         if (!fullRes.isEmpty()) {
+            long buildStartNs = System.nanoTime();
             fullPacket = RetroFramePacket.create(consoleId, buf, w, h);
+            noteVideoStats(fullPacket.compressedFrame().length, System.nanoTime() - buildStartNs);
             for (ServerPlayer player : fullRes) {
                 if (!canSendToServer(server)) return;
                 ServerTickHandler.sendFrameToPlayer(player, fullPacket);
@@ -249,6 +257,7 @@ public class FrameSenderThread extends Thread {
 
         if (!worldRes.isEmpty()) {
             RetroFramePacket worldPacket;
+            long buildStartNs = System.nanoTime();
             if (w > ModConfig.worldMaxWidth()) {
                 int sw = ModConfig.worldMaxWidth();
                 int sh = Math.max(1, Math.round((float) h * sw / w));
@@ -259,11 +268,40 @@ public class FrameSenderThread extends Thread {
                         ? fullPacket
                         : RetroFramePacket.create(consoleId, buf, w, h);
             }
+            if (worldPacket != fullPacket) {
+                noteVideoStats(worldPacket.compressedFrame().length,
+                        System.nanoTime() - buildStartNs);
+            }
             for (ServerPlayer player : worldRes) {
                 if (!canSendToServer(server)) return;
                 ServerTickHandler.sendFrameToPlayer(player, worldPacket);
             }
         }
+    }
+
+    /**
+     * Every 10 s while frames are streaming: fps, compressed KB per frame and the
+     * time spent building the packet (RGB conversion + deflate). The KB/s number is
+     * what Minecraft's Netty then re-compresses and puts on the wire — if it is in
+     * the megabytes per second, the stream is what makes the server feel laggy.
+     */
+    private void noteVideoStats(int bytes, long buildNs) {
+        statsFrames++;
+        statsBytes += bytes;
+        statsBuildNs += buildNs;
+        long now = System.nanoTime();
+        long windowNs = now - statsWindowNs;
+        if (windowNs < 10_000_000_000L) return;
+        long frames = statsFrames;
+        LOGGER.info("video {} fps, {} KB/frame, {} KB/s, packet build {} ms/frame",
+                Math.round(frames * 1e9 / windowNs),
+                Math.round(statsBytes / 1024.0 / Math.max(1, frames)),
+                Math.round(statsBytes / 1024.0 * 1e9 / windowNs),
+                Math.round(statsBuildNs / 1e6 / Math.max(1, frames)));
+        statsFrames = 0;
+        statsBytes = 0;
+        statsBuildNs = 0;
+        statsWindowNs = now;
     }
 
     /** Nearest neighbor — cheap and sufficient for the in-world screen block. */

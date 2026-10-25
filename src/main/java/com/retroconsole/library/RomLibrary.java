@@ -31,7 +31,7 @@ public final class RomLibrary {
             ".zip", ".bin", ".cue", ".iso", ".chd", ".cdi", ".gdi", ".cso",
             ".nds", ".dsi", ".ids",
             ".3ds", ".3dsx", ".cci", ".cxi", ".app", ".axf", ".elf",
-            ".n64", ".z64", ".v64", ".wbfs", ".wad", ".pbp", ".mdf");
+            ".n64", ".z64", ".v64", ".wbfs", ".wad", ".pbp", ".mdf", ".pk4");
     /** In subfolders accept any file except known junk extensions. */
     private static final List<String> IGNORE_EXTS = List.of(".txt", ".png", ".jpg", ".jpeg",
             ".pdf", ".sav", ".srm", ".state", ".cfg", ".json", ".dat", ".xml");
@@ -75,6 +75,7 @@ public final class RomLibrary {
     private void scanRoms() {
         List<Path> files = new ArrayList<>();
         Path romsRoot = romsDir();
+        scanDoom3(romsRoot);
         try (Stream<Path> s = Files.walk(ensureDir(romsRoot), 2)) {
             s.filter(Files::isRegularFile).forEach(files::add);
         } catch (IOException ignored) {}
@@ -116,6 +117,52 @@ public final class RomLibrary {
         }
         saveProps(sniffCache, sniffCache(), "system sniff cache");
         roms.sort((a, b) -> a.displayName().compareToIgnoreCase(b.displayName()));
+    }
+
+    /**
+     * Doom 3 layout is {@code roms/doom3/<gamedir>/ *.pk4} — one level deeper than the
+     * generic walk (depth 2) reaches, and boom3 wants the pk4 path rather than the folder.
+     * Every game dir becomes a single library entry.
+     */
+    private void scanDoom3(Path romsRoot) {
+        GameSystem d3 = GameSystem.byId("DOOM3");
+        if (d3 == null) return;
+        Path root = romsRoot.resolve(d3.folder);
+        if (!Files.isDirectory(root)) return;
+        try (var dirs = Files.newDirectoryStream(root)) {
+            for (Path dir : dirs) {
+                if (!Files.isDirectory(dir)) continue;
+                Path pk4 = pickDoom3Pak(dir);
+                if (pk4 == null) continue;
+                String folder = dir.getFileName().toString().toLowerCase(Locale.ROOT);
+                String display = switch (folder) {
+                    case "base", "demo" -> "Doom 3";
+                    case "d3xp" -> "Doom 3: Resurrection of Evil";
+                    default -> "Doom 3 · " + dir.getFileName();
+                };
+                long size = 0;
+                try { size = Files.size(pk4); } catch (IOException ignored) {}
+                roms.add(new Rom(romsRoot.relativize(pk4).toString().replace('\\', '/'),
+                        pk4, ".pk4", size, d3, display, false));
+            }
+        } catch (IOException ignored) {}
+    }
+
+    /** Retail base/ -> pak000.pk4, demo-only install -> demo00.pk4, otherwise the first pak. */
+    private static Path pickDoom3Pak(Path dir) {
+        for (String name : List.of("pak000.pk4", "demo00.pk4")) {
+            Path p = dir.resolve(name);
+            if (Files.isRegularFile(p)) return p;
+        }
+        Path first = null;
+        try (var paks = Files.newDirectoryStream(dir, "*.pk4")) {
+            for (Path p : paks) {
+                if (!Files.isRegularFile(p)) continue;
+                if (first == null || p.getFileName().toString().compareToIgnoreCase(
+                        first.getFileName().toString()) < 0) first = p;
+            }
+        } catch (IOException ignored) {}
+        return first;
     }
 
     private GameSystem detect(Path file, String ext, long size) {

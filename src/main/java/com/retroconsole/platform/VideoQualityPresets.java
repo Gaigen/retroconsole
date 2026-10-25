@@ -71,6 +71,21 @@ public final class VideoQualityPresets {
         return Map.copyOf(m);
     }
 
+    /**
+     * DeSmuME. Its stylus follows {@code RETRO_DEVICE_MOUSE} deltas by default
+     * ({@code desmume_pointer_type = mouse}), while the client streams taps as
+     * absolute {@code RETRO_DEVICE_POINTER} coordinates taken from the click on
+     * the picture — so NDS touch only works when the core reads the pointer
+     * device. {@code desmume_pointer_mouse} is the master switch both paths sit
+     * behind, so it has to stay enabled.
+     */
+    public static Map<String, String> desmumeOverrides() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("desmume_pointer_mouse", "enabled");
+        m.put("desmume_pointer_type", "touch");
+        return Map.copyOf(m);
+    }
+
     public static Map<String, String> citraOverrides() {
         Preset p = Preset.fromConfig();
         Map<String, String> m = new LinkedHashMap<>();
@@ -85,6 +100,28 @@ public final class VideoQualityPresets {
         m.put("citra_touch_touchscreen", "enabled");
         m.put("citra_mouse_touchscreen", "disabled");
         m.put("citra_render_touchscreen", "enabled");
+        return Map.copyOf(m);
+    }
+
+    /**
+     * Doom 3 (boom3). The core renders, then the bridge reads the whole frame
+     * back on the emulator thread and the sender deflates it — the internal
+     * resolution is the dominant cost, not the GPU (a modded Doom 3 at 1080p
+     * cannot be produced at 60 fps, so audio starves and the stream stutters).
+     *
+     * <p>boom3's own default for {@code doom_invert_y_axis} is "enabled", i.e.
+     * mouse and right-stick look are upside down.
+     *
+     * <p>This build is a VR-enabled fork and defaults {@code boom3_vr_enable} to
+     * "enabled". There is no headset behind a headless server context, so keep
+     * the VR branch out of {@code retro_run} entirely.
+     */
+    public static Map<String, String> boom3Overrides() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("doom_resolution",
+                override(ModConfig.DOOM3_RESOLUTION, Preset.fromConfig().doom3Res));
+        m.put("doom_invert_y_axis", ModConfig.doom3InvertY() ? "enabled" : "disabled");
+        m.put("boom3_vr_enable", "disabled");
         return Map.copyOf(m);
     }
 
@@ -113,6 +150,14 @@ public final class VideoQualityPresets {
             case "pcsx2_hw_download_mode" -> "Accurate";
             default -> null;
         };
+    }
+
+    public static String boom3Default(String key) {
+        return boom3Overrides().get(key);
+    }
+
+    public static String desmumeDefault(String key) {
+        return desmumeOverrides().get(key);
     }
 
     public static String pcsxRearmedDefault(String key) {
@@ -166,7 +211,7 @@ public final class VideoQualityPresets {
             String flycastRes, String flycastTex, String flycastAniso,
             String ppssppRes, String ppssppTex,
             String pcsx2Scale, String pcsx2Aniso,
-            String citraRes
+            String citraRes, String doom3Res
     ) {
         static Preset fromConfig() {
             return switch (ModConfig.videoPreset()) {
@@ -174,17 +219,17 @@ public final class VideoQualityPresets {
                         "640x480", "1", "1",
                         "480x272", "1",
                         "1", "2",
-                        "1x (Native)");
+                        "1x (Native)", "640x360");
                 case "quality" -> new Preset(
                         "1920x1440", "2", "16",
                         "1440x816", "3",
                         "3", "16",
-                        "3x");
+                        "3x", "1920x1080");
                 default -> new Preset( // balanced
                         "1280x960", "2", "8",
                         "960x544", "2",
                         "2", "16",
-                        "2x");
+                        "2x", "960x540");
             };
         }
     }

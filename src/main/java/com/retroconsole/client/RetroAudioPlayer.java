@@ -28,6 +28,14 @@ public class RetroAudioPlayer implements AutoCloseable {
     private static final int NUM_BUFFERS = 24;
     /* Prebuffer before start/restart: ~100 ms at one frame per chunk (60 fps). */
     private static final int START_QUEUED = 6;
+    /**
+     * Hard latency cap, in queued chunks. Loading a console (or any server hitch)
+     * delivers a burst of audio; OpenAL then plays that backlog forever, so the
+     * sound ends up ~0.4 s behind the picture and the queue sits at NUM_BUFFERS-1
+     * with `dropped` climbing. Above this depth the queue is flushed and refilled
+     * from the current chunk — one short cut instead of a permanent desync.
+     */
+    private static final int MAX_QUEUED = 10;
 
     private final int source;
     private final ArrayDeque<Integer> freeBuffers = new ArrayDeque<>();
@@ -40,6 +48,7 @@ public class RetroAudioPlayer implements AutoCloseable {
 
     private long droppedChunks;
     private long underruns;
+    private long resyncs;
     private long samplesFed;
     private long lastStatsNs;
 
@@ -95,6 +104,17 @@ public class RetroAudioPlayer implements AutoCloseable {
             reclaimProcessedBuffers();
         }
 
+        // See MAX_QUEUED: a backlog built during load would otherwise stay queued
+        // for the whole session, putting audio permanently behind the video.
+        if (AL10.alGetSourcei(source, AL10.AL_BUFFERS_QUEUED) > MAX_QUEUED) {
+            resyncs++;
+            AL10.alSourceStop(source);
+            reclaimProcessedBuffers(); // after stop every queued buffer counts as processed
+            AL10.alSourceRewind(source);
+            state = AL10.AL_INITIAL;
+            starving = true;
+        }
+
         if (freeBuffers.isEmpty()) {
             droppedChunks++;
             maybeLogStats(sampleRate);
@@ -144,8 +164,8 @@ public class RetroAudioPlayer implements AutoCloseable {
         if (now - lastStatsNs < 5_000_000_000L) return;
         double sec = (now - lastStatsNs) / 1e9;
         int queued = AL10.alGetSourcei(source, AL10.AL_BUFFERS_QUEUED);
-        LOGGER.info("audio in={} Hz (nominal {}), queued={}, dropped={}, underruns={}",
-                Math.round(samplesFed / sec), sampleRate, queued, droppedChunks, underruns);
+        LOGGER.info("audio in={} Hz (nominal {}), queued={}, dropped={}, underruns={}, resyncs={}",
+                Math.round(samplesFed / sec), sampleRate, queued, droppedChunks, underruns, resyncs);
         samplesFed = 0;
         lastStatsNs = now;
     }

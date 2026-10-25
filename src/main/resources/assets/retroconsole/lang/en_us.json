@@ -78,6 +78,8 @@
   "retroconsole.configuration.pcsx2UpscaleMultiplier": "PCSX2 upscale multiplier",
   "retroconsole.configuration.pcsx2Anisotropic": "PCSX2 anisotropic filtering",
   "retroconsole.configuration.citraResolution": "Citra resolution factor",
+  "retroconsole.configuration.doom3Resolution": "Doom 3 internal resolution",
+  "retroconsole.configuration.doom3InvertY": "Doom 3: invert Y axis",
   "retroconsole.configuration.enable3ds": "Enable Nintendo 3DS (Citra)",
 
   "retroconsole.error.core_slot_cap": "Core slot limit (%s) reached for %s — stop another console or raise limits.maxCoreSlots",
@@ -194,6 +196,7 @@
   "retroconsole.tv.hints.load": "§eF6§r — load",
   "retroconsole.tv.hints.help": "§eF1§r — this help",
   "retroconsole.tv.hints.exit": "§eEsc§r — exit",
+  "retroconsole.tv.hints.mouse": "Mouse: §eclick§r the picture to capture · §eEsc§r — game menu · §eDel§r — release",
   "retroconsole.tv.hints.touch": "Touch: click/drag on game screen",
   "retroconsole.tv.hints.virtual_stylus": "§e;§r — virtual stylus (right stick)",
   "retroconsole.tv.hints.virtual_stylus_action": "virtual stylus (right stick)",
@@ -202,6 +205,8 @@
   "retroconsole.tv.hints.footer": "§8Keys change in Options → Controls. F1 or click — close",
   "retroconsole.tv.hint.bind": "§e%s§r — %s",
   "retroconsole.tv.hint.sticks": "§e%s/%s/%s/%s§r — %s",
+  "retroconsole.tv.capture": "§eClick§r — capture mouse",
+  "retroconsole.tv.capture_active": "§eDel§r — release mouse",
 
   "retroconsole.bezel.title": "Letterbox Art",
   "retroconsole.bezel.left": "Left panel image",

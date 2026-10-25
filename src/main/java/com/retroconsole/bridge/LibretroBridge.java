@@ -32,6 +32,21 @@ public interface LibretroBridge extends Library {
     int RETRO_DEVICE_ID_POINTER_PRESSED   = 2;
     int RETRO_DEVICE_ID_POINTER_COUNT     = 3;
 
+    // --- Mouse (RETRO_DEVICE_MOUSE) ---
+    // X/Y are RELATIVE deltas since the previous poll; the frontend must return
+    // the accumulated movement and then reset it.
+    int RETRO_DEVICE_ID_MOUSE_X                = 0;
+    int RETRO_DEVICE_ID_MOUSE_Y                = 1;
+    int RETRO_DEVICE_ID_MOUSE_LEFT             = 2;
+    int RETRO_DEVICE_ID_MOUSE_RIGHT            = 3;
+    int RETRO_DEVICE_ID_MOUSE_WHEELUP          = 4;
+    int RETRO_DEVICE_ID_MOUSE_WHEELDOWN        = 5;
+    int RETRO_DEVICE_ID_MOUSE_MIDDLE           = 6;
+    int RETRO_DEVICE_ID_MOUSE_HORIZ_WHEELUP    = 7;
+    int RETRO_DEVICE_ID_MOUSE_HORIZ_WHEELDOWN  = 8;
+    int RETRO_DEVICE_ID_MOUSE_BUTTON_4         = 9;
+    int RETRO_DEVICE_ID_MOUSE_BUTTON_5         = 10;
+
     int RETRO_DEVICE_ID_JOYPAD_MIC            = 16;
     int RETRO_DEVICE_ID_JOYPAD_LAYOUT_NEXT    = 17;
     int RETRO_DEVICE_ID_JOYPAD_CURSOR_MOVE    = 18;

@@ -50,24 +50,17 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
 
         int newW = core.getWidth();
         int newH = core.getHeight();
-        int needed = Math.max(newW * newH, 1);
-        if (frameBuffer.length != needed) {
-            frameBuffer = new int[needed];
-            width = newW;
-            height = newH;
-        }
-
-        core.pollFrame(frameBuffer);
-
         if (newW != width || newH != height) {
             LOGGER.info("Resolution changed: {}x{} -> {}x{}", width, height, newW, newH);
             width = newW;
             height = newH;
-            needed = Math.max(width * height, 1);
-            if (frameBuffer.length != needed) {
-                frameBuffer = new int[needed];
-            }
+            int needed = Math.max(width * height, 1);
+            if (frameBuffer.length != needed) frameBuffer = new int[needed];
         }
+        // Deliberately no core.pollFrame() here: the frame is pulled on demand by
+        // pollFrame() below. Copying it every runFrame() cost a full-frame copy per
+        // frame AND always cleared the core's newFrame flag, so a hardware core did
+        // a GPU readback every frame even when nobody was watching the screen.
     }
 
     @Override
@@ -85,10 +78,10 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
     public double getTimingFps() { return core.getTimingFps(); }
 
     /**
-     * Called by ThreadedEmulatorRuntime indirectly — ServerConsoles calls pollFrame.
-     * This is the bridge: pollFrame copies from LibretroCore's internal buffer
-     * into our frameBuffer.
+     * Pull the newest frame straight from the core into {@code dst} (one copy
+     * instead of two) under the core's own frame lock.
      */
+    @Override
     public boolean pollFrame(int[] dst) {
         return core.pollFrame(dst);
     }
@@ -143,6 +136,22 @@ public class LibretroRuntime implements FrameSource, AutoCloseable {
 
     public void setPointer(short x, short y, boolean pressed) {
         core.setPointer(x, y, pressed);
+    }
+
+    public void setKey(int retroKey, boolean pressed) {
+        core.setKey(retroKey, pressed);
+    }
+
+    public void setMouseDelta(int dx, int dy) {
+        core.setMouseDelta(dx, dy);
+    }
+
+    public void setMouseButtons(int mask) {
+        core.setMouseButtons(mask);
+    }
+
+    public void setMouseWheel(int direction) {
+        core.setMouseWheel(direction);
     }
 
     public void reset() {
