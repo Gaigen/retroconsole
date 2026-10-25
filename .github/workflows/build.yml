@@ -16,7 +16,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libegl-dev libgl-dev
 
       - name: Build Linux native from source
-        run: bash build_headless_gl.sh
+        run: bash neoforge/build_headless_gl.sh
 
       - uses: actions/setup-java@v5
         with:
@@ -32,5 +32,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: retroconsole-jar
-          path: build/libs/retroconsole-*.jar
+          path: neoforge/build/libs/retroconsole-*.jar
           if-no-files-found: error

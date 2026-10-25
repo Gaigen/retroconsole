@@ -38,7 +38,9 @@ import java.util.function.Supplier;
 public final class ConfigScreen extends Screen {
 
     private static final String KEY = "retroconsole.configuration.";
-    private static final int TOP = 56;
+    private static final int TABS_Y = 26;
+    private static final int PATH_Y = 50;
+    private static final int TOP = 66;
     private static final int ROW_H = 22;
     private static final int FOOTER = 34;
     private static final int WIDGET_W = 168;
@@ -75,7 +77,7 @@ public final class ConfigScreen extends Screen {
                                 page = 0;
                                 rebuildWidgets();
                             })
-                    .bounds(x, 30, tabW, 18)
+                    .bounds(x, TABS_Y, tabW, 18)
                     .build());
             b.active = t != tab;
             x += tabW + 2;
@@ -239,13 +241,13 @@ public final class ConfigScreen extends Screen {
 
     private Row int_(String labelKey, int min, int max, int step, IntSupplier get, IntConsumer set) {
         return new TableRow(labelKey, (x, y, w, h) ->
-                new IntSlider(x, y, w, h, labelKey, min, max, step, get.getAsInt(), set));
+                new IntSlider(x, y, w, h, min, max, step, get.getAsInt(), set));
     }
 
     private Row dec(String labelKey, double min, double max, double step,
                     DoubleSupplier get, DoubleConsumer set) {
         return new TableRow(labelKey, (x, y, w, h) ->
-                new DoubleSlider(x, y, w, h, labelKey, min, max, step, get.getAsDouble(), set));
+                new DoubleSlider(x, y, w, h, min, max, step, get.getAsDouble(), set));
     }
 
     private Row text(String labelKey, Supplier<String> get, Consumer<String> set) {
@@ -264,19 +266,30 @@ public final class ConfigScreen extends Screen {
     public void render(GuiGraphics g, int mx, int my, float partialTick) {
         renderBackground(g, mx, my, partialTick);
         g.drawCenteredString(font, title, width / 2, 12, 0xFFFFFF);
-        g.drawCenteredString(font, Component.literal(RetroConfigJson.file().toString()),
-                width / 2, 42, 0x707880);
+        // Below the tab row on purpose: the tabs are 18 px tall and used to sit
+        // on top of this line at GUI scale 3.
+        g.drawCenteredString(font, Component.literal(elide(RetroConfigJson.file().toString(), width - 24)),
+                width / 2, PATH_Y, 0x707880);
 
         int widgetX = width - 12 - WIDGET_W;
+        int labelW = widgetX - 24;
         for (int i = 0; i < visible.size() && i < widgets.size(); i++) {
             int y = TOP + i * ROW_H;
-            // Sliders and edit boxes carry their own caption inside the widget.
-            if (!(widgets.get(i) instanceof AbstractSliderButton)) {
-                g.drawString(font, font.plainSubstrByWidth(visible.get(i).label().getString(), widgetX - 24),
-                        14, y + 5, 0xC8C8C8, false);
-            }
+            // Sliders show only their value, so every row keeps its name here.
+            g.drawString(font, elide(visible.get(i).label().getString(), labelW),
+                    14, y + 5, 0xC8C8C8, false);
         }
         super.render(g, mx, my, partialTick);
+    }
+
+    /** Truncates to {@code maxW} and marks the cut with an ellipsis. */
+    private String elide(String text, int maxW) {
+        if (maxW <= 0 || font.width(text) <= maxW) {
+            return text;
+        }
+        String dots = "...";
+        int room = Math.max(0, maxW - font.width(dots));
+        return font.plainSubstrByWidth(text, room) + dots;
     }
 
     @Override
@@ -299,16 +312,14 @@ public final class ConfigScreen extends Screen {
 
     private static final class IntSlider extends AbstractSliderButton {
 
-        private final String labelKey;
         private final int min;
         private final int max;
         private final int step;
         private final IntConsumer setter;
 
-        IntSlider(int x, int y, int w, int h, String labelKey, int min, int max, int step,
+        IntSlider(int x, int y, int w, int h, int min, int max, int step,
                   int value, IntConsumer setter) {
             super(x, y, w, h, Component.empty(), fraction(min, max, value));
-            this.labelKey = labelKey;
             this.min = min;
             this.max = max;
             this.step = step;
@@ -328,13 +339,11 @@ public final class ConfigScreen extends Screen {
             return Mth.clamp(raw, min, max);
         }
 
+        // The row name sits to the left of every widget, so the slider only has
+        // to show the value — a full caption overflows the box at GUI scale 3.
         @Override
         protected void updateMessage() {
-            setMessage(Component.literal(label() + ": " + snap()));
-        }
-
-        private String label() {
-            return Component.translatable(KEY + labelKey).getString();
+            setMessage(Component.literal(Integer.toString(snap())));
         }
 
         @Override
@@ -346,17 +355,15 @@ public final class ConfigScreen extends Screen {
 
     private static final class DoubleSlider extends AbstractSliderButton {
 
-        private final String labelKey;
         private final double min;
         private final double max;
         private final double step;
         private final DoubleConsumer setter;
 
-        DoubleSlider(int x, int y, int w, int h, String labelKey, double min, double max, double step,
+        DoubleSlider(int x, int y, int w, int h, double min, double max, double step,
                      double value, DoubleConsumer setter) {
             super(x, y, w, h, Component.empty(),
                     max == min ? 0.0 : Mth.clamp((value - min) / (max - min), 0.0, 1.0));
-            this.labelKey = labelKey;
             this.min = min;
             this.max = max;
             this.step = step;
@@ -372,8 +379,7 @@ public final class ConfigScreen extends Screen {
 
         @Override
         protected void updateMessage() {
-            setMessage(Component.literal(Component.translatable(KEY + labelKey).getString()
-                    + ": " + String.format(Locale.ROOT, "%.2f", snap())));
+            setMessage(Component.literal(String.format(Locale.ROOT, "%.2f", snap())));
         }
 
         @Override

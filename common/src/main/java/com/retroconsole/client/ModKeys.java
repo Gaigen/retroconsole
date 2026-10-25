@@ -1,15 +1,18 @@
 package com.retroconsole.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
-import com.retroconsole.RetroConsole;
 import net.minecraft.client.KeyMapping;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import org.lwjgl.glfw.GLFW;
 
-@EventBusSubscriber(modid = RetroConsole.MOD_ID, value = Dist.CLIENT)
+import java.util.List;
+
+/**
+ * Every key the console screens use.
+ *
+ * <p>Loader-neutral on purpose: the mappings are declared here and registered by
+ * each loader module ({@code NeoForgeKeys} on NeoForge), the same way
+ * {@code ClientPacketHandlers} keeps the payload table out of the shared code.
+ */
 public final class ModKeys {
 
     private static final String CATEGORY = "key.categories.retroconsole";
@@ -63,6 +66,16 @@ public final class ModKeys {
     public static final KeyMapping BTN_LAYOUT = key("btn_layout", GLFW.GLFW_KEY_U);
     public static final KeyMapping BTN_LID = key("btn_lid", GLFW.GLFW_KEY_O);
 
+    /** Everything a loader has to register, in one list. */
+    public static final List<KeyMapping> ALL = List.of(
+            DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT,
+            BTN_A, BTN_B, BTN_X, BTN_Y,
+            BTN_L, BTN_R, BTN_L2, BTN_R2, BTN_L3, BTN_R3,
+            BTN_START, BTN_SELECT,
+            ANALOG_LEFT_UP, ANALOG_LEFT_DOWN, ANALOG_LEFT_LEFT, ANALOG_LEFT_RIGHT,
+            ANALOG_RIGHT_UP, ANALOG_RIGHT_DOWN, ANALOG_RIGHT_LEFT, ANALOG_RIGHT_RIGHT,
+            BTN_MIC, BTN_LAYOUT, BTN_LID, BTN_CURSOR_TOUCH, VIRTUAL_STYLUS);
+
     private static KeyMapping key(String name, int glfwKey) {
         return new KeyMapping(
                 "key.retroconsole." + name,
@@ -70,39 +83,6 @@ public final class ModKeys {
                 glfwKey,
                 CATEGORY
         );
-    }
-
-    @SubscribeEvent
-    public static void registerKeys(RegisterKeyMappingsEvent event) {
-        event.register(DPAD_UP);
-        event.register(DPAD_DOWN);
-        event.register(DPAD_LEFT);
-        event.register(DPAD_RIGHT);
-        event.register(BTN_A);
-        event.register(BTN_B);
-        event.register(BTN_X);
-        event.register(BTN_Y);
-        event.register(BTN_L);
-        event.register(BTN_R);
-        event.register(BTN_L2);
-        event.register(BTN_R2);
-        event.register(BTN_L3);
-        event.register(BTN_R3);
-        event.register(BTN_START);
-        event.register(BTN_SELECT);
-        event.register(ANALOG_LEFT_UP);
-        event.register(ANALOG_LEFT_DOWN);
-        event.register(ANALOG_LEFT_LEFT);
-        event.register(ANALOG_LEFT_RIGHT);
-        event.register(ANALOG_RIGHT_UP);
-        event.register(ANALOG_RIGHT_DOWN);
-        event.register(ANALOG_RIGHT_LEFT);
-        event.register(ANALOG_RIGHT_RIGHT);
-        event.register(BTN_MIC);
-        event.register(BTN_LAYOUT);
-        event.register(BTN_LID);
-        event.register(BTN_CURSOR_TOUCH);
-        event.register(VIRTUAL_STYLUS);
     }
 
     private ModKeys() {}

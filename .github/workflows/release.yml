@@ -18,12 +18,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libegl-dev libgl-dev
 
       - name: Build Linux native from source
-        run: bash build_headless_gl.sh
+        run: bash neoforge/build_headless_gl.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: native-linux
-          path: src/main/resources/natives/libheadless_gl.so
+          path: common/src/main/resources/natives/libheadless_gl.so
           if-no-files-found: error
 
   native-windows:
@@ -41,14 +41,14 @@ jobs:
         shell: msys2 {0}
         run: |
           mkdir -p runs/client/config/retroconsole/cores
-          mkdir -p src/main/resources/natives
+          mkdir -p common/src/main/resources/natives
           gcc -shared -O2 -o runs/client/config/retroconsole/cores/.libheadless_gl.dll headless_gl_win.c -lopengl32 -lgdi32 -luser32
-          cp runs/client/config/retroconsole/cores/.libheadless_gl.dll src/main/resources/natives/libheadless_gl.dll
+          cp runs/client/config/retroconsole/cores/.libheadless_gl.dll common/src/main/resources/natives/libheadless_gl.dll
 
       - uses: actions/upload-artifact@v4
         with:
           name: native-windows
-          path: src/main/resources/natives/libheadless_gl.dll
+          path: common/src/main/resources/natives/libheadless_gl.dll
           if-no-files-found: error
 
   release:
@@ -64,9 +64,9 @@ jobs:
 
       - name: Install natives into resources
         run: |
-          mkdir -p src/main/resources/natives
-          cp natives-out/native-linux/libheadless_gl.so src/main/resources/natives/
-          cp natives-out/native-windows/libheadless_gl.dll src/main/resources/natives/
+          mkdir -p common/src/main/resources/natives
+          cp natives-out/native-linux/libheadless_gl.so common/src/main/resources/natives/
+          cp natives-out/native-windows/libheadless_gl.dll common/src/main/resources/natives/
 
       - uses: actions/setup-java@v5
         with:
@@ -86,5 +86,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: RetroConsole ${{ steps.version.outputs.mod_version }}
-          files: build/libs/retroconsole-${{ steps.version.outputs.mod_version }}.jar
+          files: neoforge/build/libs/retroconsole-${{ steps.version.outputs.mod_version }}.jar
           generate_release_notes: true

@@ -7,7 +7,7 @@ set -e
 cd "$(dirname "$0")"
 
 OUT="runs/client/config/retroconsole/cores/.libheadless_gl.so"
-RES="src/main/resources/natives/libheadless_gl.so"
+RES="../common/src/main/resources/natives/libheadless_gl.so"
 SRC="headless_gl.c"
 
 mkdir -p "$(dirname "$OUT")" "$(dirname "$RES")"

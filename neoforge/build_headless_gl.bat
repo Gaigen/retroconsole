@@ -4,12 +4,12 @@ cd /d "%~dp0"
 
 set OUT=runs\client\config\retroconsole\cores\.libheadless_gl.dll
 set OUT_SRV=runs\server\config\retroconsole\cores\.libheadless_gl.dll
-set RES=src\main\resources\natives\libheadless_gl.dll
+set RES=..\common\src\main\resources\natives\libheadless_gl.dll
 set SRC=headless_gl_win.c
 
 if not exist "runs\client\config\retroconsole\cores" mkdir "runs\client\config\retroconsole\cores"
 if not exist "runs\server\config\retroconsole\cores" mkdir "runs\server\config\retroconsole\cores"
-if not exist "src\main\resources\natives" mkdir "src\main\resources\natives"
+if not exist "..\common\src\main\resources\natives" mkdir "..\common\src\main\resources\natives"
 
 set "GCC="
 

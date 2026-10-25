@@ -1,162 +1,26 @@
-plugins {
-    id 'java-library'
-    id 'maven-publish'
-    id 'net.neoforged.gradle.userdev' version '7.1.9'
-}
-
+/*
+ * Aggregator project — nothing is compiled here.
+ *
+ *   common/    loader-free code + assets/data/natives, shared by every loader
+ *   neoforge/  NeoForge glue, run configs, native build, release jar
+ *   fabric/    Fabric glue (opt-in via -Pfabric until it reaches parity)
+ *
+ * ./gradlew build            -> NeoForge jar only
+ * ./gradlew build -Pfabric   -> both loaders
+ */
 tasks.named('wrapper', Wrapper).configure {
     distributionType = Wrapper.DistributionType.BIN
 }
 
-version = mod_version
-group = 'com.retroconsole'
-
-repositories {
-    mavenCentral()
+allprojects {
+    group = 'com.retroconsole'
+    version = mod_version
 }
 
-base {
-    archivesName = mod_id
-}
-
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
-
-runs {
-    configureEach {
-        // Reduce signal usage from native cores (e.g. Flycast/libretro on Windows).
-
-        systemProperty 'forge.logging.markers', 'REGISTRIES'
-        systemProperty 'forge.logging.console.level', 'debug'
-        modSource project.sourceSets.main
+tasks.register('modules') {
+    group = 'help'
+    description = 'List the subprojects that are part of this build.'
+    doLast {
+        subprojects.each { println " - ${it.path} (${it.projectDir.name})" }
     }
-
-    client {
-        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-    }
-
-    server {
-        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-        argument '--nogui'
-    }
-
-    // Only run RetroConsole's own tests when the GameTest server is launched.
-    // Without at least one @GameTest method (see RetroConsoleGameTests) the
-    // vanilla server dies with "No test functions were given!".
-    gameTestServer {
-        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-    }
-}
-
-sourceSets.main.resources { srcDir 'src/generated/resources' }
-
-dependencies {
-    implementation "net.neoforged:neoforge:${neo_version}"
-    // JNA for loading native libretro cores (.so/.dll)
-    implementation 'net.java.dev.jna:jna:5.14.0'
-}
-
-tasks.withType(ProcessResources).configureEach {
-    var replaceProperties = [
-            minecraft_version      : minecraft_version,
-            minecraft_version_range: minecraft_version_range,
-            neo_version            : neo_version,
-            loader_version_range   : loader_version_range,
-            mod_id                 : mod_id,
-            mod_name               : mod_name,
-            mod_license            : mod_license,
-            mod_version            : mod_version,
-            mod_authors            : mod_authors,
-            mod_description        : mod_description
-    ]
-    inputs.properties replaceProperties
-
-    filesMatching(['META-INF/neoforge.mods.toml']) {
-        expand replaceProperties
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-}
-
-idea {
-    module {
-        downloadSources = true
-        downloadJavadoc = true
-    }
-}
-
-// Build headless GL library for libretro HW rendering (Flycast/DC).
-def osName = System.getProperty('os.name').toLowerCase()
-def isLinux = osName.contains('linux')
-def isWindows = osName.contains('win')
-
-tasks.register('buildHeadlessGL', Exec) {
-    description = 'Compile headless GL native lib and copy to resources for bundling'
-    group = 'native'
-    if (isLinux) {
-        commandLine 'bash', file('build_headless_gl.sh').absolutePath
-        inputs.file 'headless_gl.c'
-        inputs.file 'gles_wrappers.inc'
-        inputs.file 'build_headless_gl.sh'
-        outputs.file 'runs/client/config/retroconsole/cores/.libheadless_gl.so'
-    } else if (isWindows) {
-        commandLine 'cmd', '/c', file('build_headless_gl.bat').absolutePath
-        inputs.file 'headless_gl_win.c'
-        inputs.file 'build_headless_gl.bat'
-        outputs.file 'runs/client/config/retroconsole/cores/.libheadless_gl.dll'
-        // Gradle daemon may have started before winget updated PATH — merge
-        // machine + user PATH so gcc from a fresh MinGW install is visible.
-        def pathParts = [] as LinkedHashSet
-        ['Path', 'PATH'].each { key ->
-            def v = System.getenv(key)
-            if (v) pathParts.addAll(v.split(';').findAll { it?.trim() })
-        }
-        def localApp = System.getenv('LOCALAPPDATA')
-        if (localApp) {
-            def wingetPkgs = file("${localApp}/Microsoft/WinGet/Packages")
-            if (wingetPkgs.directory) {
-                wingetPkgs.eachDir { dir ->
-                    if (dir.name.startsWith('BrechtSanders.WinLibs')) {
-                        pathParts.add(new File(dir, 'mingw64/bin').absolutePath)
-                    }
-                }
-            }
-        }
-        ['C:/msys64/mingw64/bin', 'C:/mingw64/bin'].each { p ->
-            if (new File(p, 'gcc.exe').exists()) pathParts.add(p.replace('/', File.separator))
-        }
-        environment 'Path', pathParts.join(File.pathSeparator)
-    } else {
-        enabled = false
-    }
-}
-
-tasks.register('copyHeadlessGLToResources', Copy) {
-    description = 'Rebuild native lib for THIS OS and copy into src/main/resources/natives (dev/release prep)'
-    group = 'native'
-    onlyIf { isLinux || isWindows }
-    dependsOn 'buildHeadlessGL'
-    if (isLinux) {
-        from('runs/client/config/retroconsole/cores/.libheadless_gl.so')
-        into('src/main/resources/natives')
-        rename { 'libheadless_gl.so' }
-    } else if (isWindows) {
-        from('runs/client/config/retroconsole/cores/.libheadless_gl.dll')
-        into('src/main/resources/natives')
-        rename { 'libheadless_gl.dll' }
-    }
-}
-
-// Release jar bundles BOTH natives from src/main/resources/natives/ (committed in git).
-// Run copyHeadlessGLToResources on each OS once before release — do not auto-overwrite on every build.
-
-// --- Gamepad logic smoke test (no device, no GLFW window needed) ---
-// Reuses the mod's runtime classpath (incl. LWJGL + natives) so the GLFW class
-// can load its native lib for the constant references. Run: ./gradlew runGamepadSmokeTest
-tasks.register('runGamepadSmokeTest', JavaExec) {
-    group = 'verification'
-    description = 'Run GamepadLogicSmokeTest (mapping + deadzone). No device needed.'
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'com.retroconsole.client.input.GamepadLogicSmokeTest'
 }

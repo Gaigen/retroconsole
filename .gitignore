@@ -30,6 +30,4 @@ docs/
 
 # Local game dir / dev sandboxes (ROMs, cores, BIOS, Ren'Py SDKs, loader experiments)
 /config/
-/fabric/
-/neoforge/
 /.hermes/

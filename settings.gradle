@@ -8,3 +8,13 @@ pluginManagement {
 plugins {
     id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
 }
+
+rootProject.name = 'retroconsole'
+
+include 'common'
+include 'neoforge'
+
+// Fabric is opt-in until it reaches parity: ./gradlew build -Pfabric
+if (providers.gradleProperty('fabric').isPresent()) {
+    include 'fabric'
+}

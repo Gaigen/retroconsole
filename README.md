@@ -83,20 +83,20 @@ Place **Screen** blocks so that the **Retro Console touches** any block of the s
 3. Run the `runClient` Gradle task, or:
 
    ```bash
-   ./gradlew runClient
+   ./gradlew :neoforge:runClient
    ```
 
    On Windows:
 
    ```bat
-   gradlew.bat runClient
+   gradlew.bat :neoforge:runClient
    ```
 
-Dev paths are under `runs/client/config/retroconsole/` (single-player) or `runs/server/config/retroconsole/` (dedicated server).
+Dev paths are under `neoforge/runs/client/config/retroconsole/` (single-player) or `neoforge/runs/server/config/retroconsole/` (dedicated server).
 
 ## Directory layout
 
-All paths are relative to the **game directory** (client folder in SP, server folder on a dedicated server). Defaults can be changed in `config/retroconsole-common.toml`.
+All paths are relative to the **game directory** (client folder in SP, server folder on a dedicated server). Defaults can be changed in `config/retroconsole.json`.
 
 ```
 config/retroconsole/
@@ -197,14 +197,15 @@ Settings open **in-game**:
 1. Open the console library → **⚙** button (top right), or
 2. Main menu → **Mods** → RetroConsole → **Config**
 
-Two files (created on first launch / world load):
+One file, created on first launch:
 
-| File | When editable in UI | Contents |
-|------|---------------------|----------|
-| `config/retroconsole-common.toml` | Always | Paths to cores/ROMs/system/saves |
-| `<world>/serverconfig/retroconsole-server.toml` (SP) or server `config/` | Singleplayer / LAN host only | Streaming, limits, video quality |
+| File | Contents |
+|------|----------|
+| `config/retroconsole.json` | Paths to cores/ROMs/system/saves, streaming, limits, video, input |
 
-On a **dedicated server**, edit the server’s toml (or ask the host) — clients cannot change server streaming/video from the UI.
+On a **dedicated server**, edit the server’s copy (or ask the host) — clients cannot change server streaming/video from the UI.
+
+> Upgrading from 0.2.6 or older? The old `retroconsole-common.toml` / `retroconsole-server.toml` are read once on the first launch and folded into `retroconsole.json`; the toml files are then left untouched and ignored.
 
 ### `[streaming]` (defaults)
 
@@ -301,15 +302,15 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 ./gradlew build
 ```
 
-Output: `build/libs/retroconsole-0.2.6.jar`
+Output: `neoforge/build/libs/retroconsole-0.2.6.jar`
 
 To rebuild the bundled headless GL native library (developers only):
 
 ```bash
-./gradlew buildHeadlessGL copyHeadlessGLToResources
+./gradlew :neoforge:buildHeadlessGL :neoforge:copyHeadlessGLToResources
 ```
 
-Linux builds produce `.so`; Windows builds produce `.dll`. Ship both in `src/main/resources/natives/` before cross-platform releases.
+Linux builds produce `.so`; Windows builds produce `.dll`. Ship both in `common/src/main/resources/natives/` before cross-platform releases.
 
 ## Architecture (overview)
 

@@ -1,6 +1,7 @@
 package com.retroconsole.platform;
 
 import com.retroconsole.RetroConsole;
+import com.retroconsole.library.ArtFiles;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.config.ModConfigEvent;
@@ -25,6 +26,8 @@ public final class NeoForgeSetup {
     public static void onCommonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> {
             NeoForgeConfig.install();
+            // Console cover art is generated once, before anyone opens the library.
+            ArtFiles.ensureDefaults(RetroConsolePaths.artDir());
             RetroConsolePaths.ensureAllExist();
         });
     }

@@ -1,0 +1,46 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.gradle.userdev' version '7.1.9'
+}
+
+// Loader-free code + resources shared by every loader: assets/, data/,
+// pack.mcmeta and the bundled natives/.
+//
+// The loader projects compile these sources as part of their own source set
+// (see the srcDir entries in neoforge/build.gradle), so this project on its own
+// is a compile check: it catches code that touches a loader API or misses a
+// dependency before a loader module gets a chance to hide the mistake.
+//
+// The NeoForge dev classpath is only a classpath provider here — nothing in this
+// module is supposed to touch a loader API, so the same classes ship with the
+// Fabric jar. The remaining violations (reg/ DeferredRegisters and the two block
+// entities that read them) are the next step on the board.
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // compileOnly on purpose: these only have to be visible while compiling.
+    // The loader module that ships the jar supplies them at runtime, and a second
+    // copy on the run classpath makes FML abort with "Found multiple copies of
+    // net/minecraft/server/MinecraftServer.class".
+    compileOnly "net.neoforged:neoforge:${neo_version}"
+    // JNA for loading native libretro cores (.so/.dll)
+    compileOnly 'net.java.dev.jna:jna:5.14.0'
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}

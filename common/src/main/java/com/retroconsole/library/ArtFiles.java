@@ -1,11 +1,7 @@
 package com.retroconsole.library;
 
-import com.retroconsole.RetroConsole;
 import com.retroconsole.network.RetroArtPacket;
 import com.retroconsole.platform.RetroConsolePaths;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -101,15 +97,5 @@ public final class ArtFiles {
 
     private static int clamp(int v) {
         return Math.max(0, Math.min(255, v));
-    }
-
-    @EventBusSubscriber(modid = RetroConsole.MOD_ID)
-    public static final class Setup {
-        private Setup() {}
-
-        @SubscribeEvent
-        public static void onCommonSetup(FMLCommonSetupEvent event) {
-            event.enqueueWork(() -> ensureDefaults(RetroConsolePaths.artDir()));
-        }
     }
 }
