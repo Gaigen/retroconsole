@@ -77,6 +77,8 @@ public final class NetworkHandler {
                 NetworkHandler::handleLibraryRequest);
         r.playToServer(RetroCoopPacket.TYPE, RetroCoopPacket.STREAM_CODEC,
                 NetworkHandler::handleCoop);
+        r.playToServer(RetroAudioSettingsPacket.TYPE, RetroAudioSettingsPacket.STREAM_CODEC,
+                NetworkHandler::handleAudioSettings);
     }
 
     private static void handlePointer(RetroPointerPacket pkt, IPayloadContext ctx) {
@@ -203,6 +205,11 @@ public final class NetworkHandler {
                         "[RetroConsole] Left Player 2 — back to shared P1"));
             }
         });
+    }
+
+    /** Muted players stop receiving PCM entirely (saves ~176 KB/s per console). */
+    private static void handleAudioSettings(RetroAudioSettingsPacket pkt, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> ServerConsoles.setAudioMuted(ctx.player().getUUID(), pkt.muted()));
     }
 
     private static void withConsole(IPayloadContext ctx, BlockPos pos,

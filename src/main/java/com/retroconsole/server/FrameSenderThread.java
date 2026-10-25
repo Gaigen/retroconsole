@@ -90,7 +90,7 @@ public class FrameSenderThread extends Thread {
 
                 // Audio: drain the ring every tick (otherwise it overflows), but send only to listeners.
                 int n = runtime.readAudio(audioChunk);
-                List<ServerPlayer> audioTo = recipients(players, ServerConsoles.audioDistance());
+                List<ServerPlayer> audioTo = audioRecipients(players);
                 if (n > 0 && !audioTo.isEmpty()) {
                     dispatchAudio(server, n, audioTo);
                 }
@@ -135,7 +135,7 @@ public class FrameSenderThread extends Thread {
 
         List<ServerPlayer> players = snapshotPlayers(server);
         List<ServerPlayer> videoTo = recipients(players, ServerConsoles.videoDistance());
-        List<ServerPlayer> audioTo = recipients(players, ServerConsoles.audioDistance());
+        List<ServerPlayer> audioTo = audioRecipients(players);
 
         // Drain this retro_run's audio always (the ring is not elastic).
         int avail = runtime.getAudioAvailable();
@@ -198,6 +198,17 @@ public class FrameSenderThread extends Thread {
                 out.add(p);
             }
         }
+        return out;
+    }
+
+    /**
+     * Audio listeners minus clients that muted console volume.
+     * Muting is announced once per change (RetroAudioSettingsPacket), so a silent
+     * client costs no bandwidth — the PCM is neither encoded nor sent for them.
+     */
+    private List<ServerPlayer> audioRecipients(List<ServerPlayer> players) {
+        List<ServerPlayer> out = recipients(players, ServerConsoles.audioDistance());
+        out.removeIf(p -> ServerConsoles.isAudioMuted(p.getUUID()));
         return out;
     }
 

@@ -43,6 +43,12 @@ public class ServerConsoles {
     private static final ConcurrentHashMap<UUID, ConcurrentHashMap<UUID, Integer>> PORTS =
             new ConcurrentHashMap<>();
 
+    /**
+     * Players who set console volume to 0 (announced via RetroAudioSettingsPacket).
+     * Written on the server thread, read from FrameSender threads.
+     */
+    private static final Set<UUID> AUDIO_MUTED = ConcurrentHashMap.newKeySet();
+
     private static CoreManager coreManager;
 
     /** Background core shutdown — does not block server thread when breaking the block. */
@@ -382,6 +388,26 @@ public class ServerConsoles {
         return v != null ? v : Set.of();
     }
 
+    /** Muted clients receive no audio packets at all — see FrameSenderThread.audioRecipients. */
+    public static void setAudioMuted(UUID playerId, boolean muted) {
+        // Log only on change: the client announces this once per flip, but a
+        // reconnect re-announces the same state.
+        if (muted) {
+            if (AUDIO_MUTED.add(playerId)) LOGGER.info("Audio muted for {}", playerId);
+        } else if (AUDIO_MUTED.remove(playerId)) {
+            LOGGER.info("Audio unmuted for {}", playerId);
+        }
+    }
+
+    public static boolean isAudioMuted(UUID playerId) {
+        return AUDIO_MUTED.contains(playerId);
+    }
+
+    /** Player disconnected — drop the flag without logging an "unmuted" event. */
+    public static void forgetAudioMuted(UUID playerId) {
+        AUDIO_MUTED.remove(playerId);
+    }
+
     public static boolean hasEmulator(UUID consoleId) {
         return consoleId != null && ENTRIES.containsKey(consoleId);
     }
@@ -407,6 +433,7 @@ public class ServerConsoles {
         ENTRIES.clear();
         VIEWERS.clear();
         PORTS.clear();
+        AUDIO_MUTED.clear();
         POSITIONS.clear();
         List<LibretroRuntime> runtimes = new ArrayList<>(entries.size());
         for (Entry e : entries) {

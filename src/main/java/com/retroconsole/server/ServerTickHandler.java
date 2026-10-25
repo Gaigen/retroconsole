@@ -33,6 +33,7 @@ public class ServerTickHandler {
         UUID uuid = event.getEntity().getUUID();
         ServerConsoles.removeViewerEverywhere(uuid);
         ServerConsoles.releasePortEverywhere(uuid);
+        ServerConsoles.forgetAudioMuted(uuid);
     }
 
     /**

@@ -18,6 +18,11 @@ public class ClientLifecycle {
     }
 
     @SubscribeEvent
+    public static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
+        ClientAudioHandler.syncMuteToServer();
+    }
+
+    @SubscribeEvent
     public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         ClientAudioHandler.stopAll();
     }

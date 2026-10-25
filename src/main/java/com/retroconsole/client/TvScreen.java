@@ -115,6 +115,8 @@ public class TvScreen extends Screen {
     @Override
     protected void init() {
         PacketDistributor.sendToServer(new RetroViewPacket(consolePos, true));
+        // Covers a login that raced the connection: mute is a server-side filter.
+        ClientAudioHandler.syncMuteToServer();
 
         int y = this.height - BAR_HEIGHT + 3;
         int h = BAR_HEIGHT - 6;
