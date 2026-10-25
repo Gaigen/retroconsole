@@ -14,16 +14,17 @@ public class ClientLifecycle {
 
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
+        NeoForgeClientPlatform.init();
         GamepadScreens.setOpener(pos -> Minecraft.getInstance().setScreen(new GamepadScreen(pos)));
     }
 
     @SubscribeEvent
     public static void onLogin(ClientPlayerNetworkEvent.LoggingIn event) {
-        ClientAudioHandler.syncMuteToServer();
+        ClientAccess.firePlayerJoin();
     }
 
     @SubscribeEvent
     public static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
-        ClientAudioHandler.stopAll();
+        ClientAccess.firePlayerLeave();
     }
 }

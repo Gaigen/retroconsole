@@ -1,13 +1,13 @@
 package com.retroconsole.platform;
 
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * HW-core video options. Base values come from {@link ModConfig#videoPreset()};
- * non-empty fields in {@code [video]} of the toml override individual knobs.
+ * HW-core video options. Base values come from {@link RetroSettings#videoPreset()};
+ * non-empty fields in the video section of the config override individual knobs.
  */
 public final class VideoQualityPresets {
 
@@ -20,12 +20,12 @@ public final class VideoQualityPresets {
         putBoth(m, "per_content_vmus", "VMU A1");
         putBoth(m, "device_port1_slot1", "VMU");
         putBoth(m, "internal_resolution",
-                override(ModConfig.FLYCAST_INTERNAL_RESOLUTION, p.flycastRes));
+                override(RetroSettings.flycastInternalResolution(), p.flycastRes));
         putBoth(m, "texupscale",
-                override(ModConfig.FLYCAST_TEX_UPSCALE, p.flycastTex));
+                override(RetroSettings.flycastTexUpscale(), p.flycastTex));
         putBoth(m, "texupscale_max_filtered_texture_size", "1024");
         putBoth(m, "anisotropic_filtering",
-                override(ModConfig.FLYCAST_ANISOTROPIC, p.flycastAniso));
+                override(RetroSettings.flycastAnisotropic(), p.flycastAniso));
         putBoth(m, "texture_filtering", "1");
         putBoth(m, "alpha_sorting", "per-triangle (normal)");
         putBoth(m, "fix_upscale_bleeding_edge", "enabled");
@@ -40,9 +40,9 @@ public final class VideoQualityPresets {
         m.put("ppsspp_frameskip", "0");
         m.put("ppsspp_auto_frameskip", "disabled");
         m.put("ppsspp_internal_resolution",
-                override(ModConfig.PPSSPP_INTERNAL_RESOLUTION, p.ppssppRes));
+                override(RetroSettings.ppssppInternalResolution(), p.ppssppRes));
         m.put("ppsspp_texture_scaling_level",
-                override(ModConfig.PPSSPP_TEXTURE_SCALING, p.ppssppTex));
+                override(RetroSettings.ppssppTextureScaling(), p.ppssppTex));
         m.put("ppsspp_texture_shader", "xBRZ");
         return Map.copyOf(m);
     }
@@ -53,9 +53,9 @@ public final class VideoQualityPresets {
         m.put("pcsx2_fastboot", "enabled");
         m.put("pcsx2_renderer", "OpenGL");
         m.put("pcsx2_upscale_multiplier",
-                override(ModConfig.PCSX2_UPSCALE_MULTIPLIER, p.pcsx2Scale));
+                override(RetroSettings.pcsx2UpscaleMultiplier(), p.pcsx2Scale));
         m.put("pcsx2_anisotropic_filtering",
-                override(ModConfig.PCSX2_ANISOTROPIC, p.pcsx2Aniso));
+                override(RetroSettings.pcsx2Anisotropic(), p.pcsx2Aniso));
         m.put("pcsx2_trilinear_filtering", "Trilinear (Forced)");
         m.put("pcsx2_blending_accuracy", "Basic");
         return Map.copyOf(m);
@@ -93,7 +93,7 @@ public final class VideoQualityPresets {
         m.put("citra_layout_option", "Default Top-Bottom Screen");
         m.put("citra_swap_screen", "Top");
         m.put("citra_resolution_factor",
-                citraResValue(override(ModConfig.CITRA_RESOLUTION, p.citraRes)));
+                citraResValue(override(RetroSettings.citraResolution(), p.citraRes)));
         m.put("citra_use_acc_mul", "enabled");
         m.put("citra_use_hw_shader_cache", "disabled");
         // Touch: client sends absolute RETRO_DEVICE_POINTER, not relative MOUSE
@@ -119,8 +119,8 @@ public final class VideoQualityPresets {
     public static Map<String, String> boom3Overrides() {
         Map<String, String> m = new LinkedHashMap<>();
         m.put("doom_resolution",
-                override(ModConfig.DOOM3_RESOLUTION, Preset.fromConfig().doom3Res));
-        m.put("doom_invert_y_axis", ModConfig.doom3InvertY() ? "enabled" : "disabled");
+                override(RetroSettings.doom3Resolution(), Preset.fromConfig().doom3Res));
+        m.put("doom_invert_y_axis", RetroSettings.doom3InvertY() ? "enabled" : "disabled");
         m.put("boom3_vr_enable", "disabled");
         return Map.copyOf(m);
     }
@@ -201,9 +201,8 @@ public final class VideoQualityPresets {
         citraOverrides().forEach(register);
     }
 
-    private static String override(
-            net.neoforged.neoforge.common.ModConfigSpec.ConfigValue<String> value, String preset) {
-        String o = ModConfig.videoOverride(value);
+    private static String override(String raw, String preset) {
+        String o = RetroSettings.videoOverride(raw);
         return o != null ? o : preset;
     }
 
@@ -214,7 +213,7 @@ public final class VideoQualityPresets {
             String citraRes, String doom3Res
     ) {
         static Preset fromConfig() {
-            return switch (ModConfig.videoPreset()) {
+            return switch (RetroSettings.videoPreset()) {
                 case "performance" -> new Preset(
                         "640x480", "1", "1",
                         "480x272", "1",

@@ -1,10 +1,11 @@
 package com.retroconsole.client;
 
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroLibraryPacket;
 import com.retroconsole.network.RetroLibraryRequestPacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.HashMap;
 import java.util.List;
@@ -29,7 +30,7 @@ public final class ClientLibraryCache {
         pending = null;
         clearStats();
         ClientArtCache.clear();
-        PacketDistributor.sendToServer(new RetroLibraryRequestPacket(consolePos.immutable()));
+        NetAccess.sendToServer(RetroPayloads.LIBRARY_REQUEST, new RetroLibraryRequestPacket(consolePos.immutable()));
     }
 
     public static void onReceived(RetroLibraryPacket pkt) {

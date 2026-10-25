@@ -2,7 +2,9 @@ package com.retroconsole.block;
 
 import com.mojang.serialization.MapCodec;
 import com.retroconsole.library.RomLibrary;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroOpenScreenPacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import com.retroconsole.server.ServerConsoles;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -102,8 +104,8 @@ public class RetroConsoleBlock extends BaseEntityBlock {
             }
         }
 
-        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(
-                serverPlayer, new RetroOpenScreenPacket(
+        NetAccess.sendToPlayer(serverPlayer, RetroPayloads.OPEN_SCREEN,
+                new RetroOpenScreenPacket(
                         pos, console.getOrAssignConsoleId(), console.getRomId(),
                         RomLibrary.systemIdForRomPath(console.getRomId())));
         return ItemInteractionResult.SUCCESS;

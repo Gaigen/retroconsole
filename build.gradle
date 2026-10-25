@@ -158,5 +158,5 @@ tasks.register('runGamepadSmokeTest', JavaExec) {
     group = 'verification'
     description = 'Run GamepadLogicSmokeTest (mapping + deadzone). No device needed.'
     classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'com.retroconsole.GamepadLogicSmokeTest'
+    mainClass = 'com.retroconsole.client.input.GamepadLogicSmokeTest'
 }

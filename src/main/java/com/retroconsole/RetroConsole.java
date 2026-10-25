@@ -1,6 +1,9 @@
 package com.retroconsole;
 
+import com.retroconsole.client.NeoForgeConfigScreen;
 import com.retroconsole.config.ModConfig;
+import com.retroconsole.platform.NeoForgeConfig;
+import com.retroconsole.platform.NeoForgePlatform;
 import com.retroconsole.reg.ModBlockEntities;
 import com.retroconsole.reg.ModBlocks;
 import com.retroconsole.reg.ModItems;
@@ -45,25 +48,36 @@ public class RetroConsole {
     public RetroConsole(IEventBus modEventBus, ModContainer modContainer) {
         BOOT_LOGGER.info("JVM args: {}", ManagementFactory.getRuntimeMXBean().getInputArguments());
 
-        // Register the config so ModConfig.* Spec values become resolvable.
-        // Directory creation itself is lazy — RetroConsolePaths creates each
-        // folder on first read; the first caller is usually the first time
-        // the player inserts a console block, well after config loading.
-        modContainer.registerConfig(Type.COMMON, ModConfig.COMMON_SPEC);
-        modContainer.registerConfig(Type.SERVER, ModConfig.SERVER_SPEC);
+        // Loader facades (packet delivery, current server). Pure wiring, no behaviour change.
+        NeoForgePlatform.init();
 
+        // Register the legacy toml specs only while config/retroconsole.json is
+        // missing: NeoForgeConfig.install() imports their values once, after
+        // which the JSON file is the single source of truth. Directory creation
+        // stays lazy — RetroConsolePaths creates each folder on first read; the
+        // first caller is usually the first time the player inserts a console
+        // block, well after config loading.
+        if (NeoForgeConfig.needsMigration()) {
+            modContainer.registerConfig(Type.COMMON, ModConfig.COMMON_SPEC);
+            modContainer.registerConfig(Type.SERVER, ModConfig.SERVER_SPEC);
+        }
+
+        // Nothing client-typed may appear in this class: FML resolves every
+        // declared member here while constructing the mod, so a lambda taking a
+        // Screen would make a dedicated server fail with "Attempted to load
+        // class net/minecraft/client/gui/screens/Screen for invalid dist".
         if (net.neoforged.fml.loading.FMLEnvironment.dist
                 == net.neoforged.api.distmarker.Dist.CLIENT) {
-            modContainer.registerConfig(Type.CLIENT, ModConfig.CLIENT_SPEC);
-            modContainer.registerExtensionPoint(
-                    net.neoforged.neoforge.client.gui.IConfigScreenFactory.class,
-                    net.neoforged.neoforge.client.gui.ConfigurationScreen::new);
+            if (NeoForgeConfig.needsMigration()) {
+                modContainer.registerConfig(Type.CLIENT, ModConfig.CLIENT_SPEC);
+            }
+            NeoForgeConfigScreen.register(modContainer);
         }
 
         ModBlocks.register(modEventBus);
         ModItems.register(modEventBus);
         ModBlockEntities.register(modEventBus);
         CREATIVE_TABS.register(modEventBus);
-        // NetworkHandler + ModKeys register via @SubscribeEvent on MOD bus
+        // NeoForgeNetwork + NeoForgeSetup + ModKeys register via @SubscribeEvent on the MOD bus
     }
 }

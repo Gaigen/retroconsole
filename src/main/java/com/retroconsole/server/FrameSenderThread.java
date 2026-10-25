@@ -2,13 +2,14 @@ package com.retroconsole.server;
 
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,7 +84,7 @@ public class FrameSenderThread extends Thread {
 
                 maybeAutosaveBattery();
 
-                MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+                MinecraftServer server = ServerAccess.getCurrentServer();
                 if (!canSendToServer(server)) continue;
 
                 List<ServerPlayer> players = snapshotPlayers(server);
@@ -125,7 +126,7 @@ public class FrameSenderThread extends Thread {
 
         maybeAutosaveBattery();
 
-        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        MinecraftServer server = ServerAccess.getCurrentServer();
         if (!canSendToServer(server)) {
             // Must clear the frame flag and drain the audio ring, or the outer loop becomes a busy-loop.
             threaded.pollFrame(buf);
@@ -228,7 +229,7 @@ public class FrameSenderThread extends Thread {
         for (ServerPlayer player : recipients) {
             if (!canSendToServer(server)) return;
             if (player.hasDisconnected()) continue;
-            ServerTickHandler.sendAudioToPlayer(player, packet);
+            NetAccess.sendToPlayer(player, RetroPayloads.AUDIO, packet);
         }
     }
 
@@ -238,7 +239,7 @@ public class FrameSenderThread extends Thread {
      * used to run in a per-player loop.
      *
      * <p>TvScreen viewers get full resolution; others (in-world TV block) are
-     * downscaled to {@link ModConfig#worldMaxWidth()}.
+     * downscaled to {@link RetroSettings#worldMaxWidth()}.
      */
     private void sendVideoFrame(MinecraftServer server, int w, int h, List<ServerPlayer> recipients) {
         if (!canSendToServer(server)) return;
@@ -262,15 +263,15 @@ public class FrameSenderThread extends Thread {
             noteVideoStats(fullPacket.compressedFrame().length, System.nanoTime() - buildStartNs);
             for (ServerPlayer player : fullRes) {
                 if (!canSendToServer(server)) return;
-                ServerTickHandler.sendFrameToPlayer(player, fullPacket);
+                NetAccess.sendToPlayer(player, RetroPayloads.FRAME, fullPacket);
             }
         }
 
         if (!worldRes.isEmpty()) {
             RetroFramePacket worldPacket;
             long buildStartNs = System.nanoTime();
-            if (w > ModConfig.worldMaxWidth()) {
-                int sw = ModConfig.worldMaxWidth();
+            if (w > RetroSettings.worldMaxWidth()) {
+                int sw = RetroSettings.worldMaxWidth();
                 int sh = Math.max(1, Math.round((float) h * sw / w));
                 downscale(buf, w, h, sw, sh);
                 worldPacket = RetroFramePacket.create(consoleId, scaledBuf, sw, sh);
@@ -285,7 +286,7 @@ public class FrameSenderThread extends Thread {
             }
             for (ServerPlayer player : worldRes) {
                 if (!canSendToServer(server)) return;
-                ServerTickHandler.sendFrameToPlayer(player, worldPacket);
+                NetAccess.sendToPlayer(player, RetroPayloads.FRAME, worldPacket);
             }
         }
     }
@@ -340,7 +341,7 @@ public class FrameSenderThread extends Thread {
 
     private void maybeAutosaveBattery() {
         long now = System.nanoTime();
-        long periodNs = ModConfig.batteryAutosaveSeconds() * 1_000_000_000L;
+        long periodNs = RetroSettings.batteryAutosaveSeconds() * 1_000_000_000L;
         if (now - lastBatterySaveNs < periodNs) return;
         lastBatterySaveNs = now;
         runtime.saveBattery();

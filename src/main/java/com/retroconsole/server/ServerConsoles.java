@@ -2,11 +2,13 @@ package com.retroconsole.server;
 
 import com.retroconsole.bridge.CoreModulePool;
 import com.retroconsole.bridge.LibretroCore;
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
 import com.retroconsole.emu.CoreManager;
 import com.retroconsole.emu.LibretroRuntime;
 import com.retroconsole.emu.ThreadedEmulatorRuntime;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroStopConsolePacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import com.retroconsole.platform.PlayerPaths;
 import com.retroconsole.platform.Pcsx2MemcardSync;
 import com.retroconsole.platform.RetroConsolePaths;
@@ -16,8 +18,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.neoforged.neoforge.network.PacketDistributor;
-import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -106,7 +106,7 @@ public class ServerConsoles {
         var coreInfo = coreManager.findCore(coreName);
         if (coreInfo == null) { LOGGER.error("Core not found: {}", coreName); return; }
 
-        if (!ModConfig.enable3ds() && coreName.toLowerCase().contains("citra")) {
+        if (!RetroSettings.enable3ds() && coreName.toLowerCase().contains("citra")) {
             LOGGER.error("3DS (Citra) disabled in server config — enable limits.enable3ds");
             notifyOwner(ownerId, Component.translatable("retroconsole.error.3ds_disabled"));
             return;
@@ -226,7 +226,7 @@ public class ServerConsoles {
                 Object[] args = CoreModulePool.lastRefuseArgs();
                 int cap = args.length > 0 && args[0] instanceof Number n
                         ? n.intValue()
-                        : ModConfig.maxCoreSlots();
+                        : RetroSettings.maxCoreSlots();
                 return Component.translatable(refuseKey, cap, coreName);
             }
             return Component.translatable(refuseKey, CoreModulePool.lastRefuseArgs());
@@ -237,7 +237,7 @@ public class ServerConsoles {
                 if (pcsx2.contains("session limit")) {
                     return Component.translatable(
                             "retroconsole.error.pcsx2_session_cap",
-                            ModConfig.maxPcsx2Sessions());
+                            RetroSettings.maxPcsx2Sessions());
                 }
                 if (pcsx2.toLowerCase().contains("bios")) {
                     return Component.translatable("retroconsole.error.pcsx2_bios");
@@ -250,7 +250,7 @@ public class ServerConsoles {
 
     private static void notifyOwner(UUID ownerId, Component message) {
         if (ownerId == null || message == null) return;
-        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        MinecraftServer server = ServerAccess.getCurrentServer();
         if (server == null) return;
         ServerPlayer player = server.getPlayerList().getPlayer(ownerId);
         if (player == null) return;
@@ -258,14 +258,14 @@ public class ServerConsoles {
     }
 
     private static void notifyConsoleStopped(UUID consoleId, BlockPos pos) {
-        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        MinecraftServer server = ServerAccess.getCurrentServer();
         if (server == null || !server.isRunning()) return;
         RetroStopConsolePacket packet = new RetroStopConsolePacket(consoleId);
-        long radiusSq = (long) ModConfig.notifyDistance() * ModConfig.notifyDistance();
+        long radiusSq = (long) RetroSettings.notifyDistance() * RetroSettings.notifyDistance();
         for (ServerPlayer player : new ArrayList<>(server.getPlayerList().getPlayers())) {
             if (player.hasDisconnected()) continue;
             if (player.blockPosition().distSqr(pos) < radiusSq) {
-                PacketDistributor.sendToPlayer(player, packet);
+                NetAccess.sendToPlayer(player, RetroPayloads.STOP_CONSOLE, packet);
             }
         }
     }
@@ -417,9 +417,9 @@ public class ServerConsoles {
         return coreManager.getCores().stream().map(CoreManager.CoreInfo::name).toList();
     }
 
-    public static int videoDistance() { return ModConfig.videoDistance(); }
+    public static int videoDistance() { return RetroSettings.videoDistance(); }
 
-    public static int audioDistance() { return ModConfig.audioDistance(); }
+    public static int audioDistance() { return RetroSettings.audioDistance(); }
 
     public static void stopAll() {
         LOGGER.info("stopAll(): shutting down {} emulator(s)", ENTRIES.size());

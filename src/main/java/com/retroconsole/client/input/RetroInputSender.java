@@ -2,10 +2,11 @@ package com.retroconsole.client.input;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.retroconsole.client.RetroInputBindings;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroAnalogPacket;
 import com.retroconsole.network.RetroInputPacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.core.BlockPos;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 /**
  * Sends libretro button / analog input packets for a linked console.
@@ -34,7 +35,7 @@ public final class RetroInputSender {
 
     /** Direct button send by retro id (gamepad path, bypasses KeyMapping). */
     public void sendButton(int retroId, boolean pressed) {
-        PacketDistributor.sendToServer(new RetroInputPacket(consolePos, retroId, pressed));
+        NetAccess.sendToServer(RetroPayloads.INPUT, new RetroInputPacket(consolePos, retroId, pressed));
     }
 
     /** Gamepad stick state after deadzone; merged with keyboard analog. */
@@ -50,7 +51,7 @@ public final class RetroInputSender {
     public boolean handleKeyPressed(InputConstants.Key key) {
         int buttonId = RetroInputBindings.mapButton(key);
         if (buttonId >= 0) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, buttonId, true));
+            NetAccess.sendToServer(RetroPayloads.INPUT, new RetroInputPacket(consolePos, buttonId, true));
             return true;
         }
         return handleAnalogKey(key, true);
@@ -59,7 +60,7 @@ public final class RetroInputSender {
     public boolean handleKeyReleased(InputConstants.Key key) {
         int buttonId = RetroInputBindings.mapButton(key);
         if (buttonId >= 0) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, buttonId, false));
+            NetAccess.sendToServer(RetroPayloads.INPUT, new RetroInputPacket(consolePos, buttonId, false));
             return true;
         }
         return handleAnalogKey(key, false);
@@ -67,17 +68,17 @@ public final class RetroInputSender {
 
     public void releaseAll() {
         for (RetroInputBindings.ButtonBind bind : RetroInputBindings.BUTTONS) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, bind.retroId(), false));
+            NetAccess.sendToServer(RetroPayloads.INPUT, new RetroInputPacket(consolePos, bind.retroId(), false));
         }
         for (RetroInputBindings.ButtonBind bind : RetroInputBindings.DS_BUTTONS) {
-            PacketDistributor.sendToServer(new RetroInputPacket(consolePos, bind.retroId(), false));
+            NetAccess.sendToServer(RetroPayloads.INPUT, new RetroInputPacket(consolePos, bind.retroId(), false));
         }
     }
 
     public void sendAnalogZeros() {
         gpLx = gpLy = gpRx = gpRy = 0;
         sentLx = sentLy = sentRx = sentRy = 0;
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, (short) 0, (short) 0, (short) 0, (short) 0));
+        NetAccess.sendToServer(RetroPayloads.ANALOG, new RetroAnalogPacket(consolePos, (short) 0, (short) 0, (short) 0, (short) 0));
     }
 
     public RetroInputBindings.StickState rightStick() {
@@ -105,7 +106,7 @@ public final class RetroInputSender {
         sentLy = ly;
         sentRx = rx;
         sentRy = ry;
-        PacketDistributor.sendToServer(new RetroAnalogPacket(consolePos, lx, ly, rx, ry));
+        NetAccess.sendToServer(RetroPayloads.ANALOG, new RetroAnalogPacket(consolePos, lx, ly, rx, ry));
     }
 
     private static short merge(short keyboard, short gamepad) {

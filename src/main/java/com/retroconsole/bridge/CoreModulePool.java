@@ -1,6 +1,6 @@
 package com.retroconsole.bridge;
 
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -68,12 +68,12 @@ public final class CoreModulePool {
 
     /**
      * Acquire a free slot and materialize its DLL copy. Slots grow as needed
-     * unless {@link ModConfig#maxCoreSlots()} is &gt; 0.
+     * unless {@link RetroSettings#maxCoreSlots()} is &gt; 0.
      */
     public static synchronized Slot acquire(Path corePath) {
         clearRefuse();
         String key = key(corePath);
-        int cap = ModConfig.maxCoreSlots();
+        int cap = RetroSettings.maxCoreSlots();
         int copyFailures = 0;
         for (int i = 0; cap <= 0 || i < cap; i++) {
             String id = key + "#" + i;

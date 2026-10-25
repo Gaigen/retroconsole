@@ -1,7 +1,7 @@
 package com.retroconsole.client.input;
 
 import com.retroconsole.bridge.LibretroBridge;
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWGamepadState;
 import org.slf4j.Logger;
@@ -32,7 +32,7 @@ public final class GamepadPoller {
 
     /** Call once per client tick while the console screen is open. */
     public void poll() {
-        if (!ModConfig.gamepadEnabled()) {
+        if (!RetroSettings.gamepadEnabled()) {
             reset();
             return;
         }
@@ -48,14 +48,14 @@ public final class GamepadPoller {
         }
 
         // Analog triggers -> digital L2/R2.
-        float threshold = (float) ModConfig.gamepadTriggerThreshold();
+        float threshold = (float) RetroSettings.gamepadTriggerThreshold();
         setButton(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_L2,
                 GamepadMapping.normalizeTrigger(state.axes(GLFW.GLFW_GAMEPAD_AXIS_LEFT_TRIGGER)) >= threshold);
         setButton(LibretroBridge.RETRO_DEVICE_ID_JOYPAD_R2,
                 GamepadMapping.normalizeTrigger(state.axes(GLFW.GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER)) >= threshold);
 
         // Sticks -> real RETRO_DEVICE_ANALOG axes (PSP/Dreamcast/3DS work natively).
-        double dz = ModConfig.gamepadDeadzone();
+        double dz = RetroSettings.gamepadDeadzone();
         short[] left = GamepadMapping.applyDeadzone(
                 state.axes(GLFW.GLFW_GAMEPAD_AXIS_LEFT_X),
                 state.axes(GLFW.GLFW_GAMEPAD_AXIS_LEFT_Y), dz);

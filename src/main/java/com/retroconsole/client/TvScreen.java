@@ -13,12 +13,14 @@ import com.retroconsole.client.input.RetroInputSender;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.client.library.SaveStates;
 import com.retroconsole.client.library.SoundPrefs;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroCoopPacket;
 import com.retroconsole.network.RetroKeyPacket;
 import com.retroconsole.network.RetroPointerPacket;
 import com.retroconsole.network.RetroPowerOffPacket;
 import com.retroconsole.network.RetroSaveStatePacket;
 import com.retroconsole.network.RetroViewPacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.Util;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -33,7 +35,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.util.FastColor;
 import net.minecraft.util.Mth;
-import net.neoforged.neoforge.network.PacketDistributor;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -114,7 +115,7 @@ public class TvScreen extends Screen {
 
     @Override
     protected void init() {
-        PacketDistributor.sendToServer(new RetroViewPacket(consolePos, true));
+        NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, true));
         // Covers a login that raced the connection: mute is a server-side filter.
         ClientAudioHandler.syncMuteToServer();
 
@@ -137,7 +138,7 @@ public class TvScreen extends Screen {
         barLeft = addLeft(Button.builder(Component.literal("P2 Join"), b -> {
             blip(1.0f);
             coopP2 = !coopP2;
-            PacketDistributor.sendToServer(new RetroCoopPacket(consolePos, coopP2));
+            NetAccess.sendToServer(RetroPayloads.COOP, new RetroCoopPacket(consolePos, coopP2));
             b.setMessage(Component.literal(coopP2 ? "P2 Leave" : "P2 Join"));
         }), barLeft, y, 56, h);
 
@@ -354,7 +355,7 @@ public class TvScreen extends Screen {
     }
 
     private void sendKey(int retroKey, boolean pressed) {
-        PacketDistributor.sendToServer(new RetroKeyPacket(consolePos, retroKey, pressed));
+        NetAccess.sendToServer(RetroPayloads.KEY, new RetroKeyPacket(consolePos, retroKey, pressed));
     }
 
     private void releaseInputCapture() {
@@ -444,11 +445,11 @@ public class TvScreen extends Screen {
             return true;
         }
         if (keyCode == InputConstants.KEY_F5) {
-            PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true, false));
+            NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, true, false));
             return true;
         }
         if (keyCode == InputConstants.KEY_F6) {
-            PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, false, false));
+            NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, false, false));
             return true;
         }
 
@@ -557,7 +558,7 @@ public class TvScreen extends Screen {
         sentPy = pointer.y();
         sentPpressed = pressed;
         lastPointerSendMs = Util.getMillis();
-        PacketDistributor.sendToServer(new RetroPointerPacket(consolePos, sentPx, sentPy, pressed));
+        NetAccess.sendToServer(RetroPayloads.POINTER, new RetroPointerPacket(consolePos, sentPx, sentPy, pressed));
     }
 
     private void sendPointerIfChanged(boolean pressed) {
@@ -569,13 +570,13 @@ public class TvScreen extends Screen {
         sentPx = pointer.x();
         sentPy = pointer.y();
         sentPpressed = pressed;
-        PacketDistributor.sendToServer(new RetroPointerPacket(consolePos, sentPx, sentPy, pressed));
+        NetAccess.sendToServer(RetroPayloads.POINTER, new RetroPointerPacket(consolePos, sentPx, sentPy, pressed));
     }
 
     private void sendPointerRelease() {
         if (!sentPpressed && sentPx == 0 && sentPy == 0) return;
         sentPpressed = false;
-        PacketDistributor.sendToServer(new RetroPointerPacket(consolePos, sentPx, sentPy, false));
+        NetAccess.sendToServer(RetroPayloads.POINTER, new RetroPointerPacket(consolePos, sentPx, sentPy, false));
     }
 
     private void powerOffToMenu() {
@@ -585,8 +586,8 @@ public class TvScreen extends Screen {
         input.releaseAll();
         input.sendAnalogZeros();
         sendPointerRelease();
-        PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
-        PacketDistributor.sendToServer(new RetroPowerOffPacket(consolePos));
+        NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, false));
+        NetAccess.sendToServer(RetroPayloads.POWER_OFF, new RetroPowerOffPacket(consolePos));
         Minecraft.getInstance().setScreen(new CoreSelectScreen(consolePos));
     }
 
@@ -596,13 +597,13 @@ public class TvScreen extends Screen {
         closed = true;
         releaseInputCapture();
         if (!romId.isEmpty()) {
-            PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true, true));
+            NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, true, true));
         }
         input.releaseAll();
         input.sendAnalogZeros();
         gamepad.reset();
         sendPointerRelease();
-        PacketDistributor.sendToServer(new RetroViewPacket(consolePos, false));
+        NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, false));
         super.onClose();
     }
 

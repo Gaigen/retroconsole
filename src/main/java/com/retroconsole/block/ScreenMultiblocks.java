@@ -1,6 +1,6 @@
 package com.retroconsole.block;
 
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
@@ -158,7 +158,7 @@ public final class ScreenMultiblocks {
         visited.add(start.immutable());
         queue.add(start.immutable());
 
-        while (!queue.isEmpty() && visited.size() < ModConfig.maxScreenCluster()) {
+        while (!queue.isEmpty() && visited.size() < RetroSettings.maxScreenCluster()) {
             BlockPos cur = queue.poll();
             for (Direction d : inPlane) {
                 BlockPos n = cur.relative(d);

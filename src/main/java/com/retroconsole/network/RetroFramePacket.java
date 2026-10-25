@@ -1,9 +1,9 @@
 package com.retroconsole.network;
 
+import io.netty.buffer.ByteBuf;
 import io.netty.handler.codec.DecoderException;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.zip.DataFormatException;
@@ -28,9 +28,7 @@ public record RetroFramePacket(
         int width,
         int height,
         byte[] compressedFrame
-) implements CustomPacketPayload {
-
-    public static final Type<RetroFramePacket> TYPE = RetroPackets.type("frame");
+) {
 
     /** Sanity cap: frames larger than 4K are invalid packet data. */
     private static final int MAX_DIM = 4096;
@@ -46,42 +44,39 @@ public record RetroFramePacket(
     private static final ThreadLocal<byte[]> DEFLATE_OUT =
             ThreadLocal.withInitial(() -> new byte[0]);
 
-    public static final StreamCodec<FriendlyByteBuf, RetroFramePacket> STREAM_CODEC =
+    public static final StreamCodec<ByteBuf, RetroFramePacket> STREAM_CODEC =
             new StreamCodec<>() {
                 @Override
-                public RetroFramePacket decode(FriendlyByteBuf buf) {
-                    UUID consoleId = buf.readUUID();
-                    int width = buf.readVarInt();
-                    int height = buf.readVarInt();
+                public RetroFramePacket decode(ByteBuf buf) {
+                    FriendlyByteBuf fbb = new FriendlyByteBuf(buf);
+                    UUID consoleId = fbb.readUUID();
+                    int width = fbb.readVarInt();
+                    int height = fbb.readVarInt();
                     if (width <= 0 || height <= 0 || width > MAX_DIM || height > MAX_DIM) {
                         throw new DecoderException("Bad frame size " + width + "x" + height);
                     }
-                    int length = buf.readVarInt();
+                    int length = fbb.readVarInt();
                     // BUGFIX: previously new byte[length] without bounds — malicious or corrupt
                     // packets could request gigabyte allocations.
                     long max = (long) width * height * 3 + 1024;
-                    if (length < 0 || length > max || length > buf.readableBytes()) {
+                    if (length < 0 || length > max || length > fbb.readableBytes()) {
                         throw new DecoderException("Bad frame payload length " + length);
                     }
                     byte[] compressedFrame = new byte[length];
-                    buf.readBytes(compressedFrame);
+                    fbb.readBytes(compressedFrame);
                     return new RetroFramePacket(consoleId, width, height, compressedFrame);
                 }
 
                 @Override
-                public void encode(FriendlyByteBuf buf, RetroFramePacket pkt) {
-                    buf.writeUUID(pkt.consoleId);
-                    buf.writeVarInt(pkt.width);
-                    buf.writeVarInt(pkt.height);
-                    buf.writeVarInt(pkt.compressedFrame.length);
-                    buf.writeBytes(pkt.compressedFrame);
+                public void encode(ByteBuf buf, RetroFramePacket pkt) {
+                    FriendlyByteBuf fbb = new FriendlyByteBuf(buf);
+                    fbb.writeUUID(pkt.consoleId);
+                    fbb.writeVarInt(pkt.width);
+                    fbb.writeVarInt(pkt.height);
+                    fbb.writeVarInt(pkt.compressedFrame.length);
+                    fbb.writeBytes(pkt.compressedFrame);
                 }
             };
-
-    @Override
-    public Type<? extends CustomPacketPayload> type() {
-        return TYPE;
-    }
 
     /**
      * Create a RetroFramePacket from an ARGB int[] frame buffer.

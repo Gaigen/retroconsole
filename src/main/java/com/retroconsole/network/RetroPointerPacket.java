@@ -4,7 +4,6 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 /** C2S: absolute stylus/touch coordinates in libretro POINTER space. */
 public record RetroPointerPacket(
@@ -12,9 +11,7 @@ public record RetroPointerPacket(
         short x,
         short y,
         boolean pressed
-) implements CustomPacketPayload {
-
-    public static final Type<RetroPointerPacket> TYPE = RetroPackets.type("pointer");
+) {
 
     public static final StreamCodec<ByteBuf, RetroPointerPacket> STREAM_CODEC =
             StreamCodec.composite(
@@ -23,9 +20,4 @@ public record RetroPointerPacket(
                     ByteBufCodecs.SHORT, RetroPointerPacket::y,
                     ByteBufCodecs.BOOL, RetroPointerPacket::pressed,
                     RetroPointerPacket::new);
-
-    @Override
-    public Type<? extends CustomPacketPayload> type() {
-        return TYPE;
-    }
 }

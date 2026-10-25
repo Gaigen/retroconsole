@@ -7,8 +7,11 @@ import com.retroconsole.client.library.ClientPlayerData;
 import com.retroconsole.client.library.PlayStats;
 import com.retroconsole.library.RomLibrary;
 import com.retroconsole.client.library.SaveStates;
+import com.retroconsole.config.ConfigAccess;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroCoreSelectPacket;
 import com.retroconsole.network.RetroLibraryPacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -21,7 +24,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
-import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
 
 import java.nio.file.Path;
@@ -108,7 +110,7 @@ public class CoreSelectScreen extends Screen {
         folderBtn.active = !serverLibrary;
 
         addRenderableWidget(Button.builder(ModTexts.c("gui.settings"),
-                        b -> { blip(1.1f); ConfigScreens.open(this); })
+                        b -> { blip(1.1f); ConfigAccess.openScreen(Minecraft.getInstance(), this); })
                 .pos(width - 56, 22).size(20, 18)
                 .tooltip(net.minecraft.client.gui.components.Tooltip.create(ModTexts.c("gui.settings.tooltip")))
                 .build());
@@ -251,7 +253,7 @@ public class CoreSelectScreen extends Screen {
         savePrefs();
         PlayStats.onLaunch(selectedRom.id());
         blip(2.0f);
-        PacketDistributor.sendToServer(
+        NetAccess.sendToServer(RetroPayloads.CORE_SELECT,
                 new RetroCoreSelectPacket(consolePos, core.id(), selectedRom.id(), loadAuto));
         Minecraft.getInstance().setScreen(
                 new TvScreen(consolePos, resolveConsoleId(), selectedRom.id(), selectedRom.system().id));

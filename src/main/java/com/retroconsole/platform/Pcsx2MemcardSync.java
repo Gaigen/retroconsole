@@ -1,6 +1,6 @@
 package com.retroconsole.platform;
 
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,8 +18,7 @@ import java.util.stream.Stream;
  * directory junction).
  *
  * <p>Default up to {@code 8} concurrent PS2 sessions (VEH wrap gates foreign
- * Fastmem). Override via {@code limits.maxPcsx2Sessions} in
- * {@code retroconsole-common.toml}.
+ * Fastmem). Override via {@code limits.maxPcsx2Sessions} in the server config.
  */
 public final class Pcsx2MemcardSync {
 
@@ -40,7 +39,7 @@ public final class Pcsx2MemcardSync {
     }
 
     public static int maxSessions() {
-        return Math.max(1, Math.min(8, ModConfig.maxPcsx2Sessions()));
+        return Math.max(1, Math.min(8, RetroSettings.maxPcsx2Sessions()));
     }
 
     public static int liveSessions() {

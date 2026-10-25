@@ -1,9 +1,10 @@
 package com.retroconsole.client.input;
 
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroMousePacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.neoforged.neoforge.network.PacketDistributor;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -56,7 +57,7 @@ public final class MouseCapture {
         if (!active) return;
         // Make sure the game does not keep a stale button pressed.
         if (buttons != 0 || sentButtons != 0 || wheel != 0) {
-            PacketDistributor.sendToServer(new RetroMousePacket(consolePos, 0, 0, 0, 0));
+            NetAccess.sendToServer(RetroPayloads.MOUSE, new RetroMousePacket(consolePos, 0, 0, 0, 0));
         }
         buttons = 0;
         sentButtons = 0;
@@ -91,7 +92,7 @@ public final class MouseCapture {
         int detents = wheel;
         wheel = 0;
         sentButtons = buttons;
-        PacketDistributor.sendToServer(new RetroMousePacket(consolePos, dx, dy, buttons, detents));
+        NetAccess.sendToServer(RetroPayloads.MOUSE, new RetroMousePacket(consolePos, dx, dy, buttons, detents));
     }
 
     /** GLFW/Minecraft button index (0 left, 1 right, 2 middle, 3/4 extra) -> state. */

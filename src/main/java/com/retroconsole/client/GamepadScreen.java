@@ -4,15 +4,16 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.client.input.GamepadPoller;
 import com.retroconsole.client.input.RetroInputSender;
-import com.retroconsole.config.ModConfig;
+import com.retroconsole.config.RetroSettings;
 import com.retroconsole.item.GamepadItem;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroSaveStatePacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.neoforged.neoforge.network.PacketDistributor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -143,7 +144,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
             return;
         }
 
-        int controlDist = ModConfig.controlDistance();
+        int controlDist = RetroSettings.controlDistance();
         double distSq = player.distanceToSqr(
                 consolePos.getX() + 0.5, consolePos.getY() + 0.5, consolePos.getZ() + 0.5);
         if (distSq > (double) controlDist * controlDist) {
@@ -170,11 +171,11 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
             return true;
         }
         if (keyCode == InputConstants.KEY_F5) {
-            PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true, false));
+            NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, true, false));
             return true;
         }
         if (keyCode == InputConstants.KEY_F6) {
-            PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, false, false));
+            NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, false, false));
             return true;
         }
 
@@ -194,7 +195,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     public void onClose() {
         if (closed) return;
         closed = true;
-        PacketDistributor.sendToServer(new RetroSaveStatePacket(consolePos, 0, true, true));
+        NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, true, true));
         input.releaseAll();
         input.sendAnalogZeros();
         gamepad.reset();

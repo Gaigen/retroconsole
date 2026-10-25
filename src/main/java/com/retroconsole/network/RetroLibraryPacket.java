@@ -7,7 +7,6 @@ import io.netty.handler.codec.DecoderException;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -21,7 +20,7 @@ public record RetroLibraryPacket(
         List<CoreEntry> cores,
         List<RomEntry> roms,
         List<StatEntry> playerStats
-) implements CustomPacketPayload {
+) {
 
     static final int MAX_CORES = 64;
     static final int MAX_ROMS = 4096;
@@ -100,8 +99,6 @@ public record RetroLibraryPacket(
                 StatEntry::new);
     }
 
-    public static final Type<RetroLibraryPacket> TYPE = RetroPackets.type("library");
-
     private static final StreamCodec<ByteBuf, List<SystemEntry>> SYSTEM_LIST =
             ByteBufCodecs.collection(ArrayList::new, SystemEntry.CODEC);
 
@@ -122,11 +119,6 @@ public record RetroLibraryPacket(
                     ROM_LIST, RetroLibraryPacket::roms,
                     STAT_LIST, RetroLibraryPacket::playerStats,
                     RetroLibraryPacket::new);
-
-    @Override
-    public Type<? extends CustomPacketPayload> type() {
-        return TYPE;
-    }
 
     public static RetroLibraryPacket from(BlockPos consolePos, RomLibrary lib,
                                           List<StatEntry> playerStats) {

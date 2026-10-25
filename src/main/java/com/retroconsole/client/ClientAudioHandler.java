@@ -1,11 +1,11 @@
 package com.retroconsole.client;
 
 import com.retroconsole.client.library.SoundPrefs;
+import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroAudioSettingsPacket;
+import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.client.Minecraft;
-import net.neoforged.neoforge.network.PacketDistributor;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.Map;
 import java.util.UUID;
@@ -30,7 +30,7 @@ public final class ClientAudioHandler {
 
     private ClientAudioHandler() {}
 
-    public static void handle(RetroAudioPayload payload, IPayloadContext ctx) {
+    public static void handle(RetroAudioPayload payload) {
         UUID consoleId = payload.consoleId();
         var pos = payload.pos();
         AUDIO_EXEC.execute(() -> PLAYERS
@@ -65,7 +65,7 @@ public final class ClientAudioHandler {
         if (serverMuted != null && serverMuted == muted) return;
         if (Minecraft.getInstance().getConnection() == null) return; // retried on next call
         serverMuted = muted;
-        PacketDistributor.sendToServer(new RetroAudioSettingsPacket(muted));
+        NetAccess.sendToServer(RetroPayloads.AUDIO_SETTINGS, new RetroAudioSettingsPacket(muted));
     }
 
     public static void stop(UUID consoleId) {

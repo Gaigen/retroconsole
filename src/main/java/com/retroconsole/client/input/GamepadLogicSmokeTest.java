@@ -1,10 +1,14 @@
-package com.retroconsole;
+package com.retroconsole.client.input;
 
 import com.retroconsole.bridge.LibretroBridge;
-import com.retroconsole.client.input.GamepadMapping;
 import org.lwjgl.glfw.GLFW;
 
-/** Smoke test for mapping + deadzone. Pure logic, no GLFW init, no device needed. */
+/**
+ * Smoke test for mapping + deadzone. Pure logic, no GLFW init, no device needed.
+ *
+ * <p>Lives in the client input package because it exercises client-only code;
+ * run it with {@code ./gradlew runGamepadSmokeTest}.
+ */
 public final class GamepadLogicSmokeTest {
 
     public static void main(String[] args) {
