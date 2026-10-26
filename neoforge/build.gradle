@@ -85,6 +85,12 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
+// Release artifacts name the Minecraft version and the loader, so the pairs the
+// release workflow uploads sit side by side: retroconsole-<ver>+1.21.1-<loader>.jar
+tasks.named('jar', Jar) {
+    archiveFileName = "${mod_id}-${mod_version}+${minecraft_version}-neoforge.jar"
+}
+
 idea {
     module {
         downloadSources = true

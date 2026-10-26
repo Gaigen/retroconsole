@@ -2,18 +2,24 @@
 
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-62B47A?style=flat-square)](https://www.minecraft.net/)
 [![NeoForge](https://img.shields.io/badge/NeoForge-21.1.x-orange?style=flat-square)](https://neoforged.net/)
+[![Fabric](https://img.shields.io/badge/Fabric-0.16%2B-dbd0b4?style=flat-square)](https://fabricmc.net/)
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)](#requirements)
 
-NeoForge mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
+NeoForge and Fabric mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
 **Version:** 0.2.5 (early release — expect rough edges)
 
 ## Download
 
-Pre-built JAR: **[GitHub Releases](https://github.com/Gaigen/retroconsole/releases)** → `retroconsole-0.2.6.jar`
+Pre-built JARs: **[GitHub Releases](https://github.com/Gaigen/retroconsole/releases)**
 
-Requirements: Minecraft **1.21.1**, NeoForge **21.1.x**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs.
+| Loader | File |
+|--------|------|
+| NeoForge | `retroconsole-0.2.6+1.21.1-neoforge.jar` |
+| Fabric | `retroconsole-0.2.6+1.21.1-fabric.jar` (needs Fabric API) |
+
+Requirements: Minecraft **1.21.1**, NeoForge **21.1.x** or Fabric Loader **0.16+**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs. Both loaders read the same `config/retroconsole.json`, so settings carry over between them.
 
 ## Features
 
@@ -38,6 +44,7 @@ Requirements: Minecraft **1.21.1**, NeoForge **21.1.x**, Java **21**. The mod do
 |-----------|---------|
 | Minecraft | 1.21.1 |
 | NeoForge | 21.1.x (tested with 21.1.215) |
+| Fabric | Loader 0.16+ and Fabric API (tested with 0.20.1 / 0.116.17) |
 | Java | 21 |
 | Host OS | **Windows** or **Linux** (64-bit) |
 
@@ -45,7 +52,7 @@ macOS is **not** supported.
 
 ## Quick start (players)
 
-1. Install NeoForge 1.21.1 and drop `retroconsole-0.2.6.jar` into the `mods` folder.
+1. Install NeoForge 1.21.1, or Fabric Loader 1.21.1 plus **Fabric API**, and drop the matching jar into the `mods` folder.
 2. Start the game. On first launch the mod creates `config/retroconsole/` under your game directory.
 3. Download libretro cores (`.dll` on Windows, `.so` on Linux) from the [libretro buildbot](https://buildbot.libretro.com/) and place them in `config/retroconsole/cores/`.
 4. Add your legally obtained ROMs under `config/retroconsole/roms/`, preferably in subfolders (`nes/`, `gba/`, `ps2/`, …).
@@ -91,6 +98,14 @@ Place **Screen** blocks so that the **Retro Console touches** any block of the s
    ```bat
    gradlew.bat :neoforge:runClient
    ```
+
+   Fabric client (the `fabric` module is opt-in):
+
+   ```bash
+   ./gradlew :fabric:runClient -Pfabric
+   ```
+
+   The repo is split into `common/` (loader-free code, assets, natives), `neoforge/` and `fabric/` (glue). Each loader module compiles the shared sources into one self-contained jar, and the Fabric dev runs reuse the NeoForge run directory so both loaders see the same cores and ROMs.
 
 Dev paths are under `neoforge/runs/client/config/retroconsole/` (single-player) or `neoforge/runs/server/config/retroconsole/` (dedicated server).
 
@@ -195,7 +210,7 @@ Other cores from the catalog table above may work, but were **not** part of the 
 Settings open **in-game**:
 
 1. Open the console library → **⚙** button (top right), or
-2. Main menu → **Mods** → RetroConsole → **Config**
+2. Main menu → **Mods** → RetroConsole → **Config** (NeoForge). Fabric has no built-in mod list, so use the **⚙** button there.
 
 One file, created on first launch:
 
@@ -299,10 +314,14 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 ## Building a release JAR
 
 ```bash
-./gradlew build
+./gradlew :neoforge:build                        # NeoForge jar only
+./gradlew :neoforge:build :fabric:build -Pfabric # both loaders
 ```
 
-Output: `neoforge/build/libs/retroconsole-0.2.6.jar`
+Outputs:
+
+- `neoforge/build/libs/retroconsole-0.2.6+1.21.1-neoforge.jar`
+- `fabric/build/libs/retroconsole-0.2.6+1.21.1-fabric.jar`
 
 To rebuild the bundled headless GL native library (developers only):
 

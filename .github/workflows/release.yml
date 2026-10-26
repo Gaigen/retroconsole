@@ -51,9 +51,19 @@ jobs:
           path: common/src/main/resources/natives/libheadless_gl.dll
           if-no-files-found: error
 
-  release:
+  build:
     needs: [native-linux, native-windows]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - loader: neoforge
+            task: ':neoforge:build'
+            flags: ''
+          - loader: fabric
+            task: ':fabric:build'
+            flags: '-Pfabric'
     steps:
       - uses: actions/checkout@v5
 
@@ -75,16 +85,35 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Build ${{ matrix.loader }} jar
+        run: ./gradlew ${{ matrix.task }} ${{ matrix.flags }} --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jar-${{ matrix.loader }}
+          path: ${{ matrix.loader }}/build/libs/retroconsole-*.jar
+          if-no-files-found: error
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
       - name: Read mod version
         id: version
         run: echo "mod_version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
-      - name: Build mod
-        run: ./gradlew build --no-daemon
+      - name: Collect jars
+        uses: actions/download-artifact@v4
+        with:
+          pattern: jar-*
+          path: jars
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: RetroConsole ${{ steps.version.outputs.mod_version }}
-          files: neoforge/build/libs/retroconsole-${{ steps.version.outputs.mod_version }}.jar
+          files: jars/retroconsole-*.jar
           generate_release_notes: true

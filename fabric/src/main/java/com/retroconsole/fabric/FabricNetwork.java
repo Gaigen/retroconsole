@@ -22,14 +22,23 @@ public final class FabricNetwork {
     private FabricNetwork() {}
 
     public static void registerCommon() {
+        int registered = 0;
         for (NetPayload<?> definition : RetroPayloads.CLIENT_BOUND) {
             registerToClient(definition);
+            registered++;
         }
         for (NetPayload<?> definition : RetroPayloads.SERVER_BOUND) {
             registerToServer(definition);
+            registered++;
         }
 
-        LOGGER.info("RetroConsole payloads: {} registered (fabric)", RetroPayloads.ALL.size());
+        // Counted rather than read off ALL.size(): a payload that fell out of both
+        // direction lists would otherwise look registered until the first send.
+        if (registered != RetroPayloads.ALL.size()) {
+            throw new IllegalStateException("Registered " + registered + " of "
+                    + RetroPayloads.ALL.size() + " RetroConsole payloads");
+        }
+        LOGGER.info("RetroConsole payloads: {} registered (fabric)", registered);
     }
 
     private static <T> void registerToClient(NetPayload<T> definition) {

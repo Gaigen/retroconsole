@@ -55,6 +55,13 @@ loom {
     }
 }
 
+// Release artifacts name the Minecraft version and the loader, so the pairs the
+// release workflow uploads sit side by side: retroconsole-<ver>+1.21.1-<loader>.jar
+// Loom's RemapJarTask extends AbstractArchiveTask, not Jar, so it is named untyped.
+tasks.named('remapJar') {
+    archiveFileName = "${mod_id}-${mod_version}+${minecraft_version}-fabric.jar"
+}
+
 processResources {
     // NeoForge metadata; the Fabric jar declares itself in fabric.mod.json.
     exclude 'META-INF/neoforge.mods.toml'
