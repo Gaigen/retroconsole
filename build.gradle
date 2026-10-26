@@ -28,13 +28,15 @@ tasks.register('modules') {
 // A bare `./gradlew runClient` matches every project that owns the task, so the
 // loader has to be named. These aliases are the short form; the long form is
 // `./gradlew :neoforge:runClient` / `./gradlew :fabric:runClient -Pfabric`.
-tasks.register('runNeoForgeClient') {
+// They must not start with `run`: NeoGradle reads any run<X> task name as a
+// request for a run of type <X> and fails with "run type 'x' was not found".
+tasks.register('neoForgeClient') {
     group = 'runs'
     description = 'Start the NeoForge development client.'
     dependsOn ':neoforge:runClient'
 }
 
-tasks.register('runFabricClient') {
+tasks.register('fabricClient') {
     group = 'runs'
     description = 'Start the Fabric development client (needs -Pfabric).'
     if (providers.gradleProperty('fabric').isPresent()) {
