@@ -23,8 +23,6 @@ sourceSets.main {
 repositories {
     mavenCentral()
     maven { url = 'https://maven.fabricmc.net/' }
-    // Mod Menu lives here; nothing else is pulled from it.
-    maven { url = 'https://maven.terraformersmc.com/releases/' }
 }
 
 dependencies {
@@ -41,12 +39,6 @@ dependencies {
     // JNA for loading native libretro cores (.so/.dll). NeoForge puts it on the
     // game classpath; Loom's Minecraft classpath does not, so it is explicit here.
     implementation 'net.java.dev.jna:jna:5.14.0'
-
-    // Fabric has no mod list of its own (see FabricModMenu); Mod Menu provides
-    // one and asks mods for their config screen. Optional in the strong sense:
-    // compile-only in the jar, runtime-only in dev so the button is testable.
-    modCompileOnly "com.terraformersmc:modmenu:${modmenu_version}"
-    modLocalRuntime "com.terraformersmc:modmenu:${modmenu_version}"
 }
 
 loom {
