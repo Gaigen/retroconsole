@@ -17,8 +17,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.components.Renderable;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -36,7 +34,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
-public class CoreSelectScreen extends Screen {
+public class CoreSelectScreen extends TrackedWidgetScreen {
 
     private enum View { CARDS, LIST, MANUAL }
 
@@ -385,9 +383,7 @@ public class CoreSelectScreen extends Screen {
         g.drawString(font, "§lRETRO CONSOLE", 10, 8, 0xFFE0E0E0);
         if (libraryLoading) {
             g.drawCenteredString(font, ModTexts.s("gui.loading"), width / 2, height / 2, 0xC0C8D0);
-            for (Renderable renderable : this.renderables) {
-                renderable.render(g, mx, my, pt);
-            }
+            renderTrackedWidgets(g, mx, my, pt);
             return;
         }
         if (cards) {
@@ -413,9 +409,7 @@ public class CoreSelectScreen extends Screen {
             }
         }
 
-        for (Renderable renderable : this.renderables) {
-            renderable.render(g, mx, my, pt);
-        }
+        renderTrackedWidgets(g, mx, my, pt);
         if (view == View.CARDS) renderCardTextures(g);
         if (popupSystem != null && view == View.CARDS) renderGamePopup(g, mx, my);
         if (showHelp) renderHelp(g);

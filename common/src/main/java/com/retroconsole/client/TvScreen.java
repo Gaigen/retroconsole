@@ -27,8 +27,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.Renderable;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -46,7 +44,7 @@ import java.util.UUID;
  * Fullscreen GUI for viewing and playing a retro console game.
  * Input bindings live in {@link ModKeys} and are resolved via {@link RetroInputBindings}.
  */
-public class TvScreen extends Screen {
+public class TvScreen extends TrackedWidgetScreen {
 
     private static final int BAR_HEIGHT = 24;
     private static final int COL_PANEL_2 = 0xFF14161C;
@@ -168,9 +166,7 @@ public class TvScreen extends Screen {
         TvBezelRenderer.render(guiGraphics, width, height, BAR_HEIGHT,
                 frameX, frameY, frameW, frameH, Util.getMillis());
         renderBar(guiGraphics);
-        for (Renderable renderable : this.renderables) {
-            renderable.render(guiGraphics, mouseX, mouseY, partialTick);
-        }
+        renderTrackedWidgets(guiGraphics, mouseX, mouseY, partialTick);
         if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             renderTouchCursor(guiGraphics);
         }
@@ -435,7 +431,7 @@ public class TvScreen extends Screen {
             this.onClose();
             return true;
         }
-        if (ModKeys.VIRTUAL_STYLUS.isActiveAndMatches(InputConstants.getKey(keyCode, scanCode))
+        if (ModKeys.isActiveAndMatches(ModKeys.VIRTUAL_STYLUS, InputConstants.getKey(keyCode, scanCode))
                 && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             virtualStylus = !virtualStylus;
             return true;
@@ -455,7 +451,7 @@ public class TvScreen extends Screen {
 
         InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
         if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
-                && ModKeys.BTN_CURSOR_TOUCH.isActiveAndMatches(key)) {
+                && ModKeys.isActiveAndMatches(ModKeys.BTN_CURSOR_TOUCH, key)) {
             double mx = minecraft.mouseHandler.xpos()
                     * this.width / (double) minecraft.getWindow().getScreenWidth();
             double my = minecraft.mouseHandler.ypos()
@@ -480,7 +476,7 @@ public class TvScreen extends Screen {
         }
         InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
         if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
-                && ModKeys.BTN_CURSOR_TOUCH.isActiveAndMatches(key)) {
+                && ModKeys.isActiveAndMatches(ModKeys.BTN_CURSOR_TOUCH, key)) {
             pointerDown = false;
             sendPointerState(false);
             return true;

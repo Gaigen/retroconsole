@@ -151,9 +151,16 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         }
     }
 
+    /**
+     * Runs once the level is attached, which is the loader-neutral equivalent of
+     * the load hook the console registration needs. Vanilla may call this twice
+     * while unpacking a chunk, so the previous level is compared first.
+     */
     @Override
-    public void onLoad() {
-        super.onLoad();
+    public void setLevel(Level level) {
+        Level previous = this.level;
+        super.setLevel(level);
+        if (level == previous) return;
         if (level instanceof ServerLevel serverLevel) {
             serverLevel.getServer().execute(() -> {
                 if (!isRemoved() && serverLevel.isLoaded(worldPosition)) {

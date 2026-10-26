@@ -66,12 +66,12 @@ public final class RetroInputBindings {
 
     public static int mapButton(InputConstants.Key key) {
         for (ButtonBind bind : BUTTONS) {
-            if (bind.key().isActiveAndMatches(key)) {
+            if (ModKeys.isActiveAndMatches(bind.key(), key)) {
                 return bind.retroId();
             }
         }
         for (ButtonBind bind : DS_BUTTONS) {
-            if (bind.key().isActiveAndMatches(key)) {
+            if (ModKeys.isActiveAndMatches(bind.key(), key)) {
                 return bind.retroId();
             }
         }
@@ -84,19 +84,19 @@ public final class RetroInputBindings {
     public static boolean updateStick(StickBind bind, InputConstants.Key key, boolean pressed,
                                       StickState state) {
         boolean changed = false;
-        if (bind.up().isActiveAndMatches(key) && state.up != pressed) {
+        if (ModKeys.isActiveAndMatches(bind.up(), key) && state.up != pressed) {
             state.up = pressed;
             changed = true;
         }
-        if (bind.down().isActiveAndMatches(key) && state.down != pressed) {
+        if (ModKeys.isActiveAndMatches(bind.down(), key) && state.down != pressed) {
             state.down = pressed;
             changed = true;
         }
-        if (bind.left().isActiveAndMatches(key) && state.left != pressed) {
+        if (ModKeys.isActiveAndMatches(bind.left(), key) && state.left != pressed) {
             state.left = pressed;
             changed = true;
         }
-        if (bind.right().isActiveAndMatches(key) && state.right != pressed) {
+        if (ModKeys.isActiveAndMatches(bind.right(), key) && state.right != pressed) {
             state.right = pressed;
             changed = true;
         }

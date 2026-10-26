@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "retroconsole",
+  "version": "${version}",
+  "name": "RetroConsole",
+  "description": "Retro console emulator in Minecraft",
+  "authors": [
+    "Gaigen"
+  ],
+  "license": "GPL-3.0-or-later",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.retroconsole.fabric.RetroConsoleFabric"
+    ],
+    "client": [
+      "com.retroconsole.fabric.client.RetroConsoleFabricClient"
+    ]
+  },
+  "mixins": [
+    "retroconsole.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

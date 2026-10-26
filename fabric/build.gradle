@@ -1,0 +1,75 @@
+plugins {
+    id 'fabric-loom' version "${fabric_loom_version}"
+}
+
+base {
+    archivesName = "${mod_id}-fabric"
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+def commonProject = project(':common')
+
+// Same model as the NeoForge module: the shared sources are compiled into this
+// project so one jar carries the whole mod. Loom's `include project(':common')`
+// is not an option — it nests the jar as META-INF/jars/*, and Fabric Loader only
+// mounts nested jars that are mods themselves, so the shared classes and assets
+// would never reach the runtime.
+sourceSets.main {
+    java.srcDir commonProject.file('src/main/java')
+    resources.srcDir commonProject.file('src/main/resources')
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.fabricmc.net/' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    // The shared code is written against Mojang names (net.minecraft.client...),
+    // i.e. exactly what the NeoForge module compiles against.
+    mappings loom.officialMojangMappings()
+
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    // The bundle carries the networking, lifecycle, key binding, item group,
+    // registry sync and rendering modules this port needs.
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+
+    // JNA for loading native libretro cores (.so/.dll). NeoForge puts it on the
+    // game classpath; Loom's Minecraft classpath does not, so it is explicit here.
+    implementation 'net.java.dev.jna:jna:5.14.0'
+}
+
+loom {
+    // A dev instance is only useful with the 5 GB of cores/roms already sitting
+    // in the NeoForge run directory, so both loaders share it. Nothing in there
+    // is loader-specific (mods/ is empty; mod code comes from the classpath).
+    runs {
+        client {
+            runDir = '../neoforge/runs/client'
+        }
+        server {
+            runDir = '../neoforge/runs/server'
+        }
+    }
+}
+
+processResources {
+    // NeoForge metadata; the Fabric jar declares itself in fabric.mod.json.
+    exclude 'META-INF/neoforge.mods.toml'
+    inputs.property 'version', version
+    filesMatching('fabric.mod.json') {
+        expand 'version': version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+idea {
+    module {
+        downloadSources = true
+    }
+}

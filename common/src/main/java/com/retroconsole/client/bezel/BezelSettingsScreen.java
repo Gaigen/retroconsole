@@ -1,6 +1,7 @@
 package com.retroconsole.client.bezel;
 
 import com.retroconsole.client.ModTexts;
+import com.retroconsole.client.TrackedWidgetScreen;
 import net.minecraft.Util;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractSliderButton;
@@ -18,7 +19,7 @@ import java.util.Locale;
  * Bezel art picker: file list with live preview.
  * LMB on file — left panel, RMB — right panel. Applied immediately.
  */
-public class BezelSettingsScreen extends Screen {
+public class BezelSettingsScreen extends TrackedWidgetScreen {
 
     private static final int ITEM_H = 18;
     private static final int COL_PANEL   = 0xFF101318;
@@ -122,7 +123,7 @@ public class BezelSettingsScreen extends Screen {
         renderList(g, mx, my);
         renderPreviews(g);
 
-        for (var renderable : renderables) renderable.render(g, mx, my, pt);
+        renderTrackedWidgets(g, mx, my, pt);
     }
 
     @Override
