@@ -41,6 +41,13 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
     private static final int ITEM_H = 16;
     private static final int CARD_H = 88;
 
+    // System tab strip of the list view. It scrolls sideways instead of wrapping
+    // because a library with a dozen systems would otherwise eat the list height.
+    private static final int TAB_TOP = 48;
+    private static final int TAB_H = 18;
+    private static final int TAB_EDGE = 10;
+    private static final int TAB_ARROW = 12;
+
     private static final int COL_PANEL   = 0xFF101318;
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE    = 0xFF2A2F3A;
@@ -64,6 +71,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
 
     private double scrollRoms, targetRoms, scrollCores, targetCores, scrollCards, targetCards;
     private int pickerScroll;
+    private int tabScroll;
 
     private EditBox searchBox;
     private Button startBtn, pickCoreBtn, backBtn, modeBtn, folderBtn;
@@ -125,6 +133,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             b.setMessage(viewLabel());
             blip(1.2f);
             refreshShown();
+            ensureActiveTabVisible();
         }).pos(width - 172, 22).size(64, 18).build());
 
         pickCoreBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.core_picker"),
@@ -529,16 +538,89 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         g.disableScissor();
     }
 
-    private List<int[]> tabRects() { // [x, w, index]; index -1 = "All"
+    /** Unscrolled tab rectangles: [x, w, index]; index -1 = "All". */
+    private List<int[]> tabRectsRaw() {
         boolean counts = tabCountsFit();
         List<int[]> out = new ArrayList<>();
-        int x = 10;
+        int x = 0;
         for (int i = -1; i < tabs.size(); i++) {
             int w = font.width(tabLabel(i < 0 ? null : tabs.get(i), counts)) + 14;
             out.add(new int[]{x, w, i});
             x += w + 3;
         }
         return out;
+    }
+
+    /** Tab rectangles as drawn: strip offset applied, in screen coordinates. */
+    private List<int[]> tabRects() {
+        int origin = tabOriginX() - tabScroll;
+        List<int[]> out = new ArrayList<>();
+        for (int[] r : tabRectsRaw()) out.add(new int[]{origin + r[0], r[1], r[2]});
+        return out;
+    }
+
+    private int tabsWidth() {
+        List<int[]> raw = tabRectsRaw();
+        return raw.isEmpty() ? 0 : raw.get(raw.size() - 1)[0] + raw.get(raw.size() - 1)[1];
+    }
+
+    private boolean tabsOverflow() {
+        return tabsWidth() > width - 2 * TAB_EDGE;
+    }
+
+    /** Left edge of the strip; the arrow buttons take TAB_ARROW on each side when it scrolls. */
+    private int tabOriginX() {
+        return TAB_EDGE + (tabsOverflow() ? TAB_ARROW : 0);
+    }
+
+    private int tabViewportW() {
+        return Math.max(1, width - 2 * TAB_EDGE - (tabsOverflow() ? 2 * TAB_ARROW : 0));
+    }
+
+    private int maxTabScroll() {
+        return Math.max(0, tabsWidth() - tabViewportW());
+    }
+
+    private void clampTabScroll() {
+        tabScroll = Math.max(0, Math.min(tabScroll, maxTabScroll()));
+    }
+
+    private int[] tabArrowRect(boolean left) {
+        int x = left ? TAB_EDGE : width - TAB_EDGE - TAB_ARROW;
+        return new int[]{x, TAB_TOP, TAB_ARROW, TAB_H};
+    }
+
+    private boolean tabArrowHit(double mx, double my, boolean left) {
+        int[] r = tabArrowRect(left);
+        return mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3];
+    }
+
+    private void scrollTabs(int dir) {
+        tabScroll += dir * Math.max(ITEM_H, tabViewportW() - 30);
+        clampTabScroll();
+        blip(1.0f);
+    }
+
+    /** Scrolls the strip just enough to show a drawn tab rectangle. */
+    private void ensureTabVisible(int[] rect) {
+        if (!tabsOverflow()) {
+            tabScroll = 0;
+            return;
+        }
+        int origin = tabOriginX(), viewW = tabViewportW();
+        if (rect[0] < origin) tabScroll -= origin - rect[0];
+        else if (rect[0] + rect[1] > origin + viewW) tabScroll += rect[0] + rect[1] - origin - viewW;
+        clampTabScroll();
+    }
+
+    private void ensureActiveTabVisible() {
+        int index = activeTab == null ? -1 : tabs.indexOf(activeTab);
+        for (int[] rect : tabRects()) {
+            if (rect[2] == index) {
+                ensureTabVisible(rect);
+                return;
+            }
+        }
     }
 
     private boolean tabCountsFit() {
@@ -558,17 +640,36 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
     }
 
     private void renderTabs(GuiGraphics g, int mx, int my) {
+        clampTabScroll();
         boolean counts = tabCountsFit();
+        boolean overflow = tabsOverflow();
+        int viewX = tabOriginX(), viewW = tabViewportW();
+        g.enableScissor(viewX, TAB_TOP, viewX + viewW, TAB_TOP + TAB_H);
         for (int[] rect : tabRects()) {
             GameSystem s = rect[2] < 0 ? null : tabs.get(rect[2]);
             boolean active = activeTab == s;
-            boolean hover = mx >= rect[0] && mx < rect[0] + rect[1] && my >= 48 && my < 66;
-            g.fill(rect[0], 48, rect[0] + rect[1], 66, active ? COL_SEL : hover ? COL_HOVER : COL_PANEL);
-            g.fill(rect[0], 64, rect[0] + rect[1], 66,
+            boolean hover = mx >= rect[0] && mx < rect[0] + rect[1] && my >= TAB_TOP && my < TAB_TOP + TAB_H;
+            g.fill(rect[0], TAB_TOP, rect[0] + rect[1], TAB_TOP + TAB_H,
+                    active ? COL_SEL : hover ? COL_HOVER : COL_PANEL);
+            g.fill(rect[0], TAB_TOP + TAB_H - 2, rect[0] + rect[1], TAB_TOP + TAB_H,
                     active ? (s == null ? 0xFF80A0FF : s.color) : COL_EDGE);
             g.drawCenteredString(font, tabLabel(s, counts),
-                    rect[0] + rect[1] / 2, 53, active ? 0xFFFFFF : hover ? 0xD0D0D0 : 0x909090);
+                    rect[0] + rect[1] / 2, TAB_TOP + 5, active ? 0xFFFFFF : hover ? 0xD0D0D0 : 0x909090);
         }
+        g.disableScissor();
+        if (overflow) {
+            drawTabArrow(g, mx, my, true, tabScroll > 0);
+            drawTabArrow(g, mx, my, false, tabScroll < maxTabScroll());
+        }
+    }
+
+    private void drawTabArrow(GuiGraphics g, int mx, int my, boolean left, boolean enabled) {
+        int[] r = tabArrowRect(left);
+        boolean hover = enabled && mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3];
+        g.fill(r[0], r[1], r[0] + r[2], r[1] + r[3], hover ? COL_HOVER : COL_PANEL_2);
+        g.fill(left ? r[0] + r[2] - 1 : r[0], r[1], left ? r[0] + r[2] : r[0] + 1, r[1] + r[3], COL_EDGE);
+        g.drawCenteredString(font, left ? "\u25C0" : "\u25B6",
+                r[0] + r[2] / 2, r[1] + 5, enabled ? (hover ? 0xFFFFFF : 0xB0B8C0) : 0x404850);
     }
 
     private void renderGameList(GuiGraphics g, int mx, int my, int x, int w) {
@@ -825,13 +926,20 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             return false;
         }
 
-        if (view == View.LIST && my >= 48 && my < 66) {
-            for (int[] rect : tabRects()) {
-                if (mx >= rect[0] && mx < rect[0] + rect[1]) {
-                    activeTab = rect[2] < 0 ? null : tabs.get(rect[2]);
-                    blip(1.2f);
-                    refreshShown();
-                    return true;
+        if (view == View.LIST && my >= TAB_TOP && my < TAB_TOP + TAB_H) {
+            if (tabsOverflow()) {
+                if (tabArrowHit(mx, my, true)) { scrollTabs(-1); return true; }
+                if (tabArrowHit(mx, my, false)) { scrollTabs(1); return true; }
+            }
+            if (mx >= tabOriginX() && mx < tabOriginX() + tabViewportW()) {
+                for (int[] rect : tabRects()) {
+                    if (mx >= rect[0] && mx < rect[0] + rect[1]) {
+                        activeTab = rect[2] < 0 ? null : tabs.get(rect[2]);
+                        blip(1.2f);
+                        refreshShown();
+                        ensureTabVisible(rect);
+                        return true;
+                    }
                 }
             }
         }
@@ -886,6 +994,11 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             int visible = popupGeom()[4];
             popupScroll = Math.max(0, Math.min(popupScroll - (int) Math.signum(hy),
                     Math.max(0, popupRoms.size() - visible)));
+            return true;
+        }
+        if (view == View.LIST && my >= TAB_TOP && my < TAB_TOP + TAB_H && tabsOverflow()) {
+            tabScroll += (int) Math.round(-hy * ITEM_H * 1.5);
+            clampTabScroll();
             return true;
         }
         if (view == View.CARDS) {
@@ -951,6 +1064,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
                 activeTab = idx == 0 ? null : tabs.get(idx - 1);
                 blip(1.2f);
                 refreshShown();
+                ensureActiveTabVisible();
                 return true;
             }
             if (!shown.isEmpty() && (key == GLFW.GLFW_KEY_DOWN || key == GLFW.GLFW_KEY_UP)) {
