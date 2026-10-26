@@ -24,3 +24,22 @@ tasks.register('modules') {
         subprojects.each { println " - ${it.path} (${it.projectDir.name})" }
     }
 }
+
+// A bare `./gradlew runClient` matches every project that owns the task, so the
+// loader has to be named. These aliases are the short form; the long form is
+// `./gradlew :neoforge:runClient` / `./gradlew :fabric:runClient -Pfabric`.
+tasks.register('runNeoForgeClient') {
+    group = 'runs'
+    description = 'Start the NeoForge development client.'
+    dependsOn ':neoforge:runClient'
+}
+
+tasks.register('runFabricClient') {
+    group = 'runs'
+    description = 'Start the Fabric development client (needs -Pfabric).'
+    if (providers.gradleProperty('fabric').isPresent()) {
+        dependsOn ':fabric:runClient'
+    } else {
+        doFirst { throw new GradleException('Add -Pfabric to start the Fabric client.') }
+    }
+}

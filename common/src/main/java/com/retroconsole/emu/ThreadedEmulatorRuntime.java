@@ -14,11 +14,6 @@ public class ThreadedEmulatorRuntime {
     private volatile int currentHeight;
 
     public ThreadedEmulatorRuntime(FrameSource source, int defaultWidth, int defaultHeight) {
-        this(source, defaultWidth, defaultHeight, 60);
-    }
-
-    /** @deprecated initial targetFps is ignored — loop uses {@link FrameSource#getTimingFps()}. */
-    public ThreadedEmulatorRuntime(FrameSource source, int defaultWidth, int defaultHeight, int targetFps) {
         this.source = source;
         this.currentWidth = defaultWidth;
         this.currentHeight = defaultHeight;

@@ -87,7 +87,7 @@ Place **Screen** blocks so that the **Retro Console touches** any block of the s
    ```
 
 2. Use **Java 21**.
-3. Run the `runClient` Gradle task, or:
+3. Run the NeoForge client:
 
    ```bash
    ./gradlew :neoforge:runClient
@@ -98,6 +98,8 @@ Place **Screen** blocks so that the **Retro Console touches** any block of the s
    ```bat
    gradlew.bat :neoforge:runClient
    ```
+
+   `runNeoForgeClient` / `runFabricClient` work from the root too. A bare `./gradlew runClient` is ambiguous (Gradle matches the task in every project that has one), so always name the loader.
 
    Fabric client (the `fabric` module is opt-in):
 

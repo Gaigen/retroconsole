@@ -37,6 +37,15 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
+// This project never launches the game: the runs belong to the loader modules.
+// NeoGradle still generates runClient/runServer/runData here, and a bare
+// `./gradlew runClient` from the root directory matches every project that has
+// the task, so :common:runClient would start a mod-less game (or die on the
+// missing run directory) and take the build down with it before
+// :neoforge:runClient ever runs.
+tasks.matching { it.name in ['runClient', 'runServer', 'runData', 'runGameTestServer'] }
+        .configureEach { enabled = false }
+
 idea {
     module {
         downloadSources = true
