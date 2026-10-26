@@ -17,7 +17,7 @@ Pre-built JARs: **[GitHub Releases](https://github.com/Gaigen/retroconsole/relea
 | Loader | File |
 |--------|------|
 | NeoForge | `retroconsole-0.2.6+1.21.1-neoforge.jar` |
-| Fabric | `retroconsole-0.2.6+1.21.1-fabric.jar` (needs Fabric API) |
+| Fabric | `retroconsole-0.2.6+1.21.1-fabric.jar` (needs Fabric API, optionally Mod Menu) |
 
 Requirements: Minecraft **1.21.1**, NeoForge **21.1.x** or Fabric Loader **0.16+**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs. Both loaders read the same `config/retroconsole.json`, so settings carry over between them.
 
@@ -210,7 +210,7 @@ Other cores from the catalog table above may work, but were **not** part of the 
 Settings open **in-game**:
 
 1. Open the console library → **⚙** button (top right), or
-2. Main menu → **Mods** → RetroConsole → **Config** (NeoForge). Fabric has no built-in mod list, so use the **⚙** button there.
+2. Main menu → **Mods** → RetroConsole → **Config** — the NeoForge mod list, or [Mod Menu](https://modrinth.com/mod/modmenu) on Fabric. Without Mod Menu, Fabric players use the **⚙** button.
 
 One file, created on first launch:
 

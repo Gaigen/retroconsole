@@ -15,6 +15,9 @@
     ],
     "client": [
       "com.retroconsole.fabric.client.RetroConsoleFabricClient"
+    ],
+    "modmenu": [
+      "com.retroconsole.fabric.client.FabricModMenu"
     ]
   },
   "mixins": [
@@ -25,5 +28,8 @@
     "minecraft": "~1.21.1",
     "java": ">=21",
     "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": ">=11.0.0"
   }
 }
