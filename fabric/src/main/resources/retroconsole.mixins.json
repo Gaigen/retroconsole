@@ -4,7 +4,9 @@
   "package": "com.retroconsole.fabric.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "GuiMixin"
+    "GuiMixin",
+    "KeyMappingAccessor",
+    "KeyMappingMixin"
   ],
   "injectors": {
     "defaultRequire": 1
