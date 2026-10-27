@@ -166,6 +166,16 @@ public class LibretroCoreLinux extends LibretroCore {
     private long lastFrameTimeNs;
     private Pointer asyncAudioCallbackFn;
     private Pointer asyncAudioSetStateFn;
+    private com.sun.jna.Function asyncAudioCallback;
+    /**
+     * Cadence for SET_AUDIO_CALLBACK. A threaded-audio core renders a fixed chunk per
+     * call, not "whatever is due" — mkxp-z renders AUDIO_SLEEP (10 ms) worth
+     * (al-util.h), 480 samples at 48 kHz. Pumping it from the frame loop handed the
+     * core one chunk per video frame, so only ~60% of the samples ever existed.
+     */
+    private static final long ASYNC_AUDIO_PERIOD_NS = 10_000_000L;
+    /** Drives SET_AUDIO_CALLBACK while a core is loaded; null when no pump runs. */
+    private volatile Thread asyncAudioPump;
 
     // Input — written by server thread, read by emulator thread (lock-free)
     private final java.util.concurrent.atomic.AtomicIntegerArray[] joypadState =
@@ -681,6 +691,16 @@ public class LibretroCoreLinux extends LibretroCore {
             if (data != null) data.setInt(0, 3);
             return true;
         }
+        // GET_DEVICE_POWER (77|EXPERIMENTAL): a desktop running on mains power.
+        if (cmd == LibretroEnvironment.GET_DEVICE_POWER) {
+            if (data != null) {
+                // retro_device_power { enum retro_power_state state; int seconds; int percent; }
+                data.setInt(0, LibretroEnvironment.RETRO_POWERSTATE_PLUGGED_IN);
+                data.setInt(4, LibretroEnvironment.RETRO_POWERSTATE_NO_ESTIMATE);
+                data.setInt(8, 100);
+            }
+            return true;
+        }
         int base = LibretroEnvironment.normalize(cmd);
         switch (base) {
             case LibretroEnvironment.GET_CAN_DUPE -> {
@@ -887,6 +907,8 @@ public class LibretroCoreLinux extends LibretroCore {
                 return false;
             }
             case LibretroEnvironment.SET_MESSAGE_EXT -> {
+                // retro_message_ext { const char *msg; unsigned level; unsigned duration; … }
+                logCoreMessage(data, data != null ? data.getInt(Native.POINTER_SIZE) : -1);
                 return true;
             }
             case LibretroEnvironment.SET_CORE_OPTIONS_V2_INTL -> {
@@ -898,13 +920,23 @@ public class LibretroCoreLinux extends LibretroCore {
                 return false;
             }
             case LibretroEnvironment.SET_MESSAGE -> {
-                return false;
+                // Cores report load/init failures only here — swallowing it turns a
+                // broken core into a silent black screen.
+                logCoreMessage(data, -1);
+                return true;
             }
             case LibretroEnvironment.SET_DISK_CONTROL_INTERFACE -> {
                 return false;
             }
             case LibretroEnvironment.SET_KEYBOARD_CALLBACK -> {
-                return false;
+                // Text-heavy cores (mkxp-z, DOSBox, …) never poll RETRO_DEVICE_KEYBOARD;
+                // they get keys only through this callback.
+                if (data == null) return false;
+                Pointer fn = data.getPointer(0);
+                if (fn == null || Pointer.nativeValue(fn) == 0) return false;
+                setKeyboardCallbackFn(fn);
+                LOGGER.info("SET_KEYBOARD_CALLBACK registered @ {}", fn);
+                return true;
             }
             case LibretroEnvironment.SET_SUBSYSTEM_INFO -> {
                 return true;
@@ -944,9 +976,13 @@ public class LibretroCoreLinux extends LibretroCore {
             }
             default -> {
                 long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
-                LOGGER.warn("Unhandled env {} (raw=0x{}, base={}) data=0x{}",
-                        LibretroEnvironment.name(cmd), Integer.toHexString(cmd),
-                        LibretroEnvironment.normalize(cmd), Long.toHexString(dataAddr));
+                // Once per command: cores poll some of these every frame, and a WARN per
+                // call floods the log from the emulator and the audio-pump thread.
+                if (warnedEnvCmds.add(cmd)) {
+                    LOGGER.warn("Unhandled env {} (raw=0x{}, base={}) data=0x{} — repeats suppressed",
+                            LibretroEnvironment.name(cmd), Integer.toHexString(cmd),
+                            LibretroEnvironment.normalize(cmd), Long.toHexString(dataAddr));
+                }
                 return false;
             }
         }
@@ -963,12 +999,37 @@ public class LibretroCoreLinux extends LibretroCore {
         return frameTimeCallbackFn != null && Pointer.nativeValue(frameTimeCallbackFn) != 0;
     }
 
+    /**
+     * Log a core-provided message. {@code level} is a RETRO_LOG_* value, or -1 when the
+     * core used the legacy {@code retro_message} (which carries no severity).
+     */
+    private void logCoreMessage(Pointer data, int level) {
+        if (data == null) return;
+        try {
+            Pointer msgPtr = data.getPointer(0);
+            if (msgPtr == null) return;
+            String msg = msgPtr.getString(0);
+            if (msg == null || msg.isBlank()) return;
+            String text = msg.replace('\n', ' ').replace('\r', ' ').trim();
+            switch (level) {
+                case 3 -> LOGGER.error("Core message: {}", text);   // RETRO_LOG_ERROR
+                case 2 -> LOGGER.warn("Core message: {}", text);    // RETRO_LOG_WARN
+                default -> LOGGER.info("Core message: {}", text);
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("Unreadable core message: {}", t.getMessage());
+        }
+    }
+
     private boolean handleSetAsyncAudioCallback(Pointer data) {
         if (data == null) return false;
         asyncAudioCallbackFn = data.getPointer(0);
         asyncAudioSetStateFn = data.getPointer(Native.POINTER_SIZE);
+        asyncAudioCallback = asyncAudioCallbackFn == null
+                || Pointer.nativeValue(asyncAudioCallbackFn) == 0
+                ? null : com.sun.jna.Function.getFunction(asyncAudioCallbackFn);
         LOGGER.info("SET_AUDIO_CALLBACK registered");
-        return true;
+        return asyncAudioCallback != null;
     }
 
     private void tickFrameTimeBeforeRun() {
@@ -986,11 +1047,61 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     private void invokeAsyncAudioCallback() {
-        if (asyncAudioCallbackFn == null || Pointer.nativeValue(asyncAudioCallbackFn) == 0) return;
+        com.sun.jna.Function fn = asyncAudioCallback;
+        if (fn == null) return;
         try {
-            com.sun.jna.Function.getFunction(asyncAudioCallbackFn).invokeVoid(new Object[0]);
+            fn.invokeVoid(new Object[0]);
         } catch (Throwable t) {
             LOGGER.warn("async audio callback failed: {}", t.getMessage());
+        }
+    }
+
+    /** Start pumping SET_AUDIO_CALLBACK once the core asked for it. Idempotent. */
+    private void startAsyncAudioPump() {
+        if (asyncAudioPump != null) return;
+        if (asyncAudioCallback == null) return;
+        Thread t = new Thread(this::runAsyncAudioPump, "retro-audio-pump");
+        t.setDaemon(true);
+        asyncAudioPump = t;
+        t.start();
+        LOGGER.info("Async audio pump started ({} ms period)", ASYNC_AUDIO_PERIOD_NS / 1_000_000L);
+    }
+
+    /** Must run before retro_unload_game: the pump executes native core code. */
+    private void stopAsyncAudioPump() {
+        Thread t = asyncAudioPump;
+        asyncAudioPump = null;
+        if (t == null) return;
+        t.interrupt();
+        try {
+            t.join(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        LOGGER.info("Async audio pump stopped");
+    }
+
+    private void runAsyncAudioPump() {
+        Thread self = Thread.currentThread();
+        long startNs = System.nanoTime();
+        long chunks = 0;
+        while (asyncAudioPump == self && !self.isInterrupted()) {
+            // Closed loop on the chunk count, not on sleep deadlines: parking a whole
+            // period oversleeps, which silently shaves samples off the stream.
+            long due = (System.nanoTime() - startNs) / ASYNC_AUDIO_PERIOD_NS;
+            long behind = due - chunks;
+            if (behind <= 0) {
+                java.util.concurrent.locks.LockSupport.parkNanos(ASYNC_AUDIO_PERIOD_NS / 2);
+                continue;
+            }
+            if (behind > 8) {
+                // Huge stall (world load, GC): do not replay seconds of audio. Skip the
+                // old chunks by moving the clock, keeping produced == due afterwards.
+                startNs += (behind - 8) * ASYNC_AUDIO_PERIOD_NS;
+                behind = 8;
+            }
+            for (long c = 0; c < behind; c++) invokeAsyncAudioCallback();
+            chunks += behind;
         }
     }
 
@@ -1127,6 +1238,9 @@ public class LibretroCoreLinux extends LibretroCore {
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
     /** Keep Memory alive: GC must not free strings before the core reads them. */
     private final java.util.List<Memory> allocatedVarMemory = new java.util.ArrayList<>();
+
+    /** See LibretroCoreWindows: one WARN per distinct unknown env command, not per call. */
+    private final java.util.Set<Integer> warnedEnvCmds = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private static final int CORE_OPT_VALUE_SIZE = Native.POINTER_SIZE * 2;
     private static final int CORE_OPT_DEF_V1_SIZE =
@@ -1450,8 +1564,13 @@ public class LibretroCoreLinux extends LibretroCore {
         }
         long t0 = System.nanoTime();
         tickFrameTimeBeforeRun();
+        // Keyboard callbacks are only valid from the core thread.
+        flushKeyboardEvents();
         core.retro_run();
-        invokeAsyncAudioCallback();
+        // Threaded audio runs on its own clock, not on the video frame — but it must not
+        // start earlier either: cores boot inside the first retro_run and would render
+        // audio into a ring nobody drains yet.
+        startAsyncAudioPump();
         long dtMs = (System.nanoTime() - t0) / 1_000_000;
         if (dtMs > 100 && hwRenderActive && isPpssppCore())
             LOGGER.warn("retro_run took {}ms (possible ThreadFrame stall)", dtMs);
@@ -1600,18 +1719,30 @@ public class LibretroCoreLinux extends LibretroCore {
     }
 
     public byte[] serialize() {
-        long size = core.retro_serialize_size();
-        if (size <= 0) return null;
-        var mem = new Memory(size);
-        if (core.retro_serialize(mem, size)) return mem.getByteArray(0, (int) size);
-        return null;
+        boolean pumping = asyncAudioPump != null;
+        if (pumping) stopAsyncAudioPump();   // a state dump must not race audio_render
+        try {
+            long size = core.retro_serialize_size();
+            if (size <= 0) return null;
+            var mem = new Memory(size);
+            if (core.retro_serialize(mem, size)) return mem.getByteArray(0, (int) size);
+            return null;
+        } finally {
+            if (pumping) startAsyncAudioPump();
+        }
     }
 
     public boolean unserialize(byte[] data) {
         if (data == null) return false;
-        var mem = new Memory(data.length);
-        mem.write(0, data, 0, data.length);
-        return core.retro_unserialize(mem, data.length);
+        boolean pumping = asyncAudioPump != null;
+        if (pumping) stopAsyncAudioPump();
+        try {
+            var mem = new Memory(data.length);
+            mem.write(0, data, 0, data.length);
+            return core.retro_unserialize(mem, data.length);
+        } finally {
+            if (pumping) startAsyncAudioPump();
+        }
     }
 
     public byte[] getSaveRam() {
@@ -1662,6 +1793,8 @@ public class LibretroCoreLinux extends LibretroCore {
     @Override
     public void close() throws Exception {
         if (core != null) {
+            // The pump calls into the core; it must be gone before unload/deinit.
+            stopAsyncAudioPump();
             if (gameLoaded) {
                 try {
                     core.retro_unload_game();
@@ -1700,6 +1833,7 @@ public class LibretroCoreLinux extends LibretroCore {
         frameTimeCallbackFn = null;
         asyncAudioCallbackFn = null;
         asyncAudioSetStateFn = null;
+        asyncAudioCallback = null;
         lastFrameTimeNs = 0;
         frameTimeReferenceUs = 0;
     }

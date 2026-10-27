@@ -45,7 +45,7 @@ public final class ConfigScreen extends Screen {
     private static final int FOOTER = 34;
     private static final int WIDGET_W = 168;
 
-    private enum Tab { PATHS, STREAMING, LIMITS, VIDEO, INPUT }
+    private enum Tab { PATHS, STREAMING, LIMITS, VIDEO, INPUT, DEBUG }
 
     private final Screen parent;
     private Tab tab = Tab.STREAMING;
@@ -215,6 +215,9 @@ public final class ConfigScreen extends Screen {
                         () -> c.input.gamepadDeadzone, v -> c.input.gamepadDeadzone = v));
                 rows.add(dec("gamepad.triggerThreshold", 0.05, 0.95, 0.05,
                         () -> c.input.gamepadTriggerThreshold, v -> c.input.gamepadTriggerThreshold = v));
+            }
+            case DEBUG -> {
+                rows.add(bool("verboseLogs", () -> c.debug.verboseLogs, v -> c.debug.verboseLogs = v));
             }
         }
         return rows;

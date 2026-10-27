@@ -42,7 +42,7 @@ jobs:
         run: |
           mkdir -p runs/client/config/retroconsole/cores
           mkdir -p common/src/main/resources/natives
-          gcc -shared -O2 -o runs/client/config/retroconsole/cores/.libheadless_gl.dll headless_gl_win.c -lopengl32 -lgdi32 -luser32
+          gcc -shared -O2 -static -o runs/client/config/retroconsole/cores/.libheadless_gl.dll neoforge/headless_gl_win.c -lopengl32 -lgdi32 -luser32
           cp runs/client/config/retroconsole/cores/.libheadless_gl.dll common/src/main/resources/natives/libheadless_gl.dll
 
       - uses: actions/upload-artifact@v4

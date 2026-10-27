@@ -96,6 +96,8 @@
   "retroconsole.error.pcsx2_bios": "Нет BIOS PS2 — положите SCPH-*.BIN в system/pcsx2/bios",
   "retroconsole.error.load_failed": "Не удалось загрузить ядро %s с ROM %s",
   "retroconsole.error.3ds_disabled": "Nintendo 3DS (Citra) отключён в конфиге сервера",
+  "retroconsole.error.core_stopped": "%s остановился: %s",
+  "retroconsole.error.core_stopped_rtp": "%s остановился: %s. Игре нужен run-time package (RTP) RPG Maker \"%s\" - положите его папки Audio, Graphics и Data в %s",
 
   "retroconsole.gui.core_picker": "Ядро…",
   "retroconsole.gui.start": "▶ Запустить",
@@ -103,6 +105,10 @@
   "retroconsole.gui.server_tag": "§8(сервер)",
   "retroconsole.gui.no_results": "Ничего не найдено",
   "retroconsole.gui.no_signal": "Нет сигнала",
+  "retroconsole.gui.starting": "Запуск: %s",
+  "retroconsole.gui.starting_hint": "Ядро загружается на сервере",
+  "retroconsole.gui.starting_elapsed": "%s с",
+  "retroconsole.gui.starting_slow": "Всё ещё грузится — если зависло, смотрите чат",
 
   "retroconsole.gui.view.cards": "Консоли",
   "retroconsole.gui.view.list": "Список",

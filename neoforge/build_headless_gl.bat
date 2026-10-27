@@ -47,7 +47,9 @@ if not defined GCC (
 )
 
 echo Using compiler: %GCC%
-"%GCC%" -shared -O2 -o "%OUT%" "%SRC%" -lopengl32 -lgdi32 -luser32
+rem -static keeps the DLL free of MinGW runtime deps (libgcc_s_seh-1.dll via
+rem __emutls_get_address, and libwinpthread-1.dll). End users have neither.
+"%GCC%" -shared -O2 -static -o "%OUT%" "%SRC%" -lopengl32 -lgdi32 -luser32
 if errorlevel 1 exit /b 1
 
 copy /Y "%OUT%" "%RES%" >nul

@@ -1,5 +1,6 @@
 package com.retroconsole.bridge;
 
+import com.retroconsole.config.RetroSettings;
 import com.retroconsole.platform.Pcsx2BiosResolver;
 import com.retroconsole.platform.VideoQualityPresets;
 import com.sun.jna.Callback;
@@ -29,22 +30,41 @@ interface HeadlessGLWin extends com.sun.jna.Library {
     void    hlg_release(Pointer h);
     int     hlg_resize(Pointer h, int w, int hgt);
     void    hlg_read_pixels(Pointer h, int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH);
+    /** 21-int capture snapshot (canvas / renderbuffer / attachment / GL state). */
+    void    hlg_capture_info(Pointer h, int[] out);
+    void    hlg_debug_clear(Pointer h, int rgb);
     void    hlg_debug_fbo(Pointer h);
+    /** Gate the periodic GL capture diagnostics ({@code debug.verboseLogs}). */
+    void    hlg_set_verbose(int on);
     String  hlg_get_gpu_info(Pointer h);
 
     // Process-wide (no handle)
     void    hlg_dump_hw_render(Pointer data, int size);
+    /** Switch the shared CRT to binary open() mode — POSIX ports truncated by TEXT mode. */
+    void    hlg_set_crt_binary();
     long    hlg_get_framebuffer();
     Pointer hlg_get_proc_address(String sym);
     Pointer hlg_get_framebuffer_ptr();
     Pointer hlg_get_proc_address_ptr();
     Pointer hlg_get_log_cb_ptr();
+    /** retro_vfs_interface (v3) — POSIX-port cores (mkxp-z) enumerate directories through it. */
+    Pointer hlg_get_vfs_interface();
+    /** Core-runtime exit latched for the calling thread (0 = still running). */
+    int     hlg_core_exit_code();
+    String  hlg_core_exit_message();
+    void    hlg_core_exit_clear();
     /** Capture HotSpot UEF before Flycast core loads (diagnostic, optional). */
     void    hlg_capture_jvm_filter();
     /** Hook RtlAddVectoredExceptionHandler so Flycast VEH goes to tail. */
     void    hlg_hook_addveh();
     /** Reset isolated VEH state between core sessions (dispatcher + fly[]). */
     void    hlg_reset_veh_session();
+}
+
+/** winmm timer resolution — see {@code LibretroCoreWindows.raiseTimerResolution()}. */
+interface WinmmTimer extends com.sun.jna.Library {
+    int timeBeginPeriod(int ms);
+    int timeEndPeriod(int ms);
 }
 
 /**
@@ -65,6 +85,15 @@ interface HeadlessGLWin extends com.sun.jna.Library {
 public class LibretroCoreWindows extends LibretroCore {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("LibretroCoreWindows");
+
+    /**
+     * The user's {@code debug.verboseLogs} switch. Everything periodic in this
+     * class — audio-pump stats, frame capture diagnostics — is gated on it, so a
+     * launcher running slf4j at DEBUG still gets a quiet log by default.
+     */
+    private static boolean verboseLogs() {
+        return RetroSettings.verboseLogs();
+    }
 
     /** libretro hw_render: uintptr_t get_current_framebuffer(void) */
     public interface HwGetCurrentFramebuffer extends Callback { long invoke(); }
@@ -214,6 +243,47 @@ public class LibretroCoreWindows extends LibretroCore {
     // GL version requested by the core in SET_HW_RENDER.
     private int hwReqGlMajor = 3;
     private int hwReqGlMinor = 3;
+    // Degenerate video_refresh calls (mkxp-z reports 0x0 until the game's graphics
+    // layer is up). Counted so a permanently black display has a log trail.
+    private int zeroSizeFrames = 0;
+    // Origin convention the core declared in retro_hw_render_callback (offset 34).
+    // True = OpenGL bottom-left, so the readback must be flipped; false = the core
+    // already delivers top-left rows. The Linux bridge has always honored this;
+    // the Windows path used to overwrite the field with a hardcoded value.
+    private boolean hwBottomLeftOrigin = true;
+
+    // mkxp-z's retro build aliases GraphicsPrivate::winSize to scRes, so a game
+    // that scales its *window* (Pokémon Essentials: Graphics.scale = 1.5) raises
+    // the announced canvas while the screen buffers it blits from keep the real
+    // size. glBlitFramebuffer then reads past the source texture and the surplus
+    // canvas repeats the last row and column — the picture smear. Growth is
+    // therefore probed instead of trusted: retroReal* is the size the core
+    // actually fills, retroCanvas* the scaled canvas it announced, retroProbe*
+    // the candidate screen a probe is currently testing.
+    private int retroRealW = -1;
+    private int retroRealH = -1;
+    private int retroCanvasW = -1;
+    private int retroCanvasH = -1;
+    private int retroProbeW = -1;
+    private int retroProbeH = -1;
+    private int retroProbeFramesLeft;
+    // Long enough to cover the boot window and an auto-loaded save state: the
+    // core can restore its screen size seconds after announcing the canvas.
+    private static final int RETRO_PROBE_FRAMES = 600;
+
+    /**
+     * Latched core-runtime exit. mkxp-z ends its sandbox from inside retro_run()
+     * and never sends RETRO_ENVIRONMENT_SHUTDOWN on that path, so the last
+     * (black) frame would otherwise stream forever with no explanation.
+     */
+    private volatile int coreExitCode;
+    private volatile String coreExitMessage;
+    /**
+     * Last warning/error the core reported through SET_MESSAGE. Preferred over the
+     * native latch text: mkxp-z's own log formatting drops the last character of
+     * the line it copies, while this string arrives whole.
+     */
+    private volatile String lastCoreMessage;
 
     /** Instance handle in the multi-instance DLL (hlg_create/hlg_free). */
     private Pointer hlgHandle;
@@ -288,8 +358,17 @@ public class LibretroCoreWindows extends LibretroCore {
         void hlg_read_pixels(int[] viewport, Pointer pixels, int maxPixels, int reqW, int reqH) {
             rawHlg().hlg_read_pixels(hlgHandle(), viewport, pixels, maxPixels, reqW, reqH);
         }
+        void hlg_capture_info(int[] out) {
+            rawHlg().hlg_capture_info(hlgHandle(), out);
+        }
+        void hlg_debug_clear(int rgb) {
+            rawHlg().hlg_debug_clear(hlgHandle(), rgb);
+        }
         void hlg_debug_fbo() {
             if (hlgHandle != null) rawHlg().hlg_debug_fbo(hlgHandle);
+        }
+        void hlg_set_verbose(boolean on) {
+            rawHlg().hlg_set_verbose(on ? 1 : 0);
         }
         String hlg_get_gpu_info() {
             return rawHlg().hlg_get_gpu_info(hlgHandle());
@@ -302,6 +381,10 @@ public class LibretroCoreWindows extends LibretroCore {
         Pointer hlg_get_framebuffer_ptr()  { return rawHlg().hlg_get_framebuffer_ptr(); }
         Pointer hlg_get_proc_address_ptr() { return rawHlg().hlg_get_proc_address_ptr(); }
         Pointer hlg_get_log_cb_ptr()       { return rawHlg().hlg_get_log_cb_ptr(); }
+        Pointer hlg_get_vfs_interface()    { return rawHlg().hlg_get_vfs_interface(); }
+        int hlg_core_exit_code()           { return rawHlg().hlg_core_exit_code(); }
+        String hlg_core_exit_message()     { return rawHlg().hlg_core_exit_message(); }
+        void hlg_core_exit_clear()         { rawHlg().hlg_core_exit_clear(); }
         void hlg_capture_jvm_filter() { rawHlg().hlg_capture_jvm_filter(); }
         void hlg_hook_addveh()        { rawHlg().hlg_hook_addveh(); }
         void hlg_reset_veh_session()  { rawHlg().hlg_reset_veh_session(); }
@@ -407,6 +490,7 @@ public class LibretroCoreWindows extends LibretroCore {
                 headlessGlApi = profileKey;
                 hwGlMajor = major;
                 hwGlMinor = minor;
+                headlessGl().hlg_set_verbose(verboseLogs());
             }
             String apiName = api == 1 ? "GLES" + major : "GL " + major + "." + minor
                     + (flags == 0 ? " Core" : " Compat");
@@ -437,9 +521,13 @@ public class LibretroCoreWindows extends LibretroCore {
         hwFramePending = false;
         hwFrameW = 0;
         hwFrameH = 0;
+        hwBottomLeftOrigin = true;
         hwReadbackBuf = null;
         hwReadbackCap = 0;
         hwReadbackInts = new int[0];
+        retroRealW = retroRealH = retroCanvasW = retroCanvasH = -1;
+        retroProbeW = retroProbeH = -1;
+        retroProbeFramesLeft = 0;
     }
 
     /** context_destroy while core is still initialized — must run before retro_deinit. */
@@ -488,6 +576,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
     public LibretroCoreWindows(Path corePath, String systemDir, String saveDir) {
         super(corePath);
+        raiseTimerResolution();
         if (systemDir != null) {
             systemDir = Path.of(systemDir).toAbsolutePath().normalize().toString();
         }
@@ -498,6 +587,30 @@ public class LibretroCoreWindows extends LibretroCore {
         this.saveDir = saveDir;
         LOGGER.info("Windows libretro core stub created for {} (system={}, save={})",
                 corePath, systemDir, saveDir);
+    }
+
+    private static volatile boolean timerResolutionRaised;
+
+    /**
+     * Windows rounds every short sleep up to the system timer quantum — 15.6 ms by
+     * default. Measured here: Thread.sleep(16) took 17-32 ms and a 10 ms park woke at
+     * 15.6 ms, so the frame loop stuttered and threaded audio arrived in ~16 ms lumps.
+     * Request 1 ms resolution for the JVM's lifetime (what RetroArch/SDL do on the
+     * same API). Harmless if the OS refuses.
+     */
+    private static void raiseTimerResolution() {
+        if (timerResolutionRaised) return;
+        synchronized (LibretroCoreWindows.class) {
+            if (timerResolutionRaised) return;
+            timerResolutionRaised = true;
+            try {
+                if (Native.load("winmm", WinmmTimer.class).timeBeginPeriod(1) == 0) {
+                    LOGGER.info("System timer resolution raised to 1 ms");
+                }
+            } catch (Throwable t) {
+                LOGGER.debug("timeBeginPeriod(1) unavailable: {}", t.getMessage());
+            }
+        }
     }
 
     private String coreName() {
@@ -514,6 +627,10 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private boolean isBoom3Core() {
         return coreName().contains("boom3");
+    }
+
+    private boolean isMkxpzCore() {
+        return coreName().contains("mkxp");
     }
 
     /**
@@ -634,6 +751,15 @@ public class LibretroCoreWindows extends LibretroCore {
                 }
             }
             this.core = Native.load(absPath, LibretroBridge.class);
+            // Ports of POSIX code (mkxp-z) open() their assets with the CRT default
+            // mode. On Windows that default is TEXT, so reads stop at the first 0x1A
+            // and binary game data is silently truncated. Fix it before retro_init(),
+            // which is where such a core may already start reading.
+            try {
+                rawHlg().hlg_set_crt_binary();
+            } catch (Throwable t) {
+                LOGGER.warn("Could not switch CRT to binary open() mode: {}", t.getMessage());
+            }
             int apiVersion = core.retro_api_version();
             // A few ms means a real LoadLibrary; 0 ms means JNA handed back the
             // still-mapped module (see needsFreshModule) — stale globals again.
@@ -682,9 +808,16 @@ public class LibretroCoreWindows extends LibretroCore {
 
         LibretroBridge.RetroVideoRefresh videoCb = (data, w, h, pitch) -> {
             if (w <= 0 || h <= 0) {
-                if (hwRenderActive) newFrame = true;
+                // Never flag a frame for degenerate geometry: newFrame with an empty
+                // frameBuffer makes drainHwFrame() skip the readback for as long as the
+                // flag stays set (nobody can clear it), i.e. a permanently black screen.
+                if (++zeroSizeFrames == 60) {
+                    LOGGER.warn("Core reported {} video frames of {}x{} — the display stays "
+                            + "black until it reports a real size", zeroSizeFrames, w, h);
+                }
                 return;
             }
+            zeroSizeFrames = 0;
             synchronized (frameLock) {
                 long dataAddr = data != null ? Pointer.nativeValue(data) : 0;
                 boolean hwFb = hwRenderActive && (data == null || dataAddr == 1 || dataAddr == -1 || dataAddr == 0);
@@ -693,11 +826,19 @@ public class LibretroCoreWindows extends LibretroCore {
                     return;
                 }
                 int len = w * h;
-                if (frameBuffer.length != len) frameBuffer = new int[len];
+                // The HW path publishes its own array from drainHwFrame(), sizing
+                // frameBuffer here would only fight it (a full-size alloc per frame).
+                if (!hwFb && frameBuffer.length != len) frameBuffer = new int[len];
                 int[] dst = frameBuffer;
                 if (hwFb) {
-                    hwFrameW = w;
-                    hwFrameH = h;
+                    // A scaled-window canvas is not a bigger picture (see
+                    // isScaledWindowCanvas): publish the size the core fills.
+                    int fw = retroRealW > 0 ? Math.min(w, retroRealW) : w;
+                    int fh = retroRealH > 0 ? Math.min(h, retroRealH) : h;
+                    if (verboseLogs() && (fw != hwFrameW || fh != hwFrameH))
+                        LOGGER.debug("[geo] video_cb {}x{} -> {}x{}", hwFrameW, hwFrameH, fw, fh);
+                    hwFrameW = fw;
+                    hwFrameH = fh;
                     hwFramePending = true;
                     return;
                 }
@@ -900,6 +1041,12 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private final java.util.Map<String, String> coreOptions = new java.util.LinkedHashMap<>();
     private final java.util.List<Memory> allocatedOptionMemory = new java.util.ArrayList<>();
+    /**
+     * Unknown env commands are logged once each. Cores poll some of them every frame
+     * (mkxp-z asks for GET_DEVICE_POWER while it renders), and a WARN per call floods
+     * the log from the emulator *and* the audio thread — the logging itself stutters.
+     */
+    private final java.util.Set<Integer> warnedEnvCmds = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private int coreOptionsVersion = 2;
 
     // libretro ABI: retro_core_option_value = 2 pointers; values[RETRO_NUM_CORE_OPTION_VALUES_MAX=128].
@@ -915,6 +1062,17 @@ public class LibretroCoreWindows extends LibretroCore {
     private long lastFrameTimeNs;
     private Pointer asyncAudioCallbackFn;
     private Pointer asyncAudioSetStateFn;
+    private com.sun.jna.Function asyncAudioCallback;
+    /**
+     * Cadence for SET_AUDIO_CALLBACK. A threaded-audio core renders a fixed chunk per
+     * call, not "whatever is due" — mkxp-z renders AUDIO_SLEEP (10 ms) worth
+     * (al-util.h), 480 samples at 48 kHz. Pumping it from the frame loop handed the
+     * core one chunk per video frame, so only ~60% of the samples ever existed: OpenAL
+     * underranned and the sound was slow and choppy.
+     */
+    private static final long ASYNC_AUDIO_PERIOD_NS = 10_000_000L;
+    /** Drives SET_AUDIO_CALLBACK while a core is loaded; null when no pump runs. */
+    private volatile Thread asyncAudioPump;
 
     private boolean handleEnvironment(int cmd, Pointer data) {
         // Handle by raw code (switch on normalized base won't catch these):
@@ -926,6 +1084,18 @@ public class LibretroCoreWindows extends LibretroCore {
         // GET_AUDIO_VIDEO_ENABLE (47|EXPERIMENTAL) — LRPS2 mutes SPU2 without explicit "audio on".
         if (cmd == 0x1002f) {
             if (data != null) data.setInt(0, 3);
+            return true;
+        }
+        // GET_DEVICE_POWER (77|EXPERIMENTAL). mkxp-z polls it repeatedly; leaving it
+        // unanswered does not break anything, but the call must not fall through to the
+        // unknown-command branch. We are a desktop: mains power, no battery estimate.
+        if (cmd == LibretroEnvironment.GET_DEVICE_POWER) {
+            if (data != null) {
+                // retro_device_power { enum retro_power_state state; int seconds; int percent; }
+                data.setInt(0, LibretroEnvironment.RETRO_POWERSTATE_PLUGGED_IN);
+                data.setInt(4, LibretroEnvironment.RETRO_POWERSTATE_NO_ESTIMATE);
+                data.setInt(8, 100);
+            }
             return true;
         }
         int base = LibretroEnvironment.normalize(cmd);
@@ -970,6 +1140,12 @@ public class LibretroCoreWindows extends LibretroCore {
                         this.height = h;
                         LOGGER.info("Core set geometry: {}x{}", w, h);
                         if (hwRenderActive) resizeHwFramebuffer(w, h);
+                        if (retroRealW > 0 && (w > retroRealW || h > retroRealH)) {
+                            // Scaled-window canvas (see isScaledWindowCanvas):
+                            // the frames we publish stay at the real screen size.
+                            this.width = retroRealW;
+                            this.height = retroRealH;
+                        }
                     }
                 }
                 return true;
@@ -1053,7 +1229,6 @@ public class LibretroCoreWindows extends LibretroCore {
             case LibretroEnvironment.SET_CORE_OPTIONS_DISPLAY:
             case LibretroEnvironment.SET_MINIMUM_AUDIO_LATENCY:
             case LibretroEnvironment.SET_INPUT_DESCRIPTORS:
-            case LibretroEnvironment.SET_MESSAGE:
             case LibretroEnvironment.SET_SERIALIZATION_QUIRKS:
                 if ((cmd & LibretroEnvironment.EXPERIMENTAL) != 0) {
                     if (supportsHwRender()) {
@@ -1063,6 +1238,12 @@ public class LibretroCoreWindows extends LibretroCore {
                     }
                     return false;
                 }
+                return true;
+            case LibretroEnvironment.SET_MESSAGE:
+                // retro_message { const char *msg; unsigned frames; } — cores report
+                // load/init failures only here, so swallowing it turns a broken core
+                // into a silent black screen.
+                logCoreMessage(data, -1);
                 return true;
             case LibretroEnvironment.SET_PERFORMANCE_LEVEL:
             case LibretroEnvironment.SET_SUBSYSTEM_INFO:
@@ -1107,13 +1288,41 @@ public class LibretroCoreWindows extends LibretroCore {
                 return false;
             case 38:      // GET_USERNAME — return "no username"
                 return false;
-            case 60:      // SET_MESSAGE_EXT — accept but ignore OSD
+            case 60:      // SET_MESSAGE_EXT — log the text, we have no OSD to draw it on
+                // retro_message_ext { const char *msg; unsigned level; unsigned duration; … }
+                logCoreMessage(data, data != null ? data.getInt(Native.POINTER_SIZE) : -1);
                 return true;
-            case 45:
-            case 0x1002e:
+            case 45:      // GET_VFS_INTERFACE (45 | EXPERIMENTAL)
+                // mkxp-z's PhysFS falls back to its own open()/opendir() without a
+                // frontend VFS, and on Windows that cannot enumerate a directory
+                // mount's root — every RPG Maker game then loads no assets at all.
+                if (data == null) return false;
+                try {
+                    Pointer vfs = headlessGl().hlg_get_vfs_interface();
+                    if (vfs != null && Pointer.nativeValue(vfs) != 0) {
+                        int wanted = data.getInt(0);      // required_interface_version
+                        data.setInt(0, 3);                // retro_vfs_interface v3
+                        data.setPointer(Native.POINTER_SIZE, vfs);
+                        pinForever(vfs);
+                        LOGGER.info("GET_VFS_INTERFACE -> v3 (core asked for v{})", wanted);
+                        return true;
+                    }
+                } catch (Throwable t) {
+                    LOGGER.warn("Native VFS interface unavailable: {}", t.getMessage());
+                }
                 return false;
-            case LibretroEnvironment.SET_KEYBOARD_CALLBACK:
-                return false;
+            case LibretroEnvironment.SET_KEYBOARD_CALLBACK: {
+                // Text-heavy cores (mkxp-z, DOSBox, …) never poll RETRO_DEVICE_KEYBOARD;
+                // they keep their own key table and receive keys only through this
+                // callback, so returning false means no keyboard input at all.
+                if (data == null) return false;
+                Pointer fn = data.getPointer(0);
+                if (fn == null || Pointer.nativeValue(fn) == 0) return false;
+                setKeyboardCallbackFn(fn);
+                pinForever(fn);
+                LOGGER.info("SET_KEYBOARD_CALLBACK registered @ {}", fn);
+                return true;
+            }
             case LibretroEnvironment.GET_DISK_CONTROL_INTERFACE_VERSION:
                 if (data != null) data.setInt(0, 1);
                 return true;
@@ -1131,10 +1340,33 @@ public class LibretroCoreWindows extends LibretroCore {
             case 0x10030:
                 return true;
             default:
-                LOGGER.warn("Unhandled env cmd {} (raw 0x{}, base {})",
-                        LibretroEnvironment.name(cmd), Integer.toHexString(cmd),
-                        LibretroEnvironment.normalize(cmd));
+                if (warnedEnvCmds.add(cmd)) {
+                    LOGGER.warn("Unhandled env cmd {} (raw 0x{}, base {}) — repeats suppressed",
+                            LibretroEnvironment.name(cmd), Integer.toHexString(cmd),
+                            LibretroEnvironment.normalize(cmd));
+                }
                 return false;
+        }
+    }
+
+    /**
+     * Log a core-provided message. {@code level} is a RETRO_LOG_* value, or -1 when the
+     * core used the legacy {@code retro_message} (which carries no severity).
+     */
+    private void logCoreMessage(Pointer data, int level) {
+        if (data == null) return;
+        try {
+            String msg = readCString(data.getPointer(0));
+            if (msg == null || msg.isBlank()) return;
+            String text = msg.replace('\n', ' ').replace('\r', ' ').trim();
+            if (level < 0 || level >= 2) lastCoreMessage = text;  // legacy box / warn / error
+            switch (level) {
+                case 3 -> LOGGER.error("Core message: {}", text);   // RETRO_LOG_ERROR
+                case 2 -> LOGGER.warn("Core message: {}", text);    // RETRO_LOG_WARN
+                default -> LOGGER.info("Core message: {}", text);
+            }
+        } catch (Throwable t) {
+            LOGGER.debug("Unreadable core message: {}", t.getMessage());
         }
     }
 
@@ -1153,8 +1385,11 @@ public class LibretroCoreWindows extends LibretroCore {
         if (data == null) return false;
         asyncAudioCallbackFn = data.getPointer(0);
         asyncAudioSetStateFn = data.getPointer(Native.POINTER_SIZE);
+        asyncAudioCallback = asyncAudioCallbackFn == null
+                || Pointer.nativeValue(asyncAudioCallbackFn) == 0
+                ? null : com.sun.jna.Function.getFunction(asyncAudioCallbackFn);
         LOGGER.info("SET_AUDIO_CALLBACK registered");
-        return true;
+        return asyncAudioCallback != null;
     }
 
     private void tickFrameTimeBeforeRun() {
@@ -1172,11 +1407,69 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     private void invokeAsyncAudioCallback() {
-        if (asyncAudioCallbackFn == null || Pointer.nativeValue(asyncAudioCallbackFn) == 0) return;
+        com.sun.jna.Function fn = asyncAudioCallback;
+        if (fn == null) return;
         try {
-            com.sun.jna.Function.getFunction(asyncAudioCallbackFn).invokeVoid(new Object[0]);
+            fn.invokeVoid(new Object[0]);
         } catch (Throwable t) {
             LOGGER.warn("async audio callback failed: {}", t.getMessage());
+        }
+    }
+
+    /** Start pumping SET_AUDIO_CALLBACK once the core asked for it. Idempotent. */
+    private void startAsyncAudioPump() {
+        if (asyncAudioPump != null) return;
+        if (asyncAudioCallback == null) return;
+        Thread t = new Thread(this::runAsyncAudioPump, "retro-audio-pump");
+        t.setDaemon(true);
+        asyncAudioPump = t;
+        t.start();
+        LOGGER.info("Async audio pump started ({} ms period)", ASYNC_AUDIO_PERIOD_NS / 1_000_000L);
+    }
+
+    /** Must run before retro_unload_game: the pump executes native core code. */
+    private void stopAsyncAudioPump() {
+        Thread t = asyncAudioPump;
+        asyncAudioPump = null;
+        if (t == null) return;
+        t.interrupt();
+        try {
+            t.join(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        LOGGER.info("Async audio pump stopped");
+    }
+
+    private void runAsyncAudioPump() {
+        Thread self = Thread.currentThread();
+        long startNs = System.nanoTime();
+        long chunks = 0;
+        long calls = 0;
+        long avgCostNs = 0;
+        while (asyncAudioPump == self && !self.isInterrupted()) {
+            // Closed loop on the chunk count, not on sleep deadlines: parking a whole
+            // period oversleeps, which silently shaves samples off the stream.
+            long due = (System.nanoTime() - startNs) / ASYNC_AUDIO_PERIOD_NS;
+            long behind = due - chunks;
+            if (behind <= 0) {
+                java.util.concurrent.locks.LockSupport.parkNanos(ASYNC_AUDIO_PERIOD_NS / 2);
+                continue;
+            }
+            if (behind > 8) {
+                // Huge stall (world load, GC): do not replay seconds of audio. Skip the
+                // old chunks by moving the clock, keeping produced == due afterwards.
+                startNs += (behind - 8) * ASYNC_AUDIO_PERIOD_NS;
+                behind = 8;
+            }
+            long t0 = System.nanoTime();
+            for (long c = 0; c < behind; c++) invokeAsyncAudioCallback();
+            long dt = System.nanoTime() - t0;
+            avgCostNs = calls == 0 ? dt : (avgCostNs * 15 + dt) / 16;
+            calls++;
+            chunks += behind;
+            if (verboseLogs() && calls % 50 == 0) LOGGER.debug("async audio: {} chunks / {} calls, avg {}us/call, queued={}",
+                    chunks, calls, avgCostNs / 1000, getAudioAvailable());
         }
     }
 
@@ -1232,6 +1525,13 @@ public class LibretroCoreWindows extends LibretroCore {
                 return false;
             }
 
+            // The origin convention belongs to the core — read it instead of
+            // insisting on one. mkxp-z and Citra declare top-left and would end up
+            // upside down if we kept flipping every framebuffer unconditionally.
+            hwBottomLeftOrigin = data.getByte(34) != 0;
+            LOGGER.info("Core framebuffer origin: {}",
+                    hwBottomLeftOrigin ? "bottom-left (flip on readback)" : "top-left (read as-is)");
+
             Pointer fbFn;
             Pointer procFn;
             if (isCitraCore()) {
@@ -1253,8 +1553,7 @@ public class LibretroCoreWindows extends LibretroCore {
             boolean depthStencil = isCitraCore() || isBoom3Core();
             data.setByte(32, (byte) (depthStencil ? 1 : 0));  // depth
             data.setByte(33, (byte) (depthStencil ? 1 : 0));  // stencil
-            // Citra uses top-left framebuffer semantics; PPSSPP/PCSX2 expect bottom-left.
-            data.setByte(34, (byte) (isCitraCore() ? 0 : 1));
+            // bottom_left_origin (34) is a core declaration — left untouched.
             data.setInt(36, hwGlMajor);              // version_major (actual context)
             data.setInt(40, hwGlMinor);              // version_minor
 
@@ -1473,6 +1772,7 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private void resizeHwFramebuffer(int w, int h) {
         if (!headlessGlReady || w <= 0 || h <= 0) return;
+        if (isScaledWindowCanvas(w, h)) return;
         try {
             if (headlessGl().hlg_make_current() == 0) return;
             if (w != hwPbufW || h != hwPbufH) {
@@ -1484,6 +1784,99 @@ public class LibretroCoreWindows extends LibretroCore {
         } catch (Throwable t) {
             LOGGER.warn("HW FBO resize failed: {}", t.getMessage());
         }
+    }
+
+    /**
+     * mkxp-z announces a scaled *window* as the canvas (retro builds alias
+     * {@code GraphicsPrivate::winSize} to {@code scRes}) while still drawing into
+     * the screen buffers of the real resolution, so the surplus canvas comes out
+     * as a clamp-to-edge smear. Growth beyond what the core fills is therefore
+     * probed first — {@link #probeScaledWindow} keeps it only if the frame really
+     * reaches the far edge.
+     *
+     * @return true when the announcement is a scaled window and must be ignored
+     */
+    private boolean isScaledWindowCanvas(int w, int h) {
+        if (!isMkxpzCore()) return false;
+        if (retroRealW > 0) {
+            if (w <= retroRealW && h <= retroRealH) {
+                // Cannot exceed the size the core fills: a real (smaller) screen.
+                retroRealW = retroRealH = retroCanvasW = retroCanvasH = -1;
+                return false;
+            }
+            if (w <= retroCanvasW && h <= retroCanvasH) return true;  // same scaled canvas
+        }
+        if (hwPbufW > 0 && hwPbufH > 0 && (w > hwPbufW || h > hwPbufH)) {
+            retroProbeW = hwPbufW;
+            retroProbeH = hwPbufH;
+            retroProbeFramesLeft = RETRO_PROBE_FRAMES;
+            retroCanvasW = w;
+            retroCanvasH = h;
+            LOGGER.info("[geo] probing canvas {}x{} against the {}x{} the core fills",
+                    w, h, retroProbeW, retroProbeH);
+        }
+        return false;
+    }
+
+    /**
+     * Settles a probe on the freshly captured frame: everything right of the
+     * candidate width and below its height repeating the border pixel means the
+     * blit read past its source, i.e. the canvas is only a scaled window. The
+     * render target then drops back to the size the core really fills.
+     */
+    private void probeScaledWindow(int[] px, int w, int h) {
+        if (retroProbeFramesLeft <= 0 || retroProbeW <= 0 || retroProbeH <= 0) return;
+        if (isClampBand(px, w, h, retroProbeW, retroProbeH)) {
+            retroRealW = retroProbeW;
+            retroRealH = retroProbeH;
+            retroProbeFramesLeft = 0;
+            LOGGER.info("mkxp-z canvas {}x{} is a scaled {}x{} screen (clamp-to-edge band) "
+                            + "— keeping the render target at {}x{}",
+                    w, h, retroRealW, retroRealH, retroRealW, retroRealH);
+            try {
+                // Direct resize: resizeHwFramebuffer() would read the pin as a
+                // shrinking real screen and drop it again.
+                headlessGl().hlg_resize(retroRealW, retroRealH);
+                hwPbufW = retroRealW;
+                hwPbufH = retroRealH;
+            } catch (Throwable t) {
+                LOGGER.warn("Could not shrink the HW canvas to {}x{}: {}",
+                        retroRealW, retroRealH, t.getMessage());
+            }
+            return;
+        }
+        if (--retroProbeFramesLeft == 0) {
+            retroRealW = retroRealH = -1;
+            retroProbeW = retroProbeH = -1;
+            LOGGER.info("mkxp-z canvas {}x{} is filled to the edge — keeping it", w, h);
+        }
+    }
+
+    /**
+     * Clamp-to-edge signature of a blit whose source rect is bigger than the
+     * texture it reads from: everything right of {@code cw} repeats the pixel on
+     * that border and everything below {@code ch} repeats that row. Sampled — the
+     * probe runs for seconds, so it must not cost a full-frame scan per frame.
+     */
+    private static boolean isClampBand(int[] px, int w, int h, int cw, int ch) {
+        if (cw <= 0 || ch <= 0 || cw >= w || ch >= h) return false;
+        int rowStep = Math.max(1, h / 8);
+        for (int y = 0; y < h; y += rowStep) {
+            int row = y * w;
+            int edge = px[row + cw - 1];
+            for (int x = cw; x < w; x += 4) {
+                if (px[row + x] != edge) return false;
+            }
+        }
+        int edgeRow = (ch - 1) * w;
+        int bandStep = Math.max(1, (h - ch) / 8);
+        for (int y = ch; y < h; y += bandStep) {
+            int row = y * w;
+            for (int x = 0; x < w; x += 4) {
+                if (px[row + x] != px[edgeRow + x]) return false;
+            }
+        }
+        return true;
     }
 
     /** Prefer SET_GEOMETRY layout for Citra; ignore inflated max_* caps elsewhere. */
@@ -1510,6 +1903,7 @@ public class LibretroCoreWindows extends LibretroCore {
             return false;
         }
         LOGGER.info("loadGame({}) [{}]", romPath, isFlycastCore() ? "FLYCAST" : coreName());
+        clearCoreExit();
 
         if (isCitraCore()) {
             seedSharedCitraFiles();
@@ -1551,6 +1945,9 @@ public class LibretroCoreWindows extends LibretroCore {
             core.retro_get_system_av_info(avPre);
             int fboW = hwFboDim(avPre, true);
             int fboH = hwFboDim(avPre, false);
+            if (verboseLogs()) LOGGER.debug("[geo] av_info(pre-load-end) base={}x{} max={}x{}",
+                    avPre.geometry.base_width, avPre.geometry.base_height,
+                    avPre.geometry.max_width, avPre.geometry.max_height);
             if (fboW > 0 && fboH > 0) resizeHwFramebuffer(fboW, fboH);
         }
 
@@ -1589,6 +1986,9 @@ public class LibretroCoreWindows extends LibretroCore {
         if (hwRenderActive) {
             int fboW = hwFboDim(avInfo, true);
             int fboH = hwFboDim(avInfo, false);
+            if (verboseLogs()) LOGGER.debug("[geo] av_info(post) base={}x{} max={}x{}",
+                    avInfo.geometry.base_width, avInfo.geometry.base_height,
+                    avInfo.geometry.max_width, avInfo.geometry.max_height);
             if (fboW > 0 && fboH > 0) resizeHwFramebuffer(fboW, fboH);
         }
         // PPSSPP reports 0x0 at startup; real size arrives later via
@@ -1741,7 +2141,9 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private void drainHwFrame() {
         synchronized (frameLock) {
-            if (newFrame) return; // previous frame not consumed — no readback needed
+            // Previous frame not consumed — no readback needed. The non-empty check
+            // matters: newFrame over an empty frameBuffer must never block the readback.
+            if (newFrame && frameBuffer.length > 0) return;
         }
         boolean pending; int w, h;
         synchronized (frameLock) {
@@ -1760,15 +2162,22 @@ public class LibretroCoreWindows extends LibretroCore {
                 hwPbufW = surfW;
                 hwPbufH = surfH;
             }
-            int len = w * h;
-            if (hwReadbackBuf == null || hwReadbackCap < len) {
-                hwReadbackBuf = new Memory((long) len * 4L);
-                hwReadbackCap = len;
+            int reqLen = w * h;
+            if (hwReadbackBuf == null || hwReadbackCap < reqLen) {
+                hwReadbackBuf = new Memory((long) reqLen * 4L);
+                hwReadbackCap = reqLen;
             }
             int[] vp = new int[4];
-            headlessGl().hlg_read_pixels(vp, hwReadbackBuf, len, w, h);
-            int aw = w;
-            int ah = h;
+            headlessGl().hlg_read_pixels(vp, hwReadbackBuf, reqLen, w, h);
+            // The DLL clamps the read rect to the real colour attachment, so the
+            // size it reports is the size it actually wrote. Trusting w*h instead
+            // published a short readback as a full frame and the untouched tail
+            // showed up as stale rows at the bottom of the picture.
+            int aw = vp[2] > 0 ? vp[2] : w;
+            int ah = vp[3] > 0 ? vp[3] : h;
+            if (aw > w) aw = w;
+            if (ah > h) ah = h;
+            int len = aw * ah;
             if (len <= 0 || (long) len > hwReadbackCap) {
                 LOGGER.warn("HW frame {}x{} exceeds readback cap {}", aw, ah, hwReadbackCap);
                 return;
@@ -1784,6 +2193,12 @@ public class LibretroCoreWindows extends LibretroCore {
             // client treats the frame as opaque. One pass, no second buffer.
             for (int i = 0; i < len; i++)
                 hwReadbackInts[i] |= 0xFF000000;
+            // hlg_read_pixels always flips (it assumes GL bottom-left rows, which is
+            // what the DLL reads). A top-left core already stores its framebuffer
+            // screen-top-first, so undo the flip for those.
+            if (!hwBottomLeftOrigin) flipRows(hwReadbackInts, aw, ah);
+            probeScaledWindow(hwReadbackInts, aw, ah);
+            diagFrame(hwReadbackInts, aw, ah, vp);
             synchronized (frameLock) {
                 // Swap instead of copy: the sender copies out of frameBuffer under
                 // this same lock, so the array it just released becomes the next
@@ -1794,11 +2209,128 @@ public class LibretroCoreWindows extends LibretroCore {
                 this.width = aw;
                 this.height = ah;
                 newFrame = true;
+                zeroSizeFrames = 0;
             }
         } catch (Throwable t) {
             LOGGER.warn("HW readback failed: {}", t.getMessage());
         }
     }
+
+    /** TEMP DIAG: how much of the readback is a repeat of one scanline. */
+    private static int diagFrames;
+    private static boolean diagBaselineLogged;
+    private void diagFrame(int[] px, int w, int h, int[] vp) {
+        // Deliberately not gated on verboseLogs(): the periodic diag is the only
+        // way to see the capture geometry from the log file, and a native DLL's
+        // stderr never lands there. Sampled every ~5 s, and quiet once a clean
+        // frame has been reported — a banded frame keeps reporting.
+        if (++diagFrames % 300 != 0) return;
+        int last = h - 1;
+        int firstRep = h;
+        while (firstRep > 0 && sameRow(px, w, firstRep - 1, last)) firstRep--;
+        int band = h > 0 ? (int) Math.round((h - firstRep) * 100.0 / h) : 0;
+        int p0 = px[last * w], pm = px[last * w + w / 2], p1 = px[last * w + w - 1];
+        // Bounding box of everything that differs from the bottom-right pixel (the
+        // core clears the frame to one colour and blits its picture into a sub-rect,
+        // so this box is the picture itself).
+        int ref = px[last * w + w - 1];
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+        for (int y = 0; y < h; y++) {
+            int row = y * w;
+            for (int x = 0; x < w; x++) {
+                if (px[row + x] == ref) continue;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+        // Vertical counterpart: a clamp-to-edge blit that overshoots the source
+        // texture width leaves whole columns identical to the last valid one, so
+        // the smallest run over the sampled rows is the honest measure.
+        int colRep = w;
+        int step = Math.max(1, h / 8);
+        for (int y = 0; y < h; y += step) {
+            int row = y * w, ref2 = px[row + w - 1], x = w - 1;
+            while (x > 0 && px[row + x - 1] == ref2) x--;
+            if (w - 1 - x < colRep) colRep = w - 1 - x;
+        }
+        int[] cap = captureInfo();
+        // Expected on a healthy frame: the picture reaches the last row and the
+        // right edge is not a repeated column. Anything else keeps logging.
+        if (h - firstRep <= 2 && colRep <= 8 && diagBaselineLogged) return;
+        diagBaselineLogged = true;
+        LOGGER.info("[diag-frame] {}x{} vp={},{},{},{} read={}x{} canvas={}x{} rb={}x{} "
+                        + "att={}x{}(qok={},fbo={},qmiss={},heal={}) scissor={}({},{},{},{}) "
+                        + "repeatRow={} band={}% repeatCol={} bbox={},{}..{},{} ({}x{}) "
+                        + "row(last)={}/{}/{}",
+                w, h, vp[0], vp[1], vp[2], vp[3], hwPbufW, hwPbufH,
+                cap[0], cap[1], cap[2], cap[3], cap[4], cap[5],
+                cap[6], cap[7], cap[8], cap[9],
+                cap[18], cap[14], cap[15], cap[16], cap[17],
+                firstRep, band, colRep, minX, minY, maxX, maxY,
+                maxX - minX + 1, maxY - minY + 1,
+                Integer.toHexString(p0), Integer.toHexString(pm), Integer.toHexString(p1));
+        dumpFramePng(px, w, h);
+    }
+
+    /** Capture geometry snapshot from the DLL — see {@code hlg_capture_info}. */
+    private int[] captureInfo() {
+        int[] info = new int[21];
+        try {
+            if (hlgHandle != null) rawHlg().hlg_capture_info(hlgHandle, info);
+        } catch (Throwable ignored) {}
+        return info;
+    }
+
+    /**
+     * TEMP DIAG: {@code RETRO_DUMP_FRAME=<path>} writes the raw readback to PNG so
+     * the capture can be inspected without a screenshot of the in-world screen
+     * (no perspective, no texture filtering). Keeps the first ten dumps.
+     */
+    private static final String DUMP_FRAME_TO = System.getenv("RETRO_DUMP_FRAME");
+    private static int dumpedFrames;
+
+    private static void dumpFramePng(int[] px, int w, int h) {
+        if (DUMP_FRAME_TO == null || DUMP_FRAME_TO.isBlank() || dumpedFrames >= 10) return;
+        try {
+            java.awt.image.BufferedImage img =
+                    new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            img.setRGB(0, 0, w, h, px, 0, w);
+            Path base = Paths.get(DUMP_FRAME_TO);
+            String name = base.getFileName().toString();
+            Path dir = base.getParent() != null ? base.getParent() : Paths.get(".");
+            int dot = name.lastIndexOf('.');
+            String stem = dot > 0 ? name.substring(0, dot) : name;
+            String ext = dot > 0 ? name.substring(dot) : ".png";
+            Path out = dir.resolve(String.format("%s-%02d%s", stem, ++dumpedFrames, ext));
+            Files.createDirectories(dir);
+            javax.imageio.ImageIO.write(img, "png", out.toFile());
+            LOGGER.info("[diag-frame] dumped {}", out);
+        } catch (Throwable t) {
+            LOGGER.info("[diag-frame] dump failed: {}", t.getMessage());
+        }
+    }
+
+    private static boolean sameRow(int[] px, int w, int a, int b) {
+        int oa = a * w, ob = b * w;
+        for (int x = 0; x < w; x++) if (px[oa + x] != px[ob + x]) return false;
+        return true;
+    }
+
+    /** Reverse row order in place — turns GL bottom-up rows into screen order. */
+    private static void flipRows(int[] px, int w, int h) {
+        int[] row = new int[w];
+        for (int y = 0, mirror = h - 1; y < mirror; y++, mirror--) {
+            int top = y * w, bottom = mirror * w;
+            System.arraycopy(px, top, row, 0, w);
+            System.arraycopy(px, bottom, px, top, w);
+            System.arraycopy(row, 0, px, bottom, w);
+        }
+    }
+
+    /** TEMP DIAG: paint the FBO magenta before each frame to expose the painted region. */
+    private static final boolean DIAG_CLEAR_FBO = System.getenv("RETRO_CLEAR_FBO") != null;
 
     private void runFrameImpl() {
         if (core != null && gameLoaded) {
@@ -1838,8 +2370,16 @@ public class LibretroCoreWindows extends LibretroCore {
             }
             try {
                 tickFrameTimeBeforeRun();
+                // Keyboard callbacks are only valid from the core thread; the client
+                // presses keys on the Minecraft thread.
+                flushKeyboardEvents();
+                if (DIAG_CLEAR_FBO && hwRenderActive) headlessGl().hlg_debug_clear(0xFF00FF);
                 core.retro_run();
-                invokeAsyncAudioCallback();
+                pollCoreExit();
+                // Threaded audio runs on its own clock, not on the video frame — but it
+                // must not start earlier either: mkxp boots inside the first retro_run
+                // and would render a full second of audio into an undrained ring.
+                startAsyncAudioPump();
                 if (hwRenderActive) drainHwFrame();
                 maybeLoadPendingBattery();
             } catch (Throwable t) {
@@ -1847,6 +2387,42 @@ public class LibretroCoreWindows extends LibretroCore {
             }
         }
     }
+
+    /** Drop a latch left over from the previous game; must run on the core thread. */
+    private void clearCoreExit() {
+        coreExitCode = 0;
+        coreExitMessage = null;
+        lastCoreMessage = null;
+        HeadlessGLWin gl = HEADLESS_GL;
+        if (gl == null) return;
+        try { gl.hlg_core_exit_clear(); } catch (Throwable ignored) {}   // thread-keyed
+    }
+
+    /**
+     * Read the exit the core latched while retro_run() was executing. The latch
+     * is keyed by native thread, so this has to be called from the core thread —
+     * which is exactly where the frame loop already sits.
+     */
+    private void pollCoreExit() {
+        if (coreExitCode != 0) return;
+        HeadlessGLWin gl = HEADLESS_GL;
+        if (gl == null) return;
+        try {
+            int code = gl.hlg_core_exit_code();
+            if (code == 0) return;
+            String msg = lastCoreMessage;
+            if (msg == null || msg.isBlank()) msg = gl.hlg_core_exit_message();
+            coreExitCode = code;
+            coreExitMessage = msg;
+            LOGGER.warn("Core runtime ended ({}): {}", code, msg == null || msg.isBlank() ? "no detail" : msg);
+        } catch (Throwable t) {
+            LOGGER.debug("core-exit poll failed: {}", t.getMessage());
+        }
+    }
+
+    @Override public int coreExitCode() { return coreExitCode; }
+
+    @Override public String coreExitMessage() { return coreExitMessage; }
 
     private void maybeLoadPendingBattery() {
         if (!pendingBatteryLoad || saveDir == null || pendingBatteryRomPath == null) return;
@@ -1862,7 +2438,10 @@ public class LibretroCoreWindows extends LibretroCore {
         if (dst == null || dst.length == 0) return false;
         if (!newFrame) return false;
         synchronized (frameLock) {
-            if (frameBuffer.length == 0) return false;
+            if (frameBuffer.length == 0) {
+                newFrame = false; // nothing to hand out — do not keep the readback blocked
+                return false;
+            }
             int copyLen = Math.min(frameBuffer.length, dst.length);
             System.arraycopy(frameBuffer, 0, dst, 0, copyLen);
             newFrame = false;
@@ -1929,13 +2508,19 @@ public class LibretroCoreWindows extends LibretroCore {
     public byte[] serialize() {
         return onCoreThread(() -> {
             if (core == null || !gameLoaded) return null;
-            long size = core.retro_serialize_size();
-            if (size <= 0) return null;
-            var mem = new Memory(size);
-            if (core.retro_serialize(mem, size)) {
-                return mem.getByteArray(0, (int) size);
+            boolean pumping = asyncAudioPump != null;
+            if (pumping) stopAsyncAudioPump();   // a state dump must not race audio_render
+            try {
+                long size = core.retro_serialize_size();
+                if (size <= 0) return null;
+                var mem = new Memory(size);
+                if (core.retro_serialize(mem, size)) {
+                    return mem.getByteArray(0, (int) size);
+                }
+                return null;
+            } finally {
+                if (pumping) startAsyncAudioPump();
             }
-            return null;
         });
     }
 
@@ -1944,9 +2529,15 @@ public class LibretroCoreWindows extends LibretroCore {
         if (data == null) return false;
         return onCoreThread(() -> {
             if (core == null || !gameLoaded) return false;
-            var mem = new Memory(data.length);
-            mem.write(0, data, 0, data.length);
-            return core.retro_unserialize(mem, data.length);
+            boolean pumping = asyncAudioPump != null;
+            if (pumping) stopAsyncAudioPump();
+            try {
+                var mem = new Memory(data.length);
+                mem.write(0, data, 0, data.length);
+                return core.retro_unserialize(mem, data.length);
+            } finally {
+                if (pumping) startAsyncAudioPump();
+            }
         });
     }
 
@@ -1979,6 +2570,9 @@ public class LibretroCoreWindows extends LibretroCore {
     private void closeImpl() {
         if (core == null) return;
         LOGGER.info("close(): shutting down libretro core {}", corePath);
+
+        // The pump calls into the core; it must be gone before unload/deinit.
+        stopAsyncAudioPump();
 
         if (gameLoaded) {
             try { core.retro_unload_game(); } catch (Throwable t) {
@@ -2036,6 +2630,7 @@ public class LibretroCoreWindows extends LibretroCore {
         frameTimeCallbackFn = null;
         asyncAudioCallbackFn = null;
         asyncAudioSetStateFn = null;
+        asyncAudioCallback = null;
         lastFrameTimeNs = 0;
         frameTimeReferenceUs = 0;
 

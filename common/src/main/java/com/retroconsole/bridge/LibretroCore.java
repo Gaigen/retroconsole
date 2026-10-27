@@ -99,6 +99,17 @@ public abstract class LibretroCore implements AutoCloseable {
 
     public abstract int getHeight();
 
+    /**
+     * Non-zero when the core's own runtime ended without a libretro SHUTDOWN:
+     * 1 = the game exited, 2 = it threw. Ports such as mkxp-z tear their sandbox
+     * down inside retro_run() and only say so in their log, so a console that
+     * ignores this keeps streaming the last (black) frame forever.
+     */
+    public int coreExitCode() { return 0; }
+
+    /** Human-readable reason reported with {@link #coreExitCode()}, or null. */
+    public String coreExitMessage() { return null; }
+
     public abstract void setButton(int buttonId, boolean pressed);
 
     public abstract void setPointer(short x, short y, boolean pressed);
@@ -147,10 +158,76 @@ public abstract class LibretroCore implements AutoCloseable {
     private final java.util.concurrent.atomic.AtomicInteger mouseWheelDown =
             new java.util.concurrent.atomic.AtomicInteger();
 
+    /**
+     * Some cores (mkxp-z and other text-input cores) never poll RETRO_DEVICE_KEYBOARD.
+     * They register a {@code retro_keyboard_callback_t} through SET_KEYBOARD_CALLBACK
+     * and keep their own key table instead, so without the callback they see no keys
+     * at all. The pointer is the core's function; we call it from the core thread.
+     */
+    private volatile com.sun.jna.Pointer keyboardCallbackFn;
+    private final java.util.Queue<int[]> keyboardEvents = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /** Bound on pending events: a held key only ever queues press+release. */
+    private static final int KEY_EVENT_QUEUE_CAP = 128;
+
+    /** Native {@code retro_keyboard_callback_t} handed to us by the core. */
+    protected final void setKeyboardCallbackFn(com.sun.jna.Pointer fn) {
+        this.keyboardCallbackFn = fn;
+    }
+
+    public boolean hasKeyboardCallback() {
+        com.sun.jna.Pointer fn = keyboardCallbackFn;
+        return fn != null && com.sun.jna.Pointer.nativeValue(fn) != 0;
+    }
+
     /** Key press/release, {@code retroKey} is a RETROK code (see KeyboardMapper). */
     public void setKey(int retroKey, boolean pressed) {
         if (retroKey < 0 || retroKey >= KEY_STATE_SIZE) return;
         keyState.set(retroKey, pressed ? 1 : 0);
+        if (hasKeyboardCallback() && keyboardEvents.size() < KEY_EVENT_QUEUE_CAP)
+            keyboardEvents.add(new int[]{retroKey, pressed ? 1 : 0});
+    }
+
+    /**
+     * Deliver queued key events to the core. Runs on the core-owning thread just
+     * before {@code retro_run()} — libretro allows the callback only from there,
+     * and the client presses keys on the Minecraft thread.
+     */
+    protected final void flushKeyboardEvents() {
+        com.sun.jna.Pointer fn = keyboardCallbackFn;
+        if (fn == null || com.sun.jna.Pointer.nativeValue(fn) == 0) return;
+        com.sun.jna.Function cb = com.sun.jna.Function.getFunction(fn);
+        int[] ev;
+        for (int budget = 64; budget > 0 && (ev = keyboardEvents.poll()) != null; budget--) {
+            boolean down = ev[1] != 0;
+            try {
+                cb.invokeVoid(new Object[]{(byte) (down ? 1 : 0), ev[0],
+                        characterFor(ev[0], down), (short) modifiersMask()});
+            } catch (Throwable t) {
+                // A throwing core callback must not take the frame loop with it.
+                return;
+            }
+        }
+    }
+
+    /** RETROKMOD_* bits for the keys currently held. */
+    private int modifiersMask() {
+        int m = 0;
+        if (keyState.get(304) != 0 || keyState.get(303) != 0)
+            m |= LibretroBridge.RETROKMOD_SHIFT;   // RETROK_LSHIFT / RETROK_RSHIFT
+        if (keyState.get(306) != 0 || keyState.get(305) != 0)
+            m |= LibretroBridge.RETROKMOD_CTRL;    // RETROK_LCTRL / RETROK_RCTRL
+        if (keyState.get(308) != 0 || keyState.get(307) != 0)
+            m |= LibretroBridge.RETROKMOD_ALT;     // RETROK_LALT / RETROK_RALT
+        return m;
+    }
+
+    /** Printable RETROK -> the character the key produces, 0 for everything else. */
+    private int characterFor(int retroKey, boolean down) {
+        if (!down || retroKey < ' ' || retroKey > '~') return 0;
+        if (retroKey >= 'a' && retroKey <= 'z'
+                && (modifiersMask() & LibretroBridge.RETROKMOD_SHIFT) != 0)
+            return retroKey - ('a' - 'A');
+        return retroKey;
     }
 
     /** Accumulate relative mouse movement; the core drains it on the next poll. */

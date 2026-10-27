@@ -50,6 +50,10 @@ public class TvScreen extends TrackedWidgetScreen {
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE = 0xFF2A2F3A;
     private static final int COL_CAPTURE_HINT = 0xFFD8B45C;
+    /** After this long without a frame the boot indicator turns into "No Signal". */
+    private static final long BOOT_TIMEOUT_MS = 60_000L;
+    /** When the "check the chat" line appears under the boot indicator. */
+    private static final long BOOT_SLOW_MS = 10_000L;
 
     private final BlockPos consolePos;
     private final UUID consoleId;
@@ -58,6 +62,8 @@ public class TvScreen extends TrackedWidgetScreen {
     private final CoreInputProfile inputProfile;
 
     private long lastFlush = Util.getMillis();
+    /** Screen opened = the moment the game was requested; the boot indicator counts from here. */
+    private final long openedAtMs = System.currentTimeMillis();
     private boolean closed;
     private boolean showHints;
 
@@ -190,12 +196,80 @@ public class TvScreen extends TrackedWidgetScreen {
             frameH = (int) (texH * scale);
             frameX = (this.width - frameW) / 2;
             frameY = (screenH - frameH) / 2;
+            // Nearest only looks right at whole-number scales; anywhere else it eats
+            // 1px glyph stems and small text becomes unreadable (see setLinear).
+            float effective = (float) frameW / texW;
+            entry.setLinear(Math.abs(effective - Math.round(effective)) > 0.02f);
             guiGraphics.blit(entry.id(), frameX, frameY, 0, 0, frameW, frameH, frameW, frameH);
         } else {
             frameX = frameY = frameW = frameH = 0;
-            guiGraphics.drawCenteredString(this.font, ModTexts.s("gui.no_signal"),
-                    this.width / 2, screenH / 2, 0xFFFFFF);
+            renderStandby(guiGraphics, screenH);
         }
+    }
+
+    /**
+     * What fills the screen while no frame has arrived.
+     *
+     * <p>Opening a game is not instant: the server copies the core module and runs
+     * {@code retro_load_game} before the first frame exists, which is seconds for a
+     * libretro core and tens of seconds for mkxp-z / Ren'Py titles. A flat "No
+     * Signal" during that window reads as "it failed", so show a boot indicator for
+     * as long as the console is plausibly still loading.
+     */
+    private void renderStandby(GuiGraphics g, int screenH) {
+        boolean hasGame = !displayName.isEmpty();
+        long elapsedMs = System.currentTimeMillis() - openedAtMs;
+        boolean stopped = ClientConsoles.stoppedAt(consoleId) >= openedAtMs;
+
+        if (!hasGame || stopped || elapsedMs >= BOOT_TIMEOUT_MS) {
+            g.drawCenteredString(this.font, ModTexts.s("gui.no_signal"),
+                    this.width / 2, screenH / 2, 0xFFFFFF);
+            if (hasGame) {
+                String name = this.font.plainSubstrByWidth(displayName, Math.max(60, this.width - 40));
+                g.drawCenteredString(this.font, name, this.width / 2, screenH / 2 + 12, 0xFF707888);
+            }
+            return;
+        }
+
+        long now = Util.getMillis();
+        int dots = (int) ((now / 400L) % 4L);
+        long sec = elapsedMs / 1000L;
+        // Long ROM names ("Castle of Illusion Starring Mickey Mouse…") must not
+        // push the card past the window, so bound the name before measuring.
+        String name = this.font.plainSubstrByWidth(displayName,
+                Math.max(80, Math.min(260, this.width - 100)));
+        String title = ModTexts.s("gui.starting", name) + ".".repeat(dots);
+        String hint = ModTexts.s("gui.starting_hint") + " \u00b7 "
+                + ModTexts.s("gui.starting_elapsed", sec);
+        boolean slow = elapsedMs >= BOOT_SLOW_MS;
+
+        int cardW = Math.min(this.width - 40, Math.max(232,
+                Math.max(this.font.width(title), this.font.width(hint)) + 32));
+        int cardH = slow ? 80 : 62;
+        int x = (this.width - cardW) / 2;
+        int y = (screenH - cardH) / 2;
+
+        g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, COL_EDGE);
+        g.fill(x, y, x + cardW, y + cardH, COL_PANEL_2);
+
+        g.drawCenteredString(this.font, title, this.width / 2, y + 11, 0xFFFFFF);
+        renderBootBar(g, x + 16, y + 30, cardW - 32);
+        g.drawCenteredString(this.font, hint, this.width / 2, y + 39, 0xFF9AA2B4);
+        if (slow) {
+            g.drawCenteredString(this.font, ModTexts.s("gui.starting_slow"),
+                    this.width / 2, y + 55, 0xFF707888);
+        }
+    }
+
+    /** Indeterminate sweep — the motion is the message: the client is still waiting. */
+    private void renderBootBar(GuiGraphics g, int x, int y, int w) {
+        g.fill(x, y, x + w, y + 3, 0xFF2A2F3A);
+        int seg = Math.max(28, w / 4);
+        float phase = (Util.getMillis() % 1400L) / 1400f;
+        int px = x + (int) ((w + seg) * phase) - seg;
+        int l = Math.max(x, px);
+        int r = Math.min(x + w, px + seg);
+        if (r > l) g.fill(l, y, r, y + 3, 0xFF5FA8E0);
     }
 
     private void renderTouchCursor(GuiGraphics g) {

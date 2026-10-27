@@ -316,17 +316,39 @@ public class FrameSenderThread extends Thread {
         statsWindowNs = now;
     }
 
-    /** Nearest neighbor — cheap and sufficient for the in-world screen block. */
+    /**
+     * Area-average downscale for the in-world screen block.
+     *
+     * <p>Nearest neighbor drops whole columns and rows when the ratio is not an
+     * integer — 768 -> 480 loses 2 of every 5 columns, and with them parts of 1px
+     * glyph stems: RPG Maker text came out as "Ker bindings". Averaging the source
+     * box keeps every pixel's contribution, so small text survives the reduction.
+     * Each output pixel reads at most a 2x2 box.
+     */
     private void downscale(int[] src, int w, int h, int sw, int sh) {
         if (scaledBuf.length < sw * sh) {
             scaledBuf = new int[sw * sh];
         }
         for (int y = 0; y < sh; y++) {
-            int sy = (int) ((long) y * h / sh);
-            int rowSrc = sy * w;
+            int sy0 = (int) ((long) y * h / sh);
+            int sy1 = Math.max(sy0 + 1, (int) ((long) (y + 1) * h / sh));
             int rowDst = y * sw;
             for (int x = 0; x < sw; x++) {
-                scaledBuf[rowDst + x] = src[rowSrc + (int) ((long) x * w / sw)];
+                int sx0 = (int) ((long) x * w / sw);
+                int sx1 = Math.max(sx0 + 1, (int) ((long) (x + 1) * w / sw));
+                int r = 0, g = 0, b = 0, n = 0;
+                for (int sy = sy0; sy < sy1; sy++) {
+                    int rowSrc = sy * w;
+                    for (int sx = sx0; sx < sx1; sx++) {
+                        int px = src[rowSrc + sx];
+                        r += (px >> 16) & 0xFF;
+                        g += (px >> 8) & 0xFF;
+                        b += px & 0xFF;
+                        n++;
+                    }
+                }
+                scaledBuf[rowDst + x] = 0xFF000000
+                        | ((r / n) << 16) | ((g / n) << 8) | (b / n);
             }
         }
     }

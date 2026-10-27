@@ -76,6 +76,7 @@ public final class RomLibrary {
         List<Path> files = new ArrayList<>();
         Path romsRoot = romsDir();
         scanDoom3(romsRoot);
+        scanRpgMaker(romsRoot);
         try (Stream<Path> s = Files.walk(ensureDir(romsRoot), 2)) {
             s.filter(Files::isRegularFile).forEach(files::add);
         } catch (IOException ignored) {}
@@ -163,6 +164,62 @@ public final class RomLibrary {
             }
         } catch (IOException ignored) {}
         return first;
+    }
+
+    /**
+     * RPG Maker layout is {@code roms/rpgmaker/<gamedir>/Game.ini} — one level deeper
+     * than the depth-2 walk reaches. mkxp-z mounts the directory of whatever file it
+     * is handed, so the entry is the descriptor file and each game folder becomes
+     * exactly one selectable library entry (no digging for the .ini).
+     */
+    private void scanRpgMaker(Path romsRoot) {
+        GameSystem rpg = GameSystem.byId("RPGMAKER");
+        if (rpg == null) return;
+        Path root = romsRoot.resolve(rpg.folder);
+        if (!Files.isDirectory(root)) return;
+        try (var dirs = Files.newDirectoryStream(root)) {
+            for (Path dir : dirs) {
+                if (!Files.isDirectory(dir)) continue;
+                Path entry = pickRpgMakerEntry(dir);
+                if (entry == null) continue;
+                long size = 0;
+                try { size = Files.size(entry); } catch (IOException ignored) {}
+                String display = rpgMakerTitle(entry).orElse(dir.getFileName().toString());
+                roms.add(new Rom(romsRoot.relativize(entry).toString().replace('\\', '/'),
+                        entry, extOf(entry.getFileName().toString().toLowerCase(Locale.ROOT)),
+                        size, rpg, display, false));
+            }
+        } catch (IOException ignored) {}
+    }
+
+    /** mkxp-z content: Game.ini (XP/VX/VX Ace), mkxp.json, a project marker, or an archive. */
+    private static Path pickRpgMakerEntry(Path dir) {
+        for (String name : List.of("Game.ini", "mkxp.json")) {
+            Path p = dir.resolve(name);
+            if (Files.isRegularFile(p)) return p;
+        }
+        for (String glob : List.of("*.rxproj", "*.rvproj", "*.rvproj2", "*.mkxpz")) {
+            try (var hits = Files.newDirectoryStream(dir, glob)) {
+                for (Path p : hits) if (Files.isRegularFile(p)) return p;
+            } catch (IOException ignored) {}
+        }
+        return null;
+    }
+
+    /** {@code Title=} from Game.ini is the game's real name — nicer than the folder. */
+    private static Optional<String> rpgMakerTitle(Path entry) {
+        if (!entry.getFileName().toString().equalsIgnoreCase("Game.ini")) return Optional.empty();
+        try {
+            String text = new String(Files.readAllBytes(entry), StandardCharsets.UTF_8);
+            for (String raw : text.split("\\R")) {
+                String line = raw.strip();
+                if (line.regionMatches(true, 0, "Title=", 0, 6)) {
+                    String title = line.substring(6).strip();
+                    if (!title.isEmpty()) return Optional.of(title);
+                }
+            }
+        } catch (Exception ignored) {}
+        return Optional.empty();
     }
 
     private GameSystem detect(Path file, String ext, long size) {

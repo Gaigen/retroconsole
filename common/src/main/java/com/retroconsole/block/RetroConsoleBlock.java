@@ -95,7 +95,9 @@ public class RetroConsoleBlock extends BaseEntityBlock {
 
         String romId = console.getRomId();
         if (!romId.isEmpty() && console.getConsoleId() != null
-                && !ServerConsoles.hasEmulator(console.getConsoleId())) {
+                && !ServerConsoles.hasEmulator(console.getConsoleId())
+                // A boot in flight has no Entry yet — do not restart it on every click.
+                && !ServerConsoles.isBooting(console.getConsoleId())) {
             if (!console.getCoreName().isEmpty()) {
                 UUID owner = console.getOwnerId() != null ? console.getOwnerId() : serverPlayer.getUUID();
                 console.selectGame(console.getCoreName(), romId, owner, true);

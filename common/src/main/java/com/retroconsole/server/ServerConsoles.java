@@ -9,6 +9,7 @@ import com.retroconsole.emu.ThreadedEmulatorRuntime;
 import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroStopConsolePacket;
 import com.retroconsole.network.payload.RetroPayloads;
+import com.retroconsole.library.RpgMakerRtp;
 import com.retroconsole.platform.PlayerPaths;
 import com.retroconsole.platform.Pcsx2MemcardSync;
 import com.retroconsole.platform.RetroConsolePaths;
@@ -24,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -58,6 +60,40 @@ public class ServerConsoles {
                 t.setDaemon(true);
                 return t;
             });
+
+    /** Background core boot — see {@link #startEmulator}. One at a time. */
+    private static final java.util.concurrent.ExecutorService START_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "retro-console-start");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /**
+     * Save-state snapshot and restore. {@code LibretroCore} hands core calls to
+     * the core-owning thread and waits for the answer, and one {@code retro_run}
+     * can take seconds while a game boots (mkxp-z spends ~7 s on its first
+     * RGSS frames). Asking for a snapshot from the tick thread therefore stalled
+     * the world for as long as that frame lasted — the "Can't keep up! Running
+     * 4461ms behind" in the log. One thread keeps save and load requests in the
+     * order the player made them.
+     */
+    private static final java.util.concurrent.ExecutorService SAVE_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "retro-console-save");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /**
+     * Latest boot request per console. Booting is off-thread and takes seconds
+     * (DLL slot copy, LoadLibrary, retro_load_game), so a power-off or a
+     * different game in the meantime has to invalidate the boot in flight —
+     * the token is what {@link #stopEmulator} removes to cancel it.
+     */
+    private static final ConcurrentHashMap<UUID, Long> BOOT_TOKENS = new ConcurrentHashMap<>();
+    private static final java.util.concurrent.atomic.AtomicLong BOOT_SEQ =
+            new java.util.concurrent.atomic.AtomicLong();
 
     private record Entry(
             LibretroRuntime runtime,
@@ -115,15 +151,50 @@ public class ServerConsoles {
         Path romPath = RetroConsolePaths.resolveRomFile(romId).orElse(null);
         if (romPath == null) { LOGGER.error("ROM rejected or not found: {}", romId); return; }
 
+        // Only the cheap part stays on the caller's (server) thread. The boot —
+        // core slot copy, LoadLibrary, retro_load_game — used to block the world
+        // tick for seconds, which in singleplayer reads as the whole process
+        // freezing, so it runs on START_EXECUTOR and publishes the Entry itself.
         PlayerPaths playerPaths = ownerId != null
                 ? PlayerPaths.forPlayer(ownerId)
                 : PlayerPaths.shared();
+        long token = BOOT_SEQ.incrementAndGet();
+        BOOT_TOKENS.put(consoleId, token);
+        long startedNs = System.nanoTime();
+        UUID bootId = consoleId;   // consoleId is a reassigned parameter — not capturable
+        LOGGER.info("Booting {} for {} (console={}, owner={})",
+                coreName, romId, bootId, ownerId);
+        START_EXECUTOR.execute(() -> bootEmulator(
+                bootId, coreInfo.path(), romPath, playerPaths,
+                coreName, romId, ownerId, loadAuto, token, startedNs));
+    }
 
-        LibretroRuntime runtime = coreManager.loadCoreAndGame(coreInfo.path(), romPath, playerPaths);
+    /**
+     * Runs on {@code retro-console-start}. Publishes the console into the maps
+     * once the core is up; if the request was superseded meanwhile the freshly
+     * booted runtime is thrown away instead of being leaked.
+     */
+    private static void bootEmulator(UUID consoleId, Path corePath, Path romPath,
+                                     PlayerPaths playerPaths, String coreName, String romId,
+                                     UUID ownerId, boolean loadAuto, long token, long startedNs) {
+        LibretroRuntime runtime = null;
+        try {
+            runtime = coreManager.loadCoreAndGame(corePath, romPath, playerPaths);
+        } catch (Throwable t) {
+            LOGGER.error("Core boot crashed for {}: {}", coreName, t.getMessage(), t);
+        }
+
+        // Claim the request: whoever removes the token owns the cleanup, so a
+        // stop/power-off that landed during the load wins and this boot drops out.
+        if (!BOOT_TOKENS.remove(consoleId, token)) {
+            if (runtime != null) scheduleClose(runtime, consoleId);
+            LOGGER.info("Boot of {} cancelled — console {} was stopped or restarted", romId, consoleId);
+            return;
+        }
         if (runtime == null) {
             Component message = loadFailureMessage(coreName, romId);
             LOGGER.error(message.getString());
-            notifyOwner(ownerId, message);
+            notifyOwnerDeferred(ownerId, message);
             return;
         }
 
@@ -154,8 +225,9 @@ public class ServerConsoles {
         if (ownerId != null) {
             ServerPlayStats.onLaunch(ownerId, romId);
         }
-        LOGGER.info("Started {} emulator {} at {} ({}x{}, owner={}, loadAuto={})",
-                coreName, consoleId, pos, w, h, ownerId, loadAuto);
+        LOGGER.info("Started {} emulator {} at {} ({}x{}, owner={}, loadAuto={}) in {} ms",
+                coreName, consoleId, getPosition(consoleId), w, h, ownerId, loadAuto,
+                (System.nanoTime() - startedNs) / 1_000_000L);
     }
 
     public static void updatePosition(UUID consoleId, BlockPos pos) {
@@ -174,28 +246,42 @@ public class ServerConsoles {
 
     public static void stopEmulator(UUID consoleId) {
         if (consoleId == null) return;
+        // Cancels a boot still in flight; it sees the token gone and drops its runtime.
+        BOOT_TOKENS.remove(consoleId);
         Entry e = ENTRIES.remove(consoleId);
         BlockPos pos = POSITIONS.get(consoleId);
         FrameSenderThread sender = FRAME_SENDERS.remove(consoleId);
-        if (sender != null) sender.stopAndJoin();
-        if (e != null) {
-            LOGGER.info("stopEmulator({}): core={}, rom={}", consoleId, e.coreName(), e.romId());
-            if (e.ownerId() != null) {
-                long sec = Math.max(0, (System.currentTimeMillis() - e.startedAtMillis()) / 1000);
-                ServerPlayStats.addPlaytime(e.ownerId(), e.romId(), sec);
-            }
-            e.threaded().stop();
-            boolean saved = SaveStateManager.saveAuto(
-                    e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
-            LOGGER.info("Auto save on stop {} -> {}", e.romId(), saved);
-            scheduleClose(e.runtime(), consoleId);
-        }
-        if (pos != null) {
-            notifyConsoleStopped(consoleId, pos);
-        }
         VIEWERS.remove(consoleId);
         PORTS.remove(consoleId);
         POSITIONS.remove(consoleId);
+        if (pos != null) {
+            notifyConsoleStopped(consoleId, pos);
+        }
+        if (e == null) {
+            if (sender != null) SHUTDOWN_EXECUTOR.execute(sender::stopAndJoin);
+            return;
+        }
+        LOGGER.info("stopEmulator({}): core={}, rom={}", consoleId, e.coreName(), e.romId());
+        if (e.ownerId() != null) {
+            long sec = Math.max(0, (System.currentTimeMillis() - e.startedAtMillis()) / 1000);
+            ServerPlayStats.addPlaytime(e.ownerId(), e.romId(), sec);
+        }
+        // Teardown blocks for seconds (frame-thread join, save-state snapshot, GL
+        // context destroy). It used to run on the server thread on every power-off
+        // and on every game switch, freezing the world while it did.
+        SHUTDOWN_EXECUTOR.execute(() -> teardown(consoleId, e, sender));
+    }
+
+    /** Frame-thread join, auto-save snapshot and core close — shutdown thread only. */
+    private static void teardown(UUID consoleId, Entry e, FrameSenderThread sender) {
+        if (sender != null) sender.stopAndJoin();
+        e.threaded().stop();
+        // A core that ended its own runtime has no live sandbox left to snapshot.
+        boolean saved = e.runtime().getCore().coreExitCode() == 0
+                && SaveStateManager.saveAuto(
+                        e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
+        LOGGER.info("Auto save on stop {} -> {}", e.romId(), saved);
+        scheduleClose(e.runtime(), consoleId);
     }
 
     private static void scheduleClose(LibretroRuntime runtime, UUID consoleId) {
@@ -257,6 +343,21 @@ public class ServerConsoles {
         player.sendSystemMessage(Component.literal("[RetroConsole] ").append(message));
     }
 
+    /** Same, but for callers off the server thread (the boot does not block it). */
+    private static void notifyOwnerDeferred(UUID ownerId, Component message) {
+        MinecraftServer server = ServerAccess.getCurrentServer();
+        if (server == null) {
+            notifyOwner(ownerId, message);
+            return;
+        }
+        server.execute(() -> notifyOwner(ownerId, message));
+    }
+
+    /** True while {@code consoleId} is still loading — it has no Entry yet. */
+    public static boolean isBooting(UUID consoleId) {
+        return consoleId != null && BOOT_TOKENS.containsKey(consoleId);
+    }
+
     private static void notifyConsoleStopped(UUID consoleId, BlockPos pos) {
         MinecraftServer server = ServerAccess.getCurrentServer();
         if (server == null || !server.isRunning()) return;
@@ -271,7 +372,42 @@ public class ServerConsoles {
     }
 
     public static void tick(ServerLevel level) {
-        // Frame sending runs in FrameSenderThread; tick kept for future extensions.
+        // Frame sending runs in FrameSenderThread; this poll is what notices a
+        // core that ended its own runtime (see coreStoppedMessage).
+        if (ENTRIES.isEmpty()) return;
+        for (Map.Entry<UUID, Entry> live : List.copyOf(ENTRIES.entrySet())) {
+            Entry e = live.getValue();
+            if (e.runtime().getCore().coreExitCode() == 0) continue;
+            Component why = coreStoppedMessage(e);
+            LOGGER.info("Core runtime ended for {} ({}): {}", live.getKey(), e.romId(), why.getString());
+            notifyOwner(e.ownerId(), why);
+            stopEmulator(live.getKey());
+        }
+    }
+
+    /**
+     * Why a console stopped by itself. Cores such as mkxp-z end their sandbox
+     * inside retro_run() without a libretro SHUTDOWN, so the last frame (black)
+     * would keep streaming; the core's own last message names the asset it died
+     * on. RPG Maker games often die on a run-time package (RTP) that the author
+     * expected to be installed, so name the folder mkxp-z mounts it from.
+     */
+    private static Component coreStoppedMessage(Entry e) {
+        String detail = e.runtime().getCore().coreExitMessage();
+        if (detail != null) detail = detail.replace('\n', ' ').replace('\r', ' ').strip();
+        if (detail == null || detail.isEmpty()) detail = "no details";
+        List<String> missing = List.of();
+        try {
+            Path romPath = RetroConsolePaths.resolveRomFile(e.romId()).orElse(null);
+            if (romPath != null) missing = RpgMakerRtp.missing(romPath);
+        } catch (Exception ignored) {}
+        if (!missing.isEmpty()) {
+            List<String> hints = new ArrayList<>(missing.size());
+            for (String name : missing) hints.add(RpgMakerRtp.installHint(name));
+            return Component.translatable("retroconsole.error.core_stopped_rtp",
+                    e.coreName(), detail, String.join(", ", missing), String.join(" / ", hints));
+        }
+        return Component.translatable("retroconsole.error.core_stopped", e.coreName(), detail);
     }
 
     public static LibretroCore getCore(UUID consoleId) {
@@ -320,14 +456,18 @@ public class ServerConsoles {
         if (e == null) return;
         if (auto) {
             if (!save) return;
-            boolean ok = SaveStateManager.saveAuto(
-                    e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
-            LOGGER.info("Auto save state @ {} -> {}", consoleId, ok);
+            SAVE_EXECUTOR.execute(() -> {
+                boolean ok = SaveStateManager.saveAuto(
+                        e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
+                LOGGER.info("Auto save state @ {} -> {}", consoleId, ok);
+            });
             return;
         }
         if (slot < 0 || slot > SaveStateManager.MAX_SLOT) return;
-        boolean ok = save ? e.runtime().saveState(slot) : e.runtime().loadState(slot);
-        LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, consoleId, ok);
+        SAVE_EXECUTOR.execute(() -> {
+            boolean ok = save ? e.runtime().saveState(slot) : e.runtime().loadState(slot);
+            LOGGER.info("Save state {} slot {} @ {} -> {}", save ? "write" : "load", slot, consoleId, ok);
+        });
     }
 
     public static void addViewer(UUID consoleId, UUID playerId) {
@@ -424,6 +564,16 @@ public class ServerConsoles {
     public static void stopAll() {
         LOGGER.info("stopAll(): shutting down {} emulator(s)", ENTRIES.size());
 
+        // Invalidate pending boots and let the one in flight drop its runtime
+        // before the maps below are cleared — otherwise it would publish a
+        // console nobody shuts down.
+        BOOT_TOKENS.clear();
+        try {
+            START_EXECUTOR.submit(() -> null).get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            LOGGER.debug("Boot drain wait: {}", e.getMessage());
+        }
+
         List<FrameSenderThread> senders = new ArrayList<>(FRAME_SENDERS.values());
         FRAME_SENDERS.clear();
         for (FrameSenderThread sender : senders) sender.stopSender();
@@ -442,8 +592,10 @@ public class ServerConsoles {
                 ServerPlayStats.addPlaytime(e.ownerId(), e.romId(), sec);
             }
             e.threaded().stop();
-            boolean saved = SaveStateManager.saveAuto(
-                    e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
+            // Same guard as stopEmulator: nothing left to snapshot after a core exit.
+            boolean saved = e.runtime().getCore().coreExitCode() == 0
+                    && SaveStateManager.saveAuto(
+                            e.runtime().getCore(), e.romId(), e.runtime().getPlayerPaths());
             LOGGER.info("Auto save on stopAll {} -> {}", e.romId(), saved);
             runtimes.add(e.runtime());
         }

@@ -8,7 +8,7 @@
 
 NeoForge and Fabric mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
-**Version:** 0.2.5 (early release — expect rough edges)
+**Version:** 0.3.0 (early release — expect rough edges)
 
 ## Download
 
@@ -16,10 +16,18 @@ Pre-built JARs: **[GitHub Releases](https://github.com/Gaigen/retroconsole/relea
 
 | Loader | File |
 |--------|------|
-| NeoForge | `retroconsole-0.2.6+1.21.1-neoforge.jar` |
-| Fabric | `retroconsole-0.2.6+1.21.1-fabric.jar` (needs Fabric API) |
+| NeoForge | `retroconsole-0.3.0+1.21.1-neoforge.jar` |
+| Fabric | `retroconsole-0.3.0+1.21.1-fabric.jar` (needs Fabric API) |
 
 Requirements: Minecraft **1.21.1**, NeoForge **21.1.x** or Fabric Loader **0.16+**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs. Both loaders read the same `config/retroconsole.json`, so settings carry over between them.
+
+## What's new in 0.3.0
+
+- **Fabric** — RetroConsole now ships as a Fabric mod as well as a NeoForge one, with the same features and the same `config/retroconsole.json`; settings, saves and play stats carry over if you switch loaders.
+- **RPG Maker XP / VX / VX Ace** through the `mkxp-z` core — one library entry per game folder, named from `Title=` in `Game.ini`, a correctly sized picture even for games that scale their window, and a chat message that names the missing RTP instead of leaving you at a black screen.
+- **Legible text on screens** — the in-world downscale averages pixels instead of dropping them, and the TV view switches to linear sampling at non-integer scales, so 1-pixel glyph stems survive the reduction.
+- **Launching and stopping a big game no longer freezes the world** — cores boot off the tick thread, and automatic save-state resume is skipped when a core's state is huge (mkxp-z serializes its whole Ruby heap, ~100 MB).
+- **`[debug] verboseLogs`** — new ⚙ → **Debug** toggle for heartbeats and GL capture diagnostics; off by default, so a normal log stays readable.
 
 ## Features
 
@@ -30,8 +38,9 @@ Requirements: Minecraft **1.21.1**, NeoForge **21.1.x** or Fabric Loader **0.16+
 - Server-side emulation with video/audio streaming to nearby players
 - Per-player saves, play-time stats, PS2 memory-card sync
 - In-game config UI (paths, streaming distances, session limits, video presets)
-- HW-render cores (PS2, PSP, Dreamcast, Doom 3) via bundled headless OpenGL helper
+- HW-render cores (PS2, PSP, Dreamcast, Doom 3, RPG Maker) via bundled headless OpenGL helper
 - **Doom 3** through the boom3 core — retail or the free demo
+- **RPG Maker XP / VX / VX Ace** through the mkxp-z core — one library entry per game folder, RTP-aware
 - Nintendo DS / 3DS with absolute touch pointer (DeSmuME, melonDS, Citra)
 
 ## Screenshots
@@ -122,10 +131,12 @@ config/retroconsole/
 │   ├── nes/
 │   ├── gba/
 │   ├── ps2/
-│   └── dreamcast/
+│   ├── dreamcast/
+│   └── rpgmaker/<game>/  # RPG Maker games are folders — see the mkxp-z section
 ├── system/             # BIOS and core system files (not shipped with the mod)
 │   ├── pcsx2/bios/     # PS2 BIOS (e.g. scph70000.bin) — see BIOS section
 │   ├── pcsx2/memcards/ # PS2 memory cards (LRPS2)
+│   ├── mkxp-z/RTP/     # RPG Maker run-time packages (Standard, RPGVX, RPGVXAce)
 │   └── dc/             # Dreamcast BIOS / VMU (Flycast)
 ├── art/                # Optional menu cover art: art/<folder>.png
 ├── systems.json        # Optional custom system definitions (local SP only)
@@ -138,7 +149,7 @@ The mod auto-creates default `roms/` subfolders for built-in systems (`nes`, `sn
 ### Cores
 
 - File name (without extension) is the **core id** used internally, e.g. `nestopia_libretro.dll` → core id `nestopia_libretro`.
-- Download matching builds for your OS from the [libretro buildbot](https://buildbot.libretro.com/).
+- Download matching builds for your OS from the [libretro buildbot](https://buildbot.libretro.com/). The `mkxp-z` core is not hosted there — see [its section](#rpg-maker-xp--vx--vx-ace-mkxp-z).
 - A bundled headless OpenGL helper (`.libheadless_gl.dll` / `.libheadless_gl.so`) is extracted into `cores/` automatically for HW-render cores (PS2, Dreamcast, etc.).
 
 ### ROMs
@@ -158,6 +169,26 @@ config/retroconsole/roms/doom3/
 ```
 
 Every folder under `roms/doom3/` becomes an entry in the **Doom 3** tab. The core renders through the bundled headless OpenGL helper, so a GPU with OpenGL 3.3+ is required. On Windows, `tools\setup-boom3.ps1` downloads the core and creates the folders. If the stream stutters, lower `doom3Resolution` in `[video]`.
+
+### RPG Maker XP / VX / VX Ace (mkxp-z)
+
+A RPG Maker game is a folder, not a single ROM file, so the **RPG Maker** tab shows one entry per game folder (named after `Title=` when there is one):
+
+```
+config/retroconsole/roms/rpgmaker/
+└── <game>/                 # folder holding Game.ini, mkxp.json or a project file
+    ├── Game.ini
+    ├── Data/
+    └── Graphics/
+```
+
+The `mkxp-z` core mounts the folder that contains `Game.ini` / `mkxp.json` / `*.rxproj` and renders through the bundled headless OpenGL helper. Keep a game's assets in its own folder — pointing the library at the parent folder makes the core mount the parent, so the game starts with nothing to draw.
+
+The core is **not** on the libretro buildbot: build `mkxp-z_libretro` from the [mkxp-z source](https://github.com/mkxp-z/mkxp-z) and drop the `.dll` / `.so` into `cores/`. Upstream documentation: [libretro → mkxp-z](https://docs.libretro.com/library/mkxp-z/).
+
+Games that declare an **RTP** in `Game.ini` (`RTP1=Standard`) need that Runtime Package unpacked into `system/mkxp-z/RTP/<name>/`. The standard packages come from [rpgmakerweb.com/run-time-package](https://www.rpgmakerweb.com/run-time-package) — extract the installer (`innoextract` works on any OS), keep the folder that contains `Audio/` and `Graphics/`, and name it `Standard` (XP), `RPGVX` (VX) or `RPGVXAce` (VX Ace). Without it the core keeps running but draws almost nothing, which looks like a black screen; its log says `Failed to locate run time package … required by the game`, and the game's chat message names the missing package and the folder it belongs in.
+
+mkxp-z serializes its entire Ruby heap into a save state — tens of megabytes for a large game. Automatic resume is therefore skipped when a state would exceed 32 MB, so stopping a game no longer freezes the world while 100 MB is written to disk. Quick save/load slots (F5 / F6) and the game's own save file are unaffected.
 
 ### BIOS (PS2, Dreamcast, …)
 
@@ -186,12 +217,13 @@ The library UI recognizes these folders and suggests matching core name patterns
 | `segacd` | Sega CD | disc images | genesis_plus_gx, picodrive |
 | `saturn` | Saturn | disc images | mednafen_saturn, beetle_saturn, kronos |
 | `doom3` | Doom 3 | `.pk4` (game data folder) | boom3 |
+| `rpgmaker` | RPG Maker XP / VX / VX Ace | game folder (`.rxproj`, `.rvproj2`, …) | mkxp-z |
 
 Custom tabs can be added via `systems.json` (on the machine that serves the library — your client in single-player, the server in multiplayer).
 
-### Tested cores (0.2.6)
+### Tested cores (0.3.0)
 
-Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has matching native helpers; treat HW cores there as “should work”, not as a full matrix.
+Smoke-tested during development on **Windows 11** (NeoForge 21.1.215); the Fabric build runs the same shared code and differs only in loader glue. Linux has matching native helpers; treat HW cores there as “should work”, not as a full matrix.
 
 | Core file (libretro) | System | Notes |
 |----------------------|--------|--------|
@@ -204,8 +236,9 @@ Smoke-tested during development on **Windows 11** (NeoForge 21.1.215). Linux has
 | `ppsspp_libretro` | PSP | HW OpenGL via `headless_gl`; multi-console OK |
 | `flycast_libretro` | Dreamcast | HW OpenGL via `headless_gl`; needs DC BIOS under `system/dc/`; multi-console OK |
 | `boom3_libretro` | Doom 3 | HW OpenGL via `headless_gl`; game data under `roms/doom3/`; multi-console OK |
+| `mkxp-z_libretro` | RPG Maker XP / VX / VX Ace | HW OpenGL via `headless_gl`; one entry per game folder; RTPs under `system/mkxp-z/RTP/` |
 
-Other cores from the catalog table above may work, but were **not** part of the 0.2.6 smoke set.
+Other cores from the catalog table above may work, but were **not** part of the 0.3.0 smoke set.
 
 ## Configuration
 
@@ -218,7 +251,7 @@ One file, created on first launch:
 
 | File | Contents |
 |------|----------|
-| `config/retroconsole.json` | Paths to cores/ROMs/system/saves, streaming, limits, video, input |
+| `config/retroconsole.json` | Paths to cores/ROMs/system/saves, streaming, limits, video, input, debug |
 
 On a **dedicated server**, edit the server’s copy (or ask the host) — clients cannot change server streaming/video from the UI.
 
@@ -263,6 +296,12 @@ When a limit is hit, the owner gets a chat message (e.g. core slot cap, PS2 sess
 | `doom3InvertY` | `false` | Invert Doom 3 mouse / right-stick Y axis |
 
 Video overrides apply the next time you **launch** a game. Leave override strings empty to keep the preset value.
+
+### `[debug]`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `verboseLogs` | `false` | Periodic call-stats heartbeats and GL capture diagnostics in the log (⚙ → **Debug**). Worth turning on when reporting a rendering bug; leave it off otherwise. |
 
 ## Multiplayer
 
@@ -322,8 +361,8 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 
 Outputs:
 
-- `neoforge/build/libs/retroconsole-0.2.6+1.21.1-neoforge.jar`
-- `fabric/build/libs/retroconsole-0.2.6+1.21.1-fabric.jar`
+- `neoforge/build/libs/retroconsole-0.3.0+1.21.1-neoforge.jar`
+- `fabric/build/libs/retroconsole-0.3.0+1.21.1-fabric.jar`
 
 To rebuild the bundled headless GL native library (developers only):
 

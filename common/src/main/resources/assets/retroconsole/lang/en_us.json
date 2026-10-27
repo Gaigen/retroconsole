@@ -86,6 +86,8 @@
   "retroconsole.configuration.gamepad.enabled": "Enable gamepad",
   "retroconsole.configuration.gamepad.deadzone": "Stick deadzone",
   "retroconsole.configuration.gamepad.triggerThreshold": "Trigger threshold",
+  "retroconsole.configuration.debug": "Debug",
+  "retroconsole.configuration.verboseLogs": "Verbose logs (heartbeats, GL capture)",
   "retroconsole.configuration.preset.performance": "Performance",
   "retroconsole.configuration.preset.balanced": "Balanced",
   "retroconsole.configuration.preset.quality": "Quality",
@@ -96,6 +98,8 @@
   "retroconsole.error.pcsx2_bios": "No PS2 BIOS found — put SCPH-*.BIN into system/pcsx2/bios",
   "retroconsole.error.load_failed": "Failed to load core %s with ROM %s",
   "retroconsole.error.3ds_disabled": "Nintendo 3DS (Citra) is disabled in server config",
+  "retroconsole.error.core_stopped": "%s stopped on its own: %s",
+  "retroconsole.error.core_stopped_rtp": "%s stopped on its own: %s. This game needs the RPG Maker run-time package (RTP) \"%s\" - put its Audio, Graphics and Data folders into %s",
 
   "retroconsole.gui.core_picker": "Core…",
   "retroconsole.gui.start": "▶ Launch",
@@ -103,6 +107,10 @@
   "retroconsole.gui.server_tag": "§8(server)",
   "retroconsole.gui.no_results": "Nothing found",
   "retroconsole.gui.no_signal": "No Signal",
+  "retroconsole.gui.starting": "Starting %s",
+  "retroconsole.gui.starting_hint": "Booting the core on the server",
+  "retroconsole.gui.starting_elapsed": "%ss",
+  "retroconsole.gui.starting_slow": "Still loading - check chat if this hangs",
 
   "retroconsole.gui.view.cards": "Consoles",
   "retroconsole.gui.view.list": "List",

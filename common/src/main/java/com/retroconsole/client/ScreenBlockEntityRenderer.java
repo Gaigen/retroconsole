@@ -37,6 +37,10 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         var entry = be.getConsoleId() != null
                 ? ClientConsoles.getScreen(be.getConsoleId()) : null;
         ResourceLocation tex = (entry != null) ? entry.id() : SCREENSAVER;
+        // The in-world screen is drawn at whatever size the player's distance and view
+        // angle give it — almost never a whole multiple of the texture. Nearest would
+        // then drop rows and columns at random (text turns to mush), so smooth it.
+        if (entry != null) entry.setLinear(true);
 
         int gridW = Math.max(1, be.getGridWidth());
         int gridH = Math.max(1, be.getGridHeight());

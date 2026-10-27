@@ -63,7 +63,15 @@ public final class LibretroEnvironment {
     public static final int SET_AUDIO_BUFFER_STATUS_CALLBACK      = 62;
     public static final int GET_AUDIO_VIDEO_ENABLE                = 47;
 
+    public static final int GET_THROTTLE_STATE               = 71 | EXPERIMENTAL;
+    public static final int GET_SAVESTATE_CONTEXT            = 72 | EXPERIMENTAL;
+    public static final int GET_DEVICE_POWER                 = 77 | EXPERIMENTAL;
+
     public static final int RETRO_HW_CONTEXT_OPENGL_CORE = 3;
+
+    /** retro_power_state: mains power, no battery to report on. */
+    public static final int RETRO_POWERSTATE_PLUGGED_IN = 4;
+    public static final int RETRO_POWERSTATE_NO_ESTIMATE = -1;
 
     /** Strip environment flags; libretro command id is in the low 16 bits. */
     public static int normalize(int cmd) {
@@ -115,6 +123,9 @@ public final class LibretroEnvironment {
             case GET_MESSAGE_INTERFACE_VERSION -> "GET_MESSAGE_INTERFACE_VERSION";
             case SET_MESSAGE_EXT -> "SET_MESSAGE_EXT";
             case SET_MINIMUM_AUDIO_LATENCY -> "SET_MINIMUM_AUDIO_LATENCY";
+            case 71 -> "GET_THROTTLE_STATE";
+            case 72 -> "GET_SAVESTATE_CONTEXT";
+            case 77 -> "GET_DEVICE_POWER";
             case GET_AUDIO_VIDEO_ENABLE -> "GET_AUDIO_VIDEO_ENABLE";
             case SET_CORE_OPTIONS_V2_INTL -> "SET_CORE_OPTIONS_V2_INTL";
             case SET_VARIABLE -> "SET_VARIABLE";

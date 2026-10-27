@@ -12,6 +12,15 @@ public final class SaveStateManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("SaveState");
     public static final int MAX_SLOT = 0;
 
+    /**
+     * Auto states are written on every stop and read on every launch, both on the
+     * server thread. mkxp-z serializes its entire Ruby heap — ~100 MB for a large
+     * RPG Maker game — which froze the tick loop for ~10 s ("Can't keep up!") and
+     * wrote 100 MB to disk on every stop. Above this size auto resume is skipped;
+     * explicit save slots and the game's own save file are unaffected.
+     */
+    private static final long MAX_AUTO_STATE_BYTES = 32L * 1024 * 1024;
+
     private SaveStateManager() {}
 
     public static boolean supportsSaveStates(LibretroCore core) {
@@ -43,6 +52,7 @@ public final class SaveStateManager {
             LOGGER.info("Auto save state not supported for this core");
             return false;
         }
+        if (tooLargeForAuto(core, romId)) return false;
         byte[] data = core.serialize();
         if (data == null || data.length == 0) return false;
         Path file = SaveFiles.autoStatePath(paths, romId);
@@ -86,6 +96,7 @@ public final class SaveStateManager {
             LOGGER.info("Auto save state not supported for this core");
             return false;
         }
+        if (tooLargeForAuto(core, romId)) return false;
         Path file = SaveFiles.autoStatePath(paths, romId);
         if (!Files.isRegularFile(file)) {
             LOGGER.info("No auto save state ({})", file.getFileName());
@@ -109,5 +120,15 @@ public final class SaveStateManager {
     public static boolean loadAutoOrSlot(LibretroCore core, String romId, Path romPath, PlayerPaths paths) {
         if (loadAuto(core, romId, paths)) return true;
         return load(core, romPath, paths, 0);
+    }
+
+    /** True when the core's state is too big to snapshot automatically. */
+    private static boolean tooLargeForAuto(LibretroCore core, String romId) {
+        long size = core.getSerializeSize();
+        if (size <= MAX_AUTO_STATE_BYTES) return false;
+        LOGGER.info("Auto save state skipped for {}: core state is {} MB (limit {} MB) — "
+                        + "the game's own save and manual slots still work",
+                romId, size >> 20, MAX_AUTO_STATE_BYTES >> 20);
+        return true;
     }
 }

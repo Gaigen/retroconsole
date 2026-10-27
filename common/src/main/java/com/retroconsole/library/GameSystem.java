@@ -129,6 +129,12 @@ public final class GameSystem {
         // pak000.pk4 (retail) or demo00.pk4 (free demo), d3xp/ is Resurrection of Evil.
         builtin("DOOM3", "D3", "Doom 3", "Doom 3", "doom3", 0xFFA83830,
                 List.of(".pk4"), List.of("boom3"));
+        // RPG Maker XP/VX/VX Ace (mkxp-z core): a game is a directory holding
+        // Game.ini or mkxp.json, so RomLibrary makes one entry per game folder and
+        // the extension list only covers loose archives/projects.
+        builtin("RPGMAKER", "RPG", "RPG Maker", "RPG Maker XP / VX / VX Ace", "rpgmaker",
+                0xFFD8A0C8, List.of(".rxproj", ".rvproj", ".rvproj2", ".mkxpz"),
+                List.of("mkxp-z", "mkxp"));
     }
 
     private static void finishRegistry() {

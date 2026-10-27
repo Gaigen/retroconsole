@@ -32,6 +32,11 @@ public interface LibretroBridge extends Library {
     int RETRO_DEVICE_ID_POINTER_PRESSED   = 2;
     int RETRO_DEVICE_ID_POINTER_COUNT     = 3;
 
+    /** Keyboard modifier bits handed to a retro_keyboard_callback (RETROKMOD_*). */
+    int RETROKMOD_SHIFT = 1 << 0;
+    int RETROKMOD_CTRL  = 1 << 1;
+    int RETROKMOD_ALT   = 1 << 2;
+
     // --- Mouse (RETRO_DEVICE_MOUSE) ---
     // X/Y are RELATIVE deltas since the previous poll; the frontend must return
     // the accumulated movement and then reset it.

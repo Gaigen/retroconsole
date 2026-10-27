@@ -21,6 +21,8 @@ public final class CoreSavePolicy {
         if (name.contains("flycast")) return false;
         if (name.contains("ppsspp")) return false;
         if (name.contains("pcsx2")) return false;
+        // mkxp-z writes its own save files into GET_SAVE_DIRECTORY (/Save in its VFS).
+        if (name.contains("mkxp")) return false;
         return true;
     }
 

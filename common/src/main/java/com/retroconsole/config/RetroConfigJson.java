@@ -19,7 +19,8 @@ import java.nio.file.Path;
  * loader.
  *
  * <p>The tree mirrors the old NeoForge toml sections — {@code paths},
- * {@code streaming}, {@code limits}, {@code video}, {@code input} — and doubles
+ * {@code streaming}, {@code limits}, {@code video}, {@code input} — plus
+ * {@code debug}, and doubles
  * as a {@link RetroSettings.Source}: once handed to {@link #install(RetroConfigJson)},
  * the rest of the mod reads it through {@link RetroSettings} and never touches JSON.
  *
@@ -53,6 +54,7 @@ public final class RetroConfigJson implements RetroSettings.Source {
     public Limits limits = new Limits();
     public Video video = new Video();
     public Input input = new Input();
+    public Debug debug = new Debug();
 
     /** Set once every legacy toml section has been copied into this file. */
     public boolean legacyTomlImported = false;
@@ -199,6 +201,7 @@ public final class RetroConfigJson implements RetroSettings.Source {
         if (limits == null) limits = new Limits();
         if (video == null) video = new Video();
         if (input == null) input = new Input();
+        if (debug == null) debug = new Debug();
 
         paths.coresDir = or(paths.coresDir, EMPTY.paths.coresDir);
         paths.romsDir = or(paths.romsDir, EMPTY.paths.romsDir);
@@ -356,6 +359,11 @@ public final class RetroConfigJson implements RetroSettings.Source {
     }
 
     @Override
+    public boolean verboseLogs() {
+        return debug.verboseLogs;
+    }
+
+    @Override
     public boolean gamepadEnabled() {
         return input.gamepadEnabled;
     }
@@ -429,5 +437,10 @@ public final class RetroConfigJson implements RetroSettings.Source {
         public boolean gamepadEnabled = true;
         public double gamepadDeadzone = 0.15;
         public double gamepadTriggerThreshold = 0.5;
+    }
+
+    public static final class Debug {
+        /** Periodic heartbeats and GL capture diagnostics — noisy, opt-in. */
+        public boolean verboseLogs = false;
     }
 }

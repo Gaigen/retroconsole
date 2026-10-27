@@ -148,6 +148,17 @@ public final class RetroSettings {
         return source.doom3InvertY();
     }
 
+    // ----- debug -----------------------------------------------------------
+
+    /**
+     * Opt-in chatter: periodic call-stats heartbeats and GL capture diagnostics.
+     * Off by default so a normal session's log stays readable even when the
+     * launcher configures slf4j at DEBUG.
+     */
+    public static boolean verboseLogs() {
+        return source.verboseLogs();
+    }
+
     // ----- input -----------------------------------------------------------
 
     public static boolean gamepadEnabled() {
@@ -210,6 +221,8 @@ public final class RetroSettings {
         default String citraResolution() { return ""; }
         default String doom3Resolution() { return ""; }
         default boolean doom3InvertY() { return false; }
+
+        default boolean verboseLogs() { return false; }
 
         default boolean gamepadEnabled() { return true; }
         default double gamepadDeadzone() { return 0.15; }
