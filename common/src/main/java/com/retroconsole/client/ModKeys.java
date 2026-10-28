@@ -2,6 +2,8 @@ package com.retroconsole.client;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.resources.Identifier;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
@@ -15,7 +17,9 @@ import java.util.List;
  */
 public final class ModKeys {
 
-    private static final String CATEGORY = "key.categories.retroconsole";
+    /** Everything below shows up under one tab in the vanilla key binds screen. */
+    public static final KeyMapping.Category CATEGORY =
+            KeyMapping.Category.register(Identifier.fromNamespaceAndPath("retroconsole", "main"));
 
     // D-Pad
     public static final KeyMapping DPAD_UP = key("dpad_up", GLFW.GLFW_KEY_UP);
@@ -77,22 +81,15 @@ public final class ModKeys {
             BTN_MIC, BTN_LAYOUT, BTN_LID, BTN_CURSOR_TOUCH, VIRTUAL_STYLUS);
 
     /**
-     * True when {@code key} is the key currently bound to {@code mapping}.
+     * True when {@code event} is the key currently bound to {@code mapping}.
      *
      * <p>Stand-in for the loader extension method of the same name (NeoForge's
      * {@code IKeyMappingExtension}), which vanilla does not have. The mappings
      * above use the default conflict context and no modifier, so both of those
      * extra checks are always true and the binding comparison is all that is left.
-     * Vanilla cannot hand out the bound key, so the comparison goes through its
-     * {@code matches} overloads instead.
      */
-    public static boolean isActiveAndMatches(KeyMapping mapping, InputConstants.Key key) {
-        if (key == InputConstants.UNKNOWN) return false;
-        return switch (key.getType()) {
-            case MOUSE -> mapping.matchesMouse(key.getValue());
-            case SCANCODE -> mapping.matches(InputConstants.UNKNOWN.getValue(), key.getValue());
-            case KEYSYM -> mapping.matches(key.getValue(), 0);
-        };
+    public static boolean isActiveAndMatches(KeyMapping mapping, KeyEvent event) {
+        return mapping.matches(event);
     }
 
     private static KeyMapping key(String name, int glfwKey) {

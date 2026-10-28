@@ -39,7 +39,7 @@ public final class MouseCapture {
 
     public void grab(Minecraft mc) {
         if (active) return;
-        long handle = mc.getWindow().getWindow();
+        long handle = mc.getWindow().handle();
         double[] x = new double[1];
         double[] y = new double[1];
         GLFW.glfwGetCursorPos(handle, x, y);
@@ -64,7 +64,7 @@ public final class MouseCapture {
         wheel = 0;
         accX = accY = 0;
         active = false;
-        long handle = mc.getWindow().getWindow();
+        long handle = mc.getWindow().handle();
         GLFW.glfwSetInputMode(handle, GLFW.GLFW_CURSOR, GLFW.GLFW_CURSOR_NORMAL);
         GLFW.glfwSetCursorPos(handle,
                 mc.getWindow().getScreenWidth() / 2.0,
@@ -74,7 +74,7 @@ public final class MouseCapture {
     /** Called once per frame while captured; emits a packet when something changed. */
     public void poll(Minecraft mc) {
         if (!active) return;
-        long handle = mc.getWindow().getWindow();
+        long handle = mc.getWindow().handle();
         double[] x = new double[1];
         double[] y = new double[1];
         GLFW.glfwGetCursorPos(handle, x, y);

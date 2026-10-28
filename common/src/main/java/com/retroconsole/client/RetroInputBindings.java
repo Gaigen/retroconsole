@@ -1,8 +1,8 @@
 package com.retroconsole.client;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import com.retroconsole.bridge.LibretroBridge;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.input.KeyEvent;
 
 /**
  * Maps {@link ModKeys} to libretro button / stick IDs.
@@ -64,7 +64,7 @@ public final class RetroInputBindings {
 
     private RetroInputBindings() {}
 
-    public static int mapButton(InputConstants.Key key) {
+    public static int mapButton(KeyEvent key) {
         for (ButtonBind bind : BUTTONS) {
             if (ModKeys.isActiveAndMatches(bind.key(), key)) {
                 return bind.retroId();
@@ -81,7 +81,7 @@ public final class RetroInputBindings {
     /**
      * @return true if the key belongs to this stick and stick state changed
      */
-    public static boolean updateStick(StickBind bind, InputConstants.Key key, boolean pressed,
+    public static boolean updateStick(StickBind bind, KeyEvent key, boolean pressed,
                                       StickState state) {
         boolean changed = false;
         if (ModKeys.isActiveAndMatches(bind.up(), key) && state.up != pressed) {

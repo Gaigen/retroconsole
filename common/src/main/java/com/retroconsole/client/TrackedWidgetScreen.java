@@ -1,6 +1,6 @@
 package com.retroconsole.client;
 
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.narration.NarratableEntry;
@@ -40,9 +40,9 @@ public abstract class TrackedWidgetScreen extends Screen {
     }
 
     /** Draws the tracked widgets in the order they were added. */
-    protected void renderTrackedWidgets(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    protected void renderTrackedWidgets(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         for (Renderable widget : widgets) {
-            widget.render(graphics, mouseX, mouseY, partialTick);
+            widget.extractRenderState(graphics, mouseX, mouseY, partialTick);
         }
     }
 }

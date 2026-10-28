@@ -2,9 +2,11 @@ package com.retroconsole.client.bezel;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.ARGB;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,14 +21,13 @@ public final class TvBezelRenderer {
 
     private static final Map<String, SideTexture> CACHE = new HashMap<>();
 
-    public record Preview(ResourceLocation id, int w, int h) {}
+    public record Preview(Identifier id, int w, int h) {}
 
-    private record SideTexture(ResourceLocation id, DynamicTexture staticTex, GifTexture gif, int w, int h) {
+    private record SideTexture(Identifier id, DynamicTexture staticTex, GifTexture gif, int w, int h) {
         void tick(long now) { if (gif != null) gif.tick(now); }
         void release(Minecraft mc) {
-            if (staticTex != null) staticTex.close();
-            if (gif != null) { gif.closeFrames(); mc.getTextureManager().release(id); }
-            else if (id != null) mc.getTextureManager().release(id);
+            if (gif != null) gif.closeFrames();
+            mc.getTextureManager().release(id);
         }
     }
 
@@ -47,7 +48,7 @@ public final class TvBezelRenderer {
         return new Preview(t.id, t.w, t.h);
     }
 
-    public static void render(GuiGraphics g, int screenW, int screenH, int barHeight,
+    public static void render(GuiGraphicsExtractor g, int screenW, int screenH, int barHeight,
                               int frameX, int frameY, int frameW, int frameH, long nowMs) {
         if (!TvBezelPrefs.enabled()) return;
         TvBezelPrefs.bezelDir();
@@ -70,7 +71,7 @@ public final class TvBezelRenderer {
         }
     }
 
-    private static void drawSide(GuiGraphics g, Path file, int x, int y, int w, int h,
+    private static void drawSide(GuiGraphicsExtractor g, Path file, int x, int y, int w, int h,
                                  float alpha, long nowMs) {
         SideTexture tex = load(file);
         if (tex == null) return;
@@ -92,9 +93,8 @@ public final class TvBezelRenderer {
         int dx = x + (w - drawW) / 2;
         int dy = y + (h - drawH) / 2;
         g.enableScissor(x, y, x + w, y + h);
-        g.setColor(1f, 1f, 1f, alpha);
-        g.blit(tex.id, dx, dy, drawW, drawH, 0f, 0f, tex.w, tex.h, tex.w, tex.h);
-        g.setColor(1f, 1f, 1f, 1f);
+        g.blit(RenderPipelines.GUI_TEXTURED, tex.id, dx, dy, 0f, 0f, drawW, drawH,
+                tex.w, tex.h, tex.w, tex.h, ARGB.white(alpha));
         g.disableScissor();
     }
 
@@ -105,7 +105,7 @@ public final class TvBezelRenderer {
 
         String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
         Minecraft mc = Minecraft.getInstance();
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(
+        Identifier id = Identifier.fromNamespaceAndPath(
                 "retroconsole", "bezel/" + Math.abs(key.hashCode()));
 
         try {
@@ -116,9 +116,9 @@ public final class TvBezelRenderer {
                 CACHE.put(key, side);
                 return side;
             }
-            try (InputStream in = Files.newInputStream(file);
-                 NativeImage img = NativeImage.read(in)) {
-                DynamicTexture dyn = new DynamicTexture(img);
+            try (InputStream in = Files.newInputStream(file)) {
+                NativeImage img = NativeImage.read(in);
+                DynamicTexture dyn = new DynamicTexture(() -> "retroconsole_bezel", img);
                 mc.getTextureManager().register(id, dyn);
                 SideTexture side = new SideTexture(id, dyn, null, img.getWidth(), img.getHeight());
                 CACHE.put(key, side);

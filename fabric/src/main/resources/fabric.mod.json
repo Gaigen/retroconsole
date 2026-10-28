@@ -17,13 +17,14 @@
       "com.retroconsole.fabric.client.RetroConsoleFabricClient"
     ]
   },
+  "accessWidener": "retroconsole.classtweaker",
   "mixins": [
     "retroconsole.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=0.16.0",
-    "minecraft": "~1.21.1",
-    "java": ">=21",
+    "fabricloader": ">=0.18.0",
+    "minecraft": "26.1.2",
+    "java": ">=25",
     "fabric-api": "*"
   }
 }

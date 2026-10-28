@@ -1,10 +1,11 @@
 package com.retroconsole.client.bezel;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.platform.TextureUtil;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.packs.resources.ResourceManager;
+import net.minecraft.resources.Identifier;
 import org.w3c.dom.Node;
 
 import javax.imageio.ImageIO;
@@ -32,17 +33,22 @@ public final class GifTexture extends AbstractTexture {
     private final List<Integer> delaysMs = new ArrayList<>();
     private int frameIndex;
     private long lastAdvanceMs;
-    private final ResourceLocation id;
+    private final Identifier id;
     private int width = 1;
     private int height = 1;
 
-    public GifTexture(ResourceLocation id, Path file) throws IOException {
+    public GifTexture(Identifier id, Path file) throws IOException {
         this.id = id;
         decode(file);
         if (!frames.isEmpty()) {
             width = frames.get(0).getWidth();
             height = frames.get(0).getHeight();
-            TextureUtil.prepareImage(getId(), width, height);
+            GpuTexture tex = RenderSystem.getDevice().createTexture(
+                    () -> "retroconsole_gif",
+                    GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_TEXTURE_BINDING,
+                    TextureFormat.RGBA8, width, height, 1, 1);
+            this.texture = tex;
+            this.textureView = RenderSystem.getDevice().createTextureView(tex);
             upload(frames.get(0));
         }
     }
@@ -162,7 +168,7 @@ public final class GifTexture extends AbstractTexture {
                 int r = (argb >> 16) & 0xFF;
                 int gg = (argb >> 8) & 0xFF;
                 int b = argb & 0xFF;
-                img.setPixelRGBA(x, y, (a << 24) | (b << 16) | (gg << 8) | r);
+                img.setPixelABGR(x, y, (a << 24) | (b << 16) | (gg << 8) | r);
             }
         }
         return img;
@@ -178,17 +184,11 @@ public final class GifTexture extends AbstractTexture {
     }
 
     private void upload(NativeImage img) {
-        this.bind();
-        img.upload(0, 0, 0, false);
+        RenderSystem.getDevice().createCommandEncoder().writeToTexture(getTexture(), img);
     }
 
-    public ResourceLocation location() {
+    public Identifier location() {
         return id;
-    }
-
-    @Override
-    public void load(ResourceManager manager) {
-        // loaded eagerly in constructor
     }
 
     public void closeFrames() {

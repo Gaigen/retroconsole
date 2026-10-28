@@ -12,11 +12,14 @@ import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroCoreSelectPacket;
 import com.retroconsole.network.RetroLibraryPacket;
 import com.retroconsole.network.payload.RetroPayloads;
-import net.minecraft.Util;
+import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -307,21 +310,20 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         return new int[]{(width - w) / 2, (height - h) / 2, w, h, visible};
     }
 
-    private void renderGamePopup(GuiGraphics g, int mx, int my) {
+    private void renderGamePopup(GuiGraphicsExtractor g, int mx, int my) {
         int[] geo = popupGeom();
         int x = geo[0], y = geo[1], w = geo[2], h = geo[3], visible = geo[4];
-        g.pose().pushPose();
-        g.pose().translate(0, 0, 400);
+        g.nextStratum();
         g.fill(0, 0, width, height, 0xB0000000);
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF3C4250);
         g.fill(x, y, x + w, y + h, COL_PANEL_2);
         g.fill(x, y, x + w, y + 2, popupSystem.color);
 
         long total = popupRoms.stream().mapToLong(r -> PlayStats.playtimeSec(r.id())).sum();
-        g.drawString(font, "§l" + ModTexts.fullName(popupSystem), x + 12, y + 10, 0xFFFFFF);
+        g.text(font, "§l" + ModTexts.fullName(popupSystem), x + 12, y + 10, 0xFFFFFFFF);
         String hdr = popupRoms.size() + " " + ModTexts.gamesWord(popupRoms.size())
                 + (total > 0 ? " • " + PlayStats.formatPlaytime(total) : "");
-        g.drawString(font, hdr, x + w - font.width(hdr) - 12, y + 10, 0x9098A0);
+        g.text(font, hdr, x + w - font.width(hdr) - 12, y + 10, 0xFF9098A0);
 
         int listY = y + 26;
         for (int i = popupScroll; i < popupRoms.size() && i < popupScroll + visible; i++) {
@@ -342,15 +344,15 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             int rightW = font.width(right);
             String name = font.plainSubstrByWidth(rom.displayName(),
                     w - 40 - rightW - (fav ? 12 : 0));
-            int color = !playable ? 0x707070 : sel ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8;
-            g.drawString(font, (fav ? "§e★ §r" : "") + name, x + 14, ry + 4, color);
-            g.drawString(font, right, x + w - rightW - 10, ry + 4, 0xFFFFFF);
+            int color = !playable ? 0xFF707070 : sel ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8;
+            g.text(font, (fav ? "§e★ §r" : "") + name, x + 14, ry + 4, color);
+            g.text(font, right, x + w - rightW - 10, ry + 4, 0xFFFFFFFF);
         }
         if (popupRoms.isEmpty())
-            g.drawCenteredString(font, serverLibrary
+            g.centeredText(font, serverLibrary
                             ? ModTexts.s("empty.popup.server", popupSystem.folder)
                             : ModTexts.s("empty.popup.local", popupSystem.folder),
-                    x + w / 2, listY + 16, 0x808890);
+                    x + w / 2, listY + 16, 0xFF808890);
 
         RomLibrary.Core core = coreFor(selectedRom);
         boolean hasSave = selectedRom != null && SaveStates.hasSave(selectedRom.id());
@@ -359,8 +361,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
                     ? ModTexts.s("popup.continue")
                     : ModTexts.s("popup.launch"))
                 : ModTexts.s("popup.pick_core");
-        g.drawString(font, foot, x + 12, y + h - 16, 0xFFFFFF);
-        g.pose().popPose();
+        g.text(font, foot, x + 12, y + h - 16, 0xFFFFFFFF);
     }
 
     private int listTop() { return view == View.LIST ? 70 : 48; }
@@ -370,12 +371,12 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
     private int cardsTop() { return 54 + (heroRom == null ? 0 : 76); }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mx, int my, float pt) {
+    public void extractBackground(GuiGraphicsExtractor g, int mx, int my, float pt) {
         g.fill(0, 0, width, height, 0xE00C0E12);
     }
 
     @Override
-    public void render(GuiGraphics g, int mx, int my, float pt) {
+    public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float pt) {
         scrollRoms = approach(scrollRoms, targetRoms);
         scrollCores = approach(scrollCores, targetCores);
         scrollCards = approach(scrollCards, targetCards);
@@ -386,12 +387,11 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         startBtn.visible = !cards;
         if (cards) pickCoreBtn.visible = false;
 
-        renderBackground(g, mx, my, pt);
         g.fill(0, 0, width, 46, COL_PANEL_2);
         g.fill(0, 45, width, 46, COL_EDGE);
-        g.drawString(font, "§lRETRO CONSOLE", 10, 8, 0xFFE0E0E0);
+        g.text(font, "§lRETRO CONSOLE", 10, 8, 0xFFE0E0E0);
         if (libraryLoading) {
-            g.drawCenteredString(font, ModTexts.s("gui.loading"), width / 2, height / 2, 0xC0C8D0);
+            g.centeredText(font, ModTexts.s("gui.loading"), width / 2, height / 2, 0xFFC0C8D0);
             renderTrackedWidgets(g, mx, my, pt);
             return;
         }
@@ -399,7 +399,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             String stats = lib.roms.size() + " " + ModTexts.gamesWord(lib.roms.size())
                     + " • " + lib.cores.size() + " " + ModTexts.coresWord(lib.cores.size());
             if (serverLibrary) stats += " " + ModTexts.s("gui.server_tag");
-            g.drawString(font, "§8" + stats, 110, 8, 0xFFFFFF);
+            g.text(font, "§8" + stats, 110, 8, 0xFFFFFFFF);
         }
 
         switch (view) {
@@ -425,16 +425,16 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         if (showCorePicker) renderCorePicker(g, mx, my);
     }
 
-    private void renderPanel(GuiGraphics g) {
+    private void renderPanel(GuiGraphicsExtractor g) {
         int top = listTop(), viewH = listHeight();
         g.fill(8, top - 3, width - 8, top + viewH + 3, COL_PANEL);
         g.fill(8, top - 3, width - 8, top - 2, COL_EDGE);
     }
 
-    private void renderCards(GuiGraphics g, int mx, int my) {
+    private void renderCards(GuiGraphicsExtractor g, int mx, int my) {
         if (heroRom != null) renderHero(g, mx, my);
         if (tabs.isEmpty()) {
-            g.drawCenteredString(font, emptyLibraryHint(), width / 2, height / 2, 0x808890);
+            g.centeredText(font, emptyLibraryHint(), width / 2, height / 2, 0xFF808890);
             return;
         }
         int cols = cardCols(), cw = cardW(), top = cardsTop();
@@ -448,7 +448,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         g.disableScissor();
     }
 
-    private void renderCard(GuiGraphics g, GameSystem s, int x, int y, int w, int mx, int my) {
+    private void renderCard(GuiGraphicsExtractor g, GameSystem s, int x, int y, int w, int mx, int my) {
         boolean hover = mx >= x && mx < x + w && my >= y && my < y + CARD_H && my >= cardsTop() - 4;
         long games = lib.roms.stream().filter(r -> r.system() == s).count();
         boolean hasCore = coreForSystem(s) != null;
@@ -460,16 +460,16 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         g.fill(x, y, x + w, y + artH, dim(s.color, 0.15f));
         g.fill(x, y + artH, x + w, y + artH + 2, s.color);
 
-        g.drawString(font, font.plainSubstrByWidth(ModTexts.tab(s), w - 12), x + 6, y + artH + 6, 0xFFFFFF);
+        g.text(font, font.plainSubstrByWidth(ModTexts.tab(s), w - 12), x + 6, y + artH + 6, 0xFFFFFFFF);
         long played = lib.roms.stream().filter(r -> r.system() == s)
                 .mapToLong(r -> PlayStats.playtimeSec(r.id())).sum();
         String info = games + " " + ModTexts.gamesWord(games)
                 + (hasCore ? "" : ModTexts.s("card.no_core"))
                 + (played > 0 ? "  §8" + PlayStats.formatPlaytime(played) : "");
-        g.drawString(font, font.plainSubstrByWidth(info, w - 12), x + 6, y + artH + 16, 0x9098A0);
+        g.text(font, font.plainSubstrByWidth(info, w - 12), x + 6, y + artH + 16, 0xFF9098A0);
     }
 
-    private void renderHero(GuiGraphics g, int mx, int my) {
+    private void renderHero(GuiGraphicsExtractor g, int mx, int my) {
         int x = 10, y = 54, w = width - 20, h = 68;
         boolean hover = mx >= x && mx < x + w && my >= y && my < y + h;
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, hover ? 0xFF4A5468 : COL_EDGE);
@@ -479,35 +479,35 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         g.fill(x + 4, y + 4, x + 4 + tw, y + h - 4, dim(heroRom.system().color, 0.15f));
 
         int tx = x + tw + 14;
-        g.drawString(font, ModTexts.s("hero.continue_label"), tx, y + 9, 0xFFFFFF);
-        g.drawString(font, "§l" + font.plainSubstrByWidth(heroRom.displayName(), w - tw - 60),
-                tx, y + 22, hover ? 0x80FF90 : 0xFFFFFF);
+        g.text(font, ModTexts.s("hero.continue_label"), tx, y + 9, 0xFFFFFFFF);
+        g.text(font, "§l" + font.plainSubstrByWidth(heroRom.displayName(), w - tw - 60),
+                tx, y + 22, hover ? 0xFF80FF90 : 0xFFFFFFFF);
         String line = ModTexts.fullName(heroRom.system());
         long pt = PlayStats.playtimeSec(heroRom.id());
         if (pt > 0) line += ModTexts.s("hero.played") + PlayStats.formatPlaytime(pt);
         long st = SaveStates.saveTime(heroRom.id());
         if (st > 0) line += ModTexts.s("hero.save") + PlayStats.formatAgo(st);
-        g.drawString(font, font.plainSubstrByWidth(line, w - tw - 60), tx, y + 38, 0x9098A0);
-        g.drawString(font, ModTexts.s("hero.hint"), tx, y + 52, 0x707880);
+        g.text(font, font.plainSubstrByWidth(line, w - tw - 60), tx, y + 38, 0xFF9098A0);
+        g.text(font, ModTexts.s("hero.hint"), tx, y + 52, 0xFF707880);
 
-        g.pose().pushPose();
-        g.pose().translate(x + w - 24, y + h / 2f - 8, 0);
-        g.pose().scale(2f, 2f, 1f);
-        g.drawString(font, "▶", 0, 0, hover ? 0x80FF90 : 0x506050);
-        g.pose().popPose();
+        g.pose().pushMatrix();
+        g.pose().translate(x + w - 24, y + h / 2f - 8);
+        g.pose().scale(2f, 2f);
+        g.text(font, "▶", 0, 0, hover ? 0xFF80FF90 : 0xFF506050);
+        g.pose().popMatrix();
     }
 
     /** Card textures over buttons — no extra dimming renderBackground from super.render(). */
-    private void renderCardTextures(GuiGraphics g) {
+    private void renderCardTextures(GuiGraphicsExtractor g) {
         if (heroRom != null) {
             int x = 10, y = 54, h = 68, tw = 84;
             TextureCache.Tex thumb = TextureCache.get(SaveStates.thumbFor(heroRom.id()));
             if (thumb != null) {
-                g.blit(thumb.location(), x + 4, y + 4, tw, h - 8, 0f, 0f,
-                        thumb.width(), thumb.height(), thumb.width(), thumb.height());
+                g.blit(RenderPipelines.GUI_TEXTURED, thumb.location(), x + 4, y + 4, 0f, 0f,
+                        tw, h - 8, thumb.width(), thumb.height(), thumb.width(), thumb.height());
             } else {
                 g.fill(x + 4, y + 4, x + 4 + tw, y + h - 4, dim(heroRom.system().color, 0.3f));
-                g.drawCenteredString(font, heroRom.system().badge, x + 4 + tw / 2, y + h / 2 - 4, 0xFFFFFF);
+                g.centeredText(font, heroRom.system().badge, x + 4 + tw / 2, y + h / 2 - 4, 0xFFFFFFFF);
             }
         }
         if (tabs.isEmpty()) return;
@@ -523,16 +523,16 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
                     ? ClientArtCache.get(s.folder)
                     : TextureCache.get(ArtGenerator.artDir().resolve(s.folder + ".png"));
             if (art != null) {
-                g.blit(art.location(), x, y, cw, artH, 0f, 0f,
-                        art.width(), art.height(), art.width(), art.height());
+                g.blit(RenderPipelines.GUI_TEXTURED, art.location(), x, y, 0f, 0f,
+                        cw, artH, art.width(), art.height(), art.width(), art.height());
             } else {
                 g.fill(x, y, x + cw, y + artH, dim(s.color, 0.22f));
                 g.fill(x, y + artH - 12, x + cw, y + artH, dim(s.color, 0.35f));
-                g.pose().pushPose();
-                g.pose().translate(x + cw / 2f, y + artH / 2f - 8, 0);
-                g.pose().scale(2f, 2f, 1f);
-                g.drawCenteredString(font, s.badge, 0, 0, 0xFFFFFFFF);
-                g.pose().popPose();
+                g.pose().pushMatrix();
+                g.pose().translate(x + cw / 2f, y + artH / 2f - 8);
+                g.pose().scale(2f, 2f);
+                g.centeredText(font, s.badge, 0, 0, 0xFFFFFFFF);
+                g.pose().popMatrix();
             }
         }
         g.disableScissor();
@@ -639,7 +639,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         return ModTexts.tabLabel(s, true, n);
     }
 
-    private void renderTabs(GuiGraphics g, int mx, int my) {
+    private void renderTabs(GuiGraphicsExtractor g, int mx, int my) {
         clampTabScroll();
         boolean counts = tabCountsFit();
         boolean overflow = tabsOverflow();
@@ -653,8 +653,8 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
                     active ? COL_SEL : hover ? COL_HOVER : COL_PANEL);
             g.fill(rect[0], TAB_TOP + TAB_H - 2, rect[0] + rect[1], TAB_TOP + TAB_H,
                     active ? (s == null ? 0xFF80A0FF : s.color) : COL_EDGE);
-            g.drawCenteredString(font, tabLabel(s, counts),
-                    rect[0] + rect[1] / 2, TAB_TOP + 5, active ? 0xFFFFFF : hover ? 0xD0D0D0 : 0x909090);
+            g.centeredText(font, tabLabel(s, counts),
+                    rect[0] + rect[1] / 2, TAB_TOP + 5, active ? 0xFFFFFFFF : hover ? 0xFFD0D0D0 : 0xFF909090);
         }
         g.disableScissor();
         if (overflow) {
@@ -663,16 +663,16 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         }
     }
 
-    private void drawTabArrow(GuiGraphics g, int mx, int my, boolean left, boolean enabled) {
+    private void drawTabArrow(GuiGraphicsExtractor g, int mx, int my, boolean left, boolean enabled) {
         int[] r = tabArrowRect(left);
         boolean hover = enabled && mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3];
         g.fill(r[0], r[1], r[0] + r[2], r[1] + r[3], hover ? COL_HOVER : COL_PANEL_2);
         g.fill(left ? r[0] + r[2] - 1 : r[0], r[1], left ? r[0] + r[2] : r[0] + 1, r[1] + r[3], COL_EDGE);
-        g.drawCenteredString(font, left ? "\u25C0" : "\u25B6",
-                r[0] + r[2] / 2, r[1] + 5, enabled ? (hover ? 0xFFFFFF : 0xB0B8C0) : 0x404850);
+        g.centeredText(font, left ? "\u25C0" : "\u25B6",
+                r[0] + r[2] / 2, r[1] + 5, enabled ? (hover ? 0xFFFFFFFF : 0xFFB0B8C0) : 0xFF404850);
     }
 
-    private void renderGameList(GuiGraphics g, int mx, int my, int x, int w) {
+    private void renderGameList(GuiGraphicsExtractor g, int mx, int my, int x, int w) {
         int top = listTop(), viewH = listHeight();
         int first = (int) (scrollRoms / ITEM_H);
         for (int i = first; i < shown.size(); i++) {
@@ -690,14 +690,14 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
 
             int textX = x + 8;
             if (sel && (Util.getMillis() / 400) % 2 == 0)
-                g.drawString(font, "►", textX, y + 4, 0x80FF90);
+                g.text(font, "►", textX, y + 4, 0xFF80FF90);
             textX += 10;
 
             String badge = rom.system().badge;
             int badgeW = font.width(badge) + 6;
             g.fill(textX, y + 2, textX + badgeW, y + ITEM_H - 3,
                     playable ? rom.system().color : 0xFF505050);
-            g.drawString(font, badge, textX + 3, y + 4, 0xFF101010, false);
+            g.text(font, badge, textX + 3, y + 4, 0xFF101010, false);
 
             long pt = PlayStats.playtimeSec(rom.id());
             String right = (SaveStates.hasSave(rom.id()) ? "§a●§r " : "")
@@ -709,9 +709,9 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             int nameX = textX + badgeW + 6;
             int avail = x + w - nameX - rightW - 12 - (fav ? 12 : 0) - font.width(warn);
             String name = font.plainSubstrByWidth(rom.displayName(), avail);
-            int color = !playable ? 0x707070 : sel ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8;
-            g.drawString(font, (fav ? "§e★ §r" : "") + name + warn, nameX, y + 4, color);
-            g.drawString(font, right, x + w - rightW - 4, y + 4, 0xFFFFFF);
+            int color = !playable ? 0xFF707070 : sel ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8;
+            g.text(font, (fav ? "§e★ §r" : "") + name + warn, nameX, y + 4, color);
+            g.text(font, right, x + w - rightW - 4, y + 4, 0xFFFFFFFF);
         }
         renderScrollbar(g, x + w, top, viewH, shown.size(), scrollRoms);
 
@@ -719,11 +719,11 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             String hint = !searchBox.getValue().isEmpty() ? ModTexts.s("gui.no_results")
                     : activeTab != null ? emptyTabHint(activeTab)
                     : emptyLibraryHint();
-            g.drawCenteredString(font, hint, x + w / 2, top + 24, 0x808890);
+            g.centeredText(font, hint, x + w / 2, top + 24, 0xFF808890);
         }
     }
 
-    private void renderCoreList(GuiGraphics g, int mx, int my) {
+    private void renderCoreList(GuiGraphicsExtractor g, int mx, int my) {
         int x = 10, w = width / 2 - 18, top = listTop(), viewH = listHeight();
         int first = (int) (scrollCores / ITEM_H);
         for (int i = first; i < lib.cores.size(); i++) {
@@ -735,18 +735,18 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             g.fill(x, y, x + w, y + ITEM_H - 1,
                     sel ? COL_SEL : hover ? COL_HOVER : (i % 2 == 0 ? COL_ROW_A : COL_ROW_B));
             g.fill(x, y, x + 3, y + ITEM_H - 1, core.system().color);
-            g.drawString(font, font.plainSubstrByWidth(core.displayName(), w - 12),
-                    x + 8, y + 4, sel ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8);
+            g.text(font, font.plainSubstrByWidth(core.displayName(), w - 12),
+                    x + 8, y + 4, sel ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8);
         }
         renderScrollbar(g, x + w, top, viewH, lib.cores.size(), scrollCores);
         if (lib.cores.isEmpty())
-            g.drawCenteredString(font, serverLibrary
+            g.centeredText(font, serverLibrary
                             ? ModTexts.s("empty.cores.server")
                             : ModTexts.s("empty.cores.local"),
-                    x + w / 2, top + 24, 0x808890);
+                    x + w / 2, top + 24, 0xFF808890);
     }
 
-    private void renderInfoBar(GuiGraphics g) {
+    private void renderInfoBar(GuiGraphicsExtractor g) {
         RomLibrary.Core core = view == View.MANUAL ? selectedCore : coreFor(selectedRom);
         boolean ready = selectedRom != null && core != null;
         startBtn.active = ready;
@@ -763,21 +763,20 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             if (pt > 0) left += " • " + PlayStats.formatPlaytime(pt);
             long st = SaveStates.saveTime(selectedRom.id());
             if (st > 0) left += ModTexts.s("info.save_short") + PlayStats.formatAgo(st);
-            g.drawString(font, font.plainSubstrByWidth(left, rightLimit - 230), 16, y + 6, 0xFFFFFF);
+            g.text(font, font.plainSubstrByWidth(left, rightLimit - 230), 16, y + 6, 0xFFFFFFFF);
             String right = ready ? "§a" + core.displayName()
                     : view == View.MANUAL ? ModTexts.s("info.pick_core_manual")
                     : ModTexts.s("info.pick_core_list");
-            g.drawString(font, font.plainSubstrByWidth(right, 220),
-                    rightLimit - Math.min(220, font.width(right)), y + 6, 0xFFFFFF);
+            g.text(font, font.plainSubstrByWidth(right, 220),
+                    rightLimit - Math.min(220, font.width(right)), y + 6, 0xFFFFFFFF);
         } else {
-            g.drawString(font, ModTexts.s("info.hint"),
-                    16, y + 6, 0xFFFFFF);
+            g.text(font, ModTexts.s("info.hint"),
+                    16, y + 6, 0xFFFFFFFF);
         }
     }
 
-    private void renderHelp(GuiGraphics g) {
-        g.pose().pushPose();
-        g.pose().translate(0, 0, 400);
+    private void renderHelp(GuiGraphicsExtractor g) {
+        g.nextStratum();
         g.fill(0, 0, width, height, 0xB0000000);
         String[] lines = ModTexts.helpLines(serverLibrary);
         int w = 0;
@@ -788,10 +787,9 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         g.fill(x, y, x + cardW, y + cardH, COL_PANEL_2);
         int ty = y + 12;
         for (String l : lines) {
-            g.drawString(font, l, x + 16, ty, 0xE0E0E0);
+            g.text(font, l, x + 16, ty, 0xFFE0E0E0);
             ty += 12;
         }
-        g.pose().popPose();
     }
 
     /** Core picker window geometry: [x, y, w, h, visible rows]. */
@@ -804,17 +802,16 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         return new int[]{(width - w) / 2, (height - h) / 2, w, h, visible};
     }
 
-    private void renderCorePicker(GuiGraphics g, int mx, int my) {
+    private void renderCorePicker(GuiGraphicsExtractor g, int mx, int my) {
         int[] geo = pickerGeom();
         int x = geo[0], y = geo[1], w = geo[2], h = geo[3], visible = geo[4];
-        g.pose().pushPose();
-        g.pose().translate(0, 0, 400);
+        g.nextStratum();
         g.fill(0, 0, width, height, 0xB0000000);
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF3C4250);
         g.fill(x, y, x + w, y + h, COL_PANEL_2);
 
         String title = ModTexts.s("picker.title", selectedRom != null ? selectedRom.displayName() : "");
-        g.drawString(font, font.plainSubstrByWidth(title, w - 24), x + 12, y + 9, 0xFFFFFF);
+        g.text(font, font.plainSubstrByWidth(title, w - 24), x + 12, y + 9, 0xFFFFFFFF);
 
         RomLibrary.Core current = coreFor(selectedRom);
         int listY = y + 24;
@@ -827,18 +824,17 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
                     hover ? COL_SEL : (i % 2 == 0 ? COL_ROW_A : COL_ROW_B));
             g.fill(x + 6, ry, x + 9, ry + ITEM_H - 1, core.system().color);
             String label = (isCur ? "✔ " : "") + core.displayName();
-            g.drawString(font, font.plainSubstrByWidth(label, w - 28), x + 14, ry + 4,
-                    isCur ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8);
+            g.text(font, font.plainSubstrByWidth(label, w - 28), x + 14, ry + 4,
+                    isCur ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8);
         }
         if (lib.cores.size() > visible) {
             String more = ModTexts.s("picker.scroll");
-            g.drawString(font, more, x + w - font.width(more) - 10, y + h - 14, 0x707880);
+            g.text(font, more, x + w - font.width(more) - 10, y + h - 14, 0xFF707880);
         }
-        g.drawString(font, ModTexts.s("picker.cancel"), x + 12, y + h - 14, 0xFFFFFF);
-        g.pose().popPose();
+        g.text(font, ModTexts.s("picker.cancel"), x + 12, y + h - 14, 0xFFFFFFFF);
     }
 
-    private void renderScrollbar(GuiGraphics g, int x, int top, int viewH, int count, double scroll) {
+    private void renderScrollbar(GuiGraphicsExtractor g, int x, int top, int viewH, int count, double scroll) {
         int contentH = count * ITEM_H;
         if (contentH <= viewH) return;
         int barH = Math.max(12, viewH * viewH / contentH);
@@ -848,7 +844,10 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
     }
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        double mx = event.x();
+        double my = event.y();
+        int button = event.button();
         if (showCorePicker) {
             int[] geo = pickerGeom();
             int listY = geo[1] + 24;
@@ -903,12 +902,12 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             popupSystem = null;
             return true;
         }
-        if (super.mouseClicked(mx, my, button)) return true;
+        if (super.mouseClicked(event, doubleClick)) return true;
 
         if (view == View.CARDS) {
             if (heroRom != null && mx >= 10 && mx < width - 10 && my >= 54 && my < 122) {
                 selectedRom = heroRom;
-                boolean shift = (button == 0) && hasShiftDown();
+                boolean shift = (button == 0) && minecraft.hasShiftDown();
                 startEmulator(!shift && SaveStates.hasSave(heroRom.id()));
                 return true;
             }
@@ -1018,7 +1017,8 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
     }
 
     @Override
-    public boolean keyPressed(int key, int scan, int mods) {
+    public boolean keyPressed(KeyEvent event) {
+        int key = event.key();
         if (showCorePicker && key == GLFW.GLFW_KEY_ESCAPE) { showCorePicker = false; return true; }
         if (showHelp && (key == GLFW.GLFW_KEY_ESCAPE || key == GLFW.GLFW_KEY_ENTER)) {
             showHelp = false;
@@ -1027,7 +1027,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         if (popupSystem != null && view == View.CARDS && !showCorePicker) {
             if (key == GLFW.GLFW_KEY_ESCAPE) { popupSystem = null; return true; }
             if (key == GLFW.GLFW_KEY_ENTER || key == GLFW.GLFW_KEY_KP_ENTER) {
-                boolean shift = hasShiftDown();
+                boolean shift = minecraft.hasShiftDown();
                 boolean loadAuto = !shift && selectedRom != null && SaveStates.hasSave(selectedRom.id());
                 startEmulator(loadAuto);
                 return true;
@@ -1048,7 +1048,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             if (view == View.CARDS) {
                 if (heroRom != null) {
                     selectedRom = heroRom;
-                    boolean shift = hasShiftDown();
+                    boolean shift = minecraft.hasShiftDown();
                     startEmulator(!shift && SaveStates.hasSave(heroRom.id()));
                 }
             } else {
@@ -1079,7 +1079,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
                 return true;
             }
         }
-        return super.keyPressed(key, scan, mods);
+        return super.keyPressed(event);
     }
 
     @Override

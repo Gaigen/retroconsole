@@ -1,14 +1,14 @@
 plugins {
     id 'java-library'
     id 'maven-publish'
-    id 'net.neoforged.gradle.userdev' version '7.1.9'
+    id 'net.neoforged.gradle.userdev' version '7.1.39'
 }
 
 base {
     archivesName = mod_id
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 def commonProject = project(':common')
 
@@ -30,7 +30,7 @@ repositories {
 dependencies {
     implementation "net.neoforged:neoforge:${neo_version}"
     // JNA for loading native libretro cores (.so/.dll)
-    implementation 'net.java.dev.jna:jna:5.14.0'
+    implementation 'net.java.dev.jna:jna:5.17.0'
 }
 
 runs {
@@ -43,6 +43,9 @@ runs {
     }
 
     client {
+        if (project.hasProperty('isolatedClient')) {
+            workingDirectory = layout.buildDirectory.dir("client-${minecraft_version}")
+        }
         systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
     }
 
@@ -51,10 +54,9 @@ runs {
         argument '--nogui'
     }
 
-    // Only run RetroConsole's own tests when the GameTest server is launched.
-    // Without at least one @GameTest method (see RetroConsoleGameTests) the
-    // vanilla server dies with "No test functions were given!".
+    // Keep automated tests separate from existing development worlds.
     gameTestServer {
+        workingDirectory = layout.buildDirectory.dir('gametest-26.1.2')
         systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
     }
 }
@@ -172,4 +174,20 @@ tasks.register('runGamepadSmokeTest', JavaExec) {
     description = 'Run GamepadLogicSmokeTest (mapping + deadzone). No device needed.'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.retroconsole.client.input.GamepadLogicSmokeTest'
+}
+
+// Supply a software core and matching cartridge with -PsmokeCore=... -PsmokeRom=...
+tasks.register('nativeSmokeTest', JavaExec) {
+    group = 'verification'
+    description = 'Load a native libretro core on the Java toolchain and verify video output.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.retroconsole.bridge.SmokeTest'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    doFirst {
+        def core = providers.gradleProperty('smokeCore').orNull
+        def rom = providers.gradleProperty('smokeRom').orNull
+        if (!core || !rom) throw new GradleException('Specify -PsmokeCore=<core> -PsmokeRom=<rom-or-directory>')
+        args rootProject.file(core).absolutePath, rootProject.file(rom).absolutePath
+    }
 }

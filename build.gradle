@@ -45,3 +45,56 @@ tasks.register('fabricClient') {
         doFirst { throw new GradleException('Add -Pfabric to start the Fabric client.') }
     }
 }
+
+// Check the actual distribution jars, not just the development classpath.
+tasks.register('verifyDistribution') {
+    group = 'verification'
+    description = 'Verify loader metadata, shared classes, item resources and natives in the built jars.'
+    def loaders = providers.gradleProperty('fabric').isPresent() ? ['neoforge', 'fabric'] : ['neoforge']
+    dependsOn loaders.collect { ":${it}:jar" }
+    doLast {
+        loaders.each { loader ->
+            def artifact = project(":${loader}").tasks.named('jar', Jar).get().archiveFile.get().asFile
+            new java.util.zip.ZipFile(artifact).withCloseable { zip ->
+                def required = [
+                        'com/retroconsole/reg/ModBlockEntities.class',
+                        'com/retroconsole/client/ScreenBlockEntityRenderer.class',
+                        'com/retroconsole/bridge/LibretroCore.class',
+                        'pack.mcmeta',
+                        'natives/libheadless_gl.dll',
+                        'natives/libheadless_gl.so'
+                ]
+                ['retro_console', 'screen', 'gamepad'].each { item ->
+                    required.addAll([
+                            "assets/retroconsole/items/${item}.json",
+                            "assets/retroconsole/models/item/${item}.json",
+                            "data/retroconsole/recipe/${item}.json"
+                    ])
+                }
+                required.addAll(loader == 'fabric'
+                        ? ['fabric.mod.json', 'retroconsole.mixins.json', 'retroconsole.classtweaker',
+                           'com/retroconsole/fabric/RetroConsoleFabric.class']
+                        : ['META-INF/neoforge.mods.toml', 'com/retroconsole/RetroConsole.class'])
+                required.each { path ->
+                    if (zip.getEntry(path.toString()) == null) {
+                        throw new GradleException("${artifact.name} is missing ${path}")
+                    }
+                }
+                def foreignMetadata = loader == 'fabric' ? 'META-INF/neoforge.mods.toml' : 'fabric.mod.json'
+                if (zip.getEntry(foreignMetadata) != null) {
+                    throw new GradleException("${artifact.name} contains ${foreignMetadata}")
+                }
+                if (loader == 'fabric') {
+                    def metadata = zip.getInputStream(zip.getEntry('fabric.mod.json')).withCloseable {
+                        new groovy.json.JsonSlurper().parse(it)
+                    }
+                    if (metadata.version != project.version.toString()
+                            || metadata.accessWidener != 'retroconsole.classtweaker') {
+                        throw new GradleException("${artifact.name} has invalid Fabric metadata")
+                    }
+                }
+                logger.lifecycle("Verified ${artifact.name}: ${required.size()} required entries")
+            }
+        }
+    }
+}

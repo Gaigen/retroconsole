@@ -5,6 +5,7 @@ import com.retroconsole.reg.ModBlockEntities;
 import com.retroconsole.server.ServerConsoles;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
@@ -13,6 +14,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 
 import java.util.UUID;
 
@@ -62,7 +65,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         BlockPos pos = worldPosition;
         for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {
             if (player.level() != serverLevel || player.connection == null) continue;
-            if (!player.getChunkTrackingView().contains(new ChunkPos(pos))) continue;
+            if (!player.getChunkTrackingView().contains(ChunkPos.containing(pos))) continue;
             player.connection.send(packet);
         }
     }
@@ -181,33 +184,31 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.saveAdditional(tag, registries);
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
         UUID id = level != null && !level.isClientSide() ? getOrAssignConsoleId() : consoleId;
         if (id != null) {
-            tag.putUUID("ConsoleId", id);
+            output.store("ConsoleId", UUIDUtil.CODEC, id);
         }
-        tag.putString("RomId", romId);
-        tag.putString("CoreName", coreName);
+        output.putString("RomId", romId);
+        output.putString("CoreName", coreName);
         if (ownerId != null) {
-            tag.putUUID("OwnerId", ownerId);
+            output.store("OwnerId", UUIDUtil.CODEC, ownerId);
         }
     }
 
     @Override
-    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.loadAdditional(tag, registries);
-        consoleId = tag.hasUUID("ConsoleId") ? tag.getUUID("ConsoleId") : null;
-        romId = tag.getString("RomId");
-        coreName = tag.getString("CoreName");
-        ownerId = tag.hasUUID("OwnerId") ? tag.getUUID("OwnerId") : null;
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        consoleId = input.read("ConsoleId", UUIDUtil.CODEC).orElse(null);
+        romId = input.getStringOr("RomId", "");
+        coreName = input.getStringOr("CoreName", "");
+        ownerId = input.read("OwnerId", UUIDUtil.CODEC).orElse(null);
     }
 
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        CompoundTag tag = super.getUpdateTag(registries);
-        saveAdditional(tag, registries);
-        return tag;
+        return saveCustomOnly(registries);
     }
 
     @Override

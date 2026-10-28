@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, 'mc/**']
   pull_request:
-    branches: [master, main]
+    branches: [master, main, 'mc/**']
 
 jobs:
   build:
@@ -21,12 +21,12 @@ jobs:
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build mod (both loaders)
-        run: ./gradlew build -Pfabric --no-daemon
+        run: ./gradlew build verifyDistribution -Pfabric --no-daemon
 
       - name: Upload NeoForge JAR artifact
         uses: actions/upload-artifact@v4

@@ -4,7 +4,7 @@ import com.retroconsole.network.payload.NetPayload;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,7 +29,7 @@ public record FabricPayload<T>(
     public static <T> CustomPacketPayload.Type<FabricPayload<T>> type(NetPayload<T> definition) {
         return (CustomPacketPayload.Type<FabricPayload<T>>) TYPES.computeIfAbsent(definition.id(),
                 id -> new CustomPacketPayload.Type<FabricPayload<?>>(
-                        ResourceLocation.fromNamespaceAndPath(RetroConsoleFabric.MOD_ID, id)));
+                        Identifier.fromNamespaceAndPath(RetroConsoleFabric.MOD_ID, id)));
     }
 
     public static <T> FabricPayload<T> of(NetPayload<T> definition, T value) {

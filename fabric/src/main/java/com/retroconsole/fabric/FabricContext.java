@@ -20,6 +20,6 @@ public final class FabricContext implements NetContext {
 
     @Override
     public void enqueue(Runnable task) {
-        context.player().server.execute(task);
+        context.server().execute(task);
     }
 }

@@ -20,8 +20,6 @@ public final class NeoForgePlatform {
     public static void init() {
         NetAccess.setPlayerSender((player, definition, value) ->
                 PacketDistributor.sendToPlayer(player, NeoPayload.create(definition, value)));
-        NetAccess.setServerSender((definition, value) ->
-                PacketDistributor.sendToServer(NeoPayload.create(definition, value)));
 
         // Config values and filesystem roots behind the loader-agnostic facades.
         RetroSettings.setSource(NeoForgeSettings.INSTANCE);

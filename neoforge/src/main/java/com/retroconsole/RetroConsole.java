@@ -2,6 +2,7 @@ package com.retroconsole;
 
 import com.retroconsole.client.NeoForgeConfigScreen;
 import com.retroconsole.config.ModConfig;
+import com.retroconsole.gametest.RetroConsoleGameTests;
 import com.retroconsole.platform.NeoForgeConfig;
 import com.retroconsole.platform.NeoForgePlatform;
 import com.retroconsole.platform.NeoForgeRegistries;
@@ -66,7 +67,7 @@ public class RetroConsole {
         // declared member here while constructing the mod, so a lambda taking a
         // Screen would make a dedicated server fail with "Attempted to load
         // class net/minecraft/client/gui/screens/Screen for invalid dist".
-        if (net.neoforged.fml.loading.FMLEnvironment.dist
+        if (net.neoforged.fml.loading.FMLEnvironment.getDist()
                 == net.neoforged.api.distmarker.Dist.CLIENT) {
             if (NeoForgeConfig.needsMigration()) {
                 modContainer.registerConfig(Type.CLIENT, ModConfig.CLIENT_SPEC);
@@ -75,6 +76,7 @@ public class RetroConsole {
         }
 
         NeoForgeRegistries.register(modEventBus);
+        RetroConsoleGameTests.register(modEventBus);
         CREATIVE_TABS.register(modEventBus);
         // NeoForgeNetwork + NeoForgeSetup + ModKeys register via @SubscribeEvent on the MOD bus
     }

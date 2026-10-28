@@ -13,7 +13,6 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
-import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import org.jetbrains.annotations.Nullable;
 
@@ -22,7 +21,7 @@ public class ScreenBlock extends BaseEntityBlock {
     public static final MapCodec<ScreenBlock> CODEC = simpleCodec(ScreenBlock::new);
 
     /** Куда смотрит экран (стена) / горизонтальная ось картинки (пол/потолок). */
-    public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
+    public static final EnumProperty<Direction> FACING = BlockStateProperties.HORIZONTAL_FACING;
 
     /** NORTH = на стене, UP = на полу экраном вверх, DOWN = на потолке экраном вниз. */
     public static final EnumProperty<Direction> ORIENTATION =
@@ -64,7 +63,7 @@ public class ScreenBlock extends BaseEntityBlock {
 
     @Override
     public RenderShape getRenderShape(BlockState state) {
-        return RenderShape.ENTITYBLOCK_ANIMATED;
+        return RenderShape.INVISIBLE;
     }
 
     @Nullable
@@ -94,10 +93,9 @@ public class ScreenBlock extends BaseEntityBlock {
     }
 
     @Override
-    public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
-        if (!level.isClientSide() && !newState.is(this)) {
-            ScreenMultiblocks.rebuildAfterRemoval(level, pos, state);
-        }
-        super.onRemove(state, level, pos, newState, movedByPiston);
+    protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos,
+                                               boolean movedByPiston) {
+        ScreenMultiblocks.rebuildAfterRemoval(level, pos, state);
+        super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
     }
 }

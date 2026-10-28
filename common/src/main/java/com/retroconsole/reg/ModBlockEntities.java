@@ -4,27 +4,27 @@ import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.block.ScreenBlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 
+import java.util.Set;
+
 /**
  * Block entity types shared by every loader.
  *
  * <p>The types are built eagerly from the shared block instances; the loader
- * module is what puts them into the game registry. Note that the datafixer
- * type argument of {@code build} is unused by every version we target, hence
- * {@code null}.
+ * module is what puts them into the game registry.
  */
 public final class ModBlockEntities {
 
     public static final BlockEntityType<RetroConsoleBlockEntity> RETRO_CONSOLE_BE =
-            BlockEntityType.Builder.of(
+            new BlockEntityType<>(
                     RetroConsoleBlockEntity::new,
-                    ModBlocks.RETRO_CONSOLE
-            ).build(null);
+                    Set.of(ModBlocks.RETRO_CONSOLE)
+            );
 
     public static final BlockEntityType<ScreenBlockEntity> SCREEN_BE =
-            BlockEntityType.Builder.of(
+            new BlockEntityType<>(
                     ScreenBlockEntity::new,
-                    ModBlocks.SCREEN
-            ).build(null);
+                    Set.of(ModBlocks.SCREEN)
+            );
 
     private ModBlockEntities() {}
 }

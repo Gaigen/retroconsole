@@ -42,11 +42,11 @@ public final class FabricNetwork {
     }
 
     private static <T> void registerToClient(NetPayload<T> definition) {
-        PayloadTypeRegistry.playS2C().register(FabricPayload.type(definition), FabricPayload.codec(definition));
+        PayloadTypeRegistry.clientboundPlay().register(FabricPayload.type(definition), FabricPayload.codec(definition));
     }
 
     private static <T> void registerToServer(NetPayload<T> definition) {
-        PayloadTypeRegistry.playC2S().register(FabricPayload.type(definition), FabricPayload.codec(definition));
+        PayloadTypeRegistry.serverboundPlay().register(FabricPayload.type(definition), FabricPayload.codec(definition));
         ServerPlayNetworking.registerGlobalReceiver(FabricPayload.type(definition),
                 (payload, context) -> RetroPayloads.serverHandler(definition)
                         .handle(payload.value(), new FabricContext(context)));

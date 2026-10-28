@@ -1,14 +1,13 @@
 package com.retroconsole.client;
 
-import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
-import org.lwjgl.opengl.GL11;
+import net.minecraft.resources.Identifier;
 import org.lwjgl.system.MemoryUtil;
 
-import java.nio.IntBuffer;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -23,10 +22,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *   If render did not pick up the previous frame, it is silently overwritten.
  *
  * - uploadPendingFrame() — render thread only (from inside getScreen()).
- *   Takes the frame from the slot and uploads to texture with one bulk copy
- *   + glTexSubImage2D. Frame array moves into entry ownership (lastAbgr)
- *   WITHOUT copying: submitFrame brings a new array each time and nobody
- *   mutates it afterward.
+ *   Takes the frame from the slot, copies it into the DynamicTexture's backing
+ *   image and re-uploads the texture. Frame array moves into entry ownership
+ *   (lastAbgr) WITHOUT copying: submitFrame brings a new array each time and
+ *   nobody mutates it afterward.
  */
 public final class ClientConsoles {
     private ClientConsoles() {}
@@ -34,33 +33,42 @@ public final class ClientConsoles {
     /** Frame waiting for upload. Pixels already in ABGR (GL RGBA little-endian). */
     private record PendingFrame(int[] abgr, int width, int height) {}
 
+    /** DynamicTexture whose sampler can be flipped between smooth and crisp. */
+    private static final class ScreenTexture extends DynamicTexture {
+        ScreenTexture(String label, int width, int height) {
+            super(label, width, height, true);
+        }
+
+        void setLinear(boolean linear) {
+            this.sampler = RenderSystem.getSamplerCache()
+                    .getRepeat(linear ? FilterMode.LINEAR : FilterMode.NEAREST);
+        }
+    }
+
     /** Console screen: texture + persistent staging buffer. Lives until dispose() or resize. */
     public static final class ScreenEntry {
-        private final DynamicTexture tex;
-        private final ResourceLocation id;
+        private final ScreenTexture tex;
+        private final Identifier id;
         private final int width;
         private final int height;
-        private final IntBuffer staging;
         private int[] lastAbgr;
-        /** Current filter state, so setLinear() only touches GL when it changes. */
+        /** Current filter state, so setLinear() only touches the sampler when it changes. */
         private boolean linear;
 
         private ScreenEntry(UUID consoleId, int width, int height) {
             this.width = width;
             this.height = height;
-            this.tex = new DynamicTexture(width, height, true);
-            this.id = Minecraft.getInstance().getTextureManager()
-                    .register("retro_screen_" + consoleId, tex);
-            this.staging = MemoryUtil.memAllocInt(width * height);
+            this.tex = new ScreenTexture("retroconsole_screen_" + consoleId, width, height);
+            this.id = Identifier.fromNamespaceAndPath("retroconsole", "screen/" + consoleId);
+            Minecraft.getInstance().getTextureManager().register(id, tex);
         }
 
         private void close() {
             Minecraft.getInstance().getTextureManager().release(id);
-            MemoryUtil.memFree(staging);
         }
 
         public DynamicTexture tex() { return tex; }
-        public ResourceLocation id() { return id; }
+        public Identifier id() { return id; }
         public int width() { return width; }
         public int height() { return height; }
         public int[] lastAbgr() { return lastAbgr; }
@@ -76,7 +84,7 @@ public final class ClientConsoles {
         public void setLinear(boolean linear) {
             if (linear == this.linear) return;
             this.linear = linear;
-            tex.setFilter(linear, false);
+            tex.setLinear(linear);
         }
     }
 
@@ -136,21 +144,13 @@ public final class ClientConsoles {
         }
 
         int n = f.width() * f.height();
-        entry.staging.clear();
-        entry.staging.put(f.abgr(), 0, n);
-        entry.staging.flip();
         entry.lastAbgr = f.abgr();
 
-        GlStateManager._bindTexture(entry.tex.getId());
-        GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
-        GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0);
-        GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0);
-        GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, 4);
-        GlStateManager._texSubImage2D(
-                GL11.GL_TEXTURE_2D, 0, 0, 0,
-                f.width(), f.height(),
-                GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE,
-                MemoryUtil.memAddress(entry.staging));
+        // The texture keeps its own NativeImage; write the frame straight into it
+        // (ABGR ints are RGBA8 bytes in little-endian order) and re-upload.
+        NativeImage img = entry.tex.getPixels();
+        MemoryUtil.memIntBuffer(img.getPointer(), n).put(f.abgr(), 0, n);
+        entry.tex.upload();
     }
 
     public static void dispose(UUID consoleId) {

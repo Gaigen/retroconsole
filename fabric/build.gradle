@@ -1,12 +1,12 @@
 plugins {
-    id 'fabric-loom' version "${fabric_loom_version}"
+    id 'net.fabricmc.fabric-loom' version "${fabric_loom_version}"
 }
 
 base {
     archivesName = "${mod_id}-fabric"
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 def commonProject = project(':common')
 
@@ -27,27 +27,26 @@ repositories {
 
 dependencies {
     minecraft "com.mojang:minecraft:${minecraft_version}"
-    // The shared code is written against Mojang names (net.minecraft.client...),
-    // i.e. exactly what the NeoForge module compiles against.
-    mappings loom.officialMojangMappings()
-
-    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    // Minecraft 26.1+ ships unobfuscated; no mappings or remapping are needed.
+    implementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
     // The bundle carries the networking, lifecycle, key binding, item group,
     // registry sync and rendering modules this port needs.
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_version}"
 
     // JNA for loading native libretro cores (.so/.dll). NeoForge puts it on the
     // game classpath; Loom's Minecraft classpath does not, so it is explicit here.
-    implementation 'net.java.dev.jna:jna:5.14.0'
+    implementation 'net.java.dev.jna:jna:5.17.0'
 }
 
 loom {
+    accessWidenerPath = file('src/main/resources/retroconsole.classtweaker')
     // A dev instance is only useful with the 5 GB of cores/roms already sitting
     // in the NeoForge run directory, so both loaders share it. Nothing in there
     // is loader-specific (mods/ is empty; mod code comes from the classpath).
     runs {
         client {
-            runDir = '../neoforge/runs/client'
+            runDir = project.hasProperty('isolatedClient')
+                    ? "build/client-${minecraft_version}" : '../neoforge/runs/client'
         }
         server {
             runDir = '../neoforge/runs/server'
@@ -57,8 +56,7 @@ loom {
 
 // Release artifacts name the Minecraft version and the loader, so the pairs the
 // release workflow uploads sit side by side: retroconsole-<ver>+1.21.1-<loader>.jar
-// Loom's RemapJarTask extends AbstractArchiveTask, not Jar, so it is named untyped.
-tasks.named('remapJar') {
+tasks.named('jar', Jar) {
     archiveFileName = "${mod_id}-${mod_version}+${minecraft_version}-fabric.jar"
 }
 

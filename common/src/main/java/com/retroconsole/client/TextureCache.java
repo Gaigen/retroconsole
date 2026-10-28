@@ -3,7 +3,7 @@ package com.retroconsole.client;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -15,7 +15,7 @@ import java.util.Map;
 /** Disk PNG -> GUI texture. Loaded once, not every frame. */
 public final class TextureCache {
 
-    public record Tex(ResourceLocation location, int width, int height) {}
+    public record Tex(Identifier location, int width, int height) {}
 
     private static final Map<String, Tex> CACHE = new HashMap<>();
     private static int counter;
@@ -28,9 +28,10 @@ public final class TextureCache {
         if (Files.exists(png)) {
             try (InputStream in = Files.newInputStream(png)) {
                 NativeImage img = NativeImage.read(in);
-                ResourceLocation rl = ResourceLocation.fromNamespaceAndPath(
+                Identifier rl = Identifier.fromNamespaceAndPath(
                         "retroconsole", "dyn/" + (counter++));
-                Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(img));
+                Minecraft.getInstance().getTextureManager()
+                        .register(rl, new DynamicTexture(() -> "retroconsole_tex", img));
                 tex = new Tex(rl, img.getWidth(), img.getHeight());
             } catch (Exception ignored) {}
         }
@@ -45,9 +46,10 @@ public final class TextureCache {
         if (png != null && png.length > 0) {
             try (InputStream in = new ByteArrayInputStream(png)) {
                 NativeImage img = NativeImage.read(in);
-                ResourceLocation rl = ResourceLocation.fromNamespaceAndPath(
+                Identifier rl = Identifier.fromNamespaceAndPath(
                         "retroconsole", "dyn/" + (counter++));
-                Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(img));
+                Minecraft.getInstance().getTextureManager()
+                        .register(rl, new DynamicTexture(() -> "retroconsole_tex", img));
                 tex = new Tex(rl, img.getWidth(), img.getHeight());
             } catch (Exception ignored) {}
         }

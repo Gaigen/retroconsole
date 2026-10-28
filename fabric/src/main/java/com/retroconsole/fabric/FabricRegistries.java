@@ -3,14 +3,14 @@ package com.retroconsole.fabric;
 import com.retroconsole.reg.ModBlockEntities;
 import com.retroconsole.reg.ModBlocks;
 import com.retroconsole.reg.ModItems;
-import net.fabricmc.fabric.api.itemgroup.v1.FabricItemGroup;
-import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+import net.fabricmc.fabric.api.creativetab.v1.FabricCreativeModeTab;
+import net.fabricmc.fabric.api.creativetab.v1.CreativeModeTabEvents;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceKey;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.ItemStack;
 
@@ -38,13 +38,13 @@ public final class FabricRegistries {
         blockEntity("screen", ModBlockEntities.SCREEN_BE);
 
         ResourceKey<CreativeModeTab> tabKey = ResourceKey.create(Registries.CREATIVE_MODE_TAB, id("retroconsole_tab"));
-        CreativeModeTab tab = FabricItemGroup.builder()
+        CreativeModeTab tab = FabricCreativeModeTab.builder()
                 .title(Component.translatable("itemGroup.retroconsole"))
                 .icon(() -> new ItemStack(ModBlocks.RETRO_CONSOLE))
                 .build();
         Registry.register(BuiltInRegistries.CREATIVE_MODE_TAB, tabKey, tab);
 
-        ItemGroupEvents.modifyEntriesEvent(tabKey).register(entries -> {
+        CreativeModeTabEvents.modifyOutputEvent(tabKey).register(entries -> {
             entries.accept(ModBlocks.RETRO_CONSOLE_ITEM);
             entries.accept(ModBlocks.SCREEN_ITEM);
             entries.accept(ModItems.GAMEPAD);
@@ -63,7 +63,7 @@ public final class FabricRegistries {
         Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id(path), type);
     }
 
-    private static ResourceLocation id(String path) {
-        return ResourceLocation.fromNamespaceAndPath(RetroConsoleFabric.MOD_ID, path);
+    private static Identifier id(String path) {
+        return Identifier.fromNamespaceAndPath(RetroConsoleFabric.MOD_ID, path);
     }
 }

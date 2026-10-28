@@ -3,6 +3,7 @@ package com.retroconsole.block;
 import com.retroconsole.reg.ModBlockEntities;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
@@ -11,6 +12,8 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.UUID;
@@ -62,7 +65,7 @@ public class ScreenBlockEntity extends BlockEntity {
         BlockPos pos = worldPosition;
         for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {
             if (player.level() != serverLevel || player.connection == null) continue;
-            if (!player.getChunkTrackingView().contains(new ChunkPos(pos))) continue;
+            if (!player.getChunkTrackingView().contains(ChunkPos.containing(pos))) continue;
             player.connection.send(packet);
         }
     }
@@ -83,35 +86,33 @@ public class ScreenBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.saveAdditional(tag, registries);
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
         if (consoleId != null) {
-            tag.putUUID("ConsoleId", consoleId);
+            output.store("ConsoleId", UUIDUtil.CODEC, consoleId);
         }
         if (assembled) {
-            tag.putInt("GridX", xIndex);
-            tag.putInt("GridY", yIndex);
-            tag.putInt("GridW", gridWidth);
-            tag.putInt("GridH", gridHeight);
+            output.putInt("GridX", xIndex);
+            output.putInt("GridY", yIndex);
+            output.putInt("GridW", gridWidth);
+            output.putInt("GridH", gridHeight);
         }
     }
 
     @Override
-    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.loadAdditional(tag, registries);
-        consoleId = tag.hasUUID("ConsoleId") ? tag.getUUID("ConsoleId") : null;
-        assembled = tag.contains("GridW");
-        xIndex = tag.getInt("GridX");
-        yIndex = tag.getInt("GridY");
-        gridWidth = Math.max(1, tag.getInt("GridW"));
-        gridHeight = Math.max(1, tag.getInt("GridH"));
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        consoleId = input.read("ConsoleId", UUIDUtil.CODEC).orElse(null);
+        assembled = input.getInt("GridW").isPresent();
+        xIndex = input.getIntOr("GridX", 0);
+        yIndex = input.getIntOr("GridY", 0);
+        gridWidth = Math.max(1, input.getIntOr("GridW", 1));
+        gridHeight = Math.max(1, input.getIntOr("GridH", 1));
     }
 
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        CompoundTag tag = super.getUpdateTag(registries);
-        saveAdditional(tag, registries);
-        return tag;
+        return saveCustomOnly(registries);
     }
 
     @Override

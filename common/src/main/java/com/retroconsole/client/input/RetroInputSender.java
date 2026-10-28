@@ -1,11 +1,11 @@
 package com.retroconsole.client.input;
 
-import com.mojang.blaze3d.platform.InputConstants;
 import com.retroconsole.client.RetroInputBindings;
 import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroAnalogPacket;
 import com.retroconsole.network.RetroInputPacket;
 import com.retroconsole.network.payload.RetroPayloads;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.core.BlockPos;
 
 /**
@@ -48,7 +48,7 @@ public final class RetroInputSender {
         sendAnalogIfChanged();
     }
 
-    public boolean handleKeyPressed(InputConstants.Key key) {
+    public boolean handleKeyPressed(KeyEvent key) {
         int buttonId = RetroInputBindings.mapButton(key);
         if (buttonId >= 0) {
             NetAccess.sendToServer(RetroPayloads.INPUT, new RetroInputPacket(consolePos, buttonId, true));
@@ -57,7 +57,7 @@ public final class RetroInputSender {
         return handleAnalogKey(key, true);
     }
 
-    public boolean handleKeyReleased(InputConstants.Key key) {
+    public boolean handleKeyReleased(KeyEvent key) {
         int buttonId = RetroInputBindings.mapButton(key);
         if (buttonId >= 0) {
             NetAccess.sendToServer(RetroPayloads.INPUT, new RetroInputPacket(consolePos, buttonId, false));
@@ -85,7 +85,7 @@ public final class RetroInputSender {
         return rightStick;
     }
 
-    private boolean handleAnalogKey(InputConstants.Key key, boolean pressed) {
+    private boolean handleAnalogKey(KeyEvent key, boolean pressed) {
         boolean leftChanged = RetroInputBindings.updateStick(
                 RetroInputBindings.LEFT_STICK, key, pressed, leftStick);
         boolean rightChanged = RetroInputBindings.updateStick(

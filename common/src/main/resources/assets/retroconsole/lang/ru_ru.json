@@ -5,7 +5,7 @@
   "item.retroconsole.gamepad": "Геймпад",
   "block.retroconsole.retro_console": "Retro Console",
   "block.retroconsole.screen": "Экран",
-  "key.categories.retroconsole": "Retro Console",
+  "key.category.retroconsole.main": "Retro Console",
   "key.retroconsole.dpad_up": "Крестовина вверх",
   "key.retroconsole.dpad_down": "Крестовина вниз",
   "key.retroconsole.dpad_left": "Крестовина влево",

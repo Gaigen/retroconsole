@@ -2,11 +2,13 @@ package com.retroconsole.client.bezel;
 
 import com.retroconsole.client.ModTexts;
 import com.retroconsole.client.TrackedWidgetScreen;
-import net.minecraft.Util;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.util.Util;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -59,11 +61,10 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
                         (b, v) -> TvBezelPrefs.setEnabled(v)));
         y += 22;
 
-        addRenderableWidget(CycleButton.builder(
-                        (TvBezelPrefs.FitMode m) ->
-                                ModTexts.c("bezel.fit." + m.name().toLowerCase(Locale.ROOT)))
+        addRenderableWidget(CycleButton.<TvBezelPrefs.FitMode>builder(
+                        m -> ModTexts.c("bezel.fit." + m.name().toLowerCase(Locale.ROOT)),
+                        TvBezelPrefs.fitMode())
                 .withValues(TvBezelPrefs.FitMode.FIT, TvBezelPrefs.FitMode.FILL, TvBezelPrefs.FitMode.STRETCH)
-                .withInitialValue(TvBezelPrefs.fitMode())
                 .create(rx, y, rw, 18, ModTexts.c("bezel.fit"),
                         (b, v) -> TvBezelPrefs.setFitMode(v)));
         y += 22;
@@ -111,14 +112,13 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
     }
 
     @Override
-    public void render(GuiGraphics g, int mx, int my, float pt) {
-        renderBackground(g, mx, my, pt);
+    public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float pt) {
         g.fill(0, 0, width, 20, COL_PANEL_2);
         g.fill(0, 19, width, 20, COL_EDGE);
-        g.drawCenteredString(font, title, width / 2, 6, 0xFFFFFF);
+        g.centeredText(font, title, width / 2, 6, 0xFFFFFFFF);
         String folder = TvBezelPrefs.bezelDir().toAbsolutePath().toString();
-        g.drawCenteredString(font, font.plainSubstrByWidth(folder, width - 20), width / 2, 23, 0x707880);
-        g.drawCenteredString(font, ModTexts.s("bezel.assign_hint"), width / 2, 34, 0x9098A0);
+        g.centeredText(font, font.plainSubstrByWidth(folder, width - 20), width / 2, 23, 0xFF707880);
+        g.centeredText(font, ModTexts.s("bezel.assign_hint"), width / 2, 34, 0xFF9098A0);
 
         renderList(g, mx, my);
         renderPreviews(g);
@@ -127,11 +127,11 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mx, int my, float pt) {
+    public void extractBackground(GuiGraphicsExtractor g, int mx, int my, float pt) {
         g.fill(0, 0, width, height, 0xE00C0E12);
     }
 
-    private void renderList(GuiGraphics g, int mx, int my) {
+    private void renderList(GuiGraphicsExtractor g, int mx, int my) {
         int x = listX(), w = listW(), top = listTop(), viewH = listViewH();
         g.fill(x - 2, top - 3, x + w + 2, top + viewH + 3, COL_PANEL);
         g.fill(x - 2, top - 3, x + w + 2, top - 2, COL_EDGE);
@@ -156,12 +156,12 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
             if (!badge.isEmpty()) {
                 int bw = font.width(badge) + 6;
                 g.fill(tx, y + 2, tx + bw, y + ITEM_H - 3, 0xFF3C64C8);
-                g.drawString(font, badge, tx + 3, y + 5, 0xFFFFFFFF, false);
+                g.text(font, badge, tx + 3, y + 5, 0xFFFFFFFF, false);
                 tx += bw + 5;
             }
             String label = isNone ? ModTexts.s("bezel.none") : name;
-            g.drawString(font, font.plainSubstrByWidth(label, x + w - tx - 6), tx, y + 5,
-                    hover ? 0xFFFFFF : isNone ? 0x9098A0 : 0xC8C8C8);
+            g.text(font, font.plainSubstrByWidth(label, x + w - tx - 6), tx, y + 5,
+                    hover ? 0xFFFFFFFF : isNone ? 0xFF9098A0 : 0xFFC8C8C8);
         }
 
         int contentH = files.size() * ITEM_H;
@@ -172,11 +172,11 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
             g.fill(x + w + 2, barY, x + w + 5, barY + barH, 0xC0AAAAAA);
         }
         if (files.size() <= 1) {
-            g.drawCenteredString(font, ModTexts.s("bezel.empty"), x + w / 2, top + 24, 0x808890);
+            g.centeredText(font, ModTexts.s("bezel.empty"), x + w / 2, top + 24, 0xFF808890);
         }
     }
 
-    private void renderPreviews(GuiGraphics g) {
+    private void renderPreviews(GuiGraphicsExtractor g) {
         int rx = rightX(), rw = rightW();
         int top = listTop() + 12;
         int ph = Math.max(40, height - 132 - top);
@@ -185,12 +185,12 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
         drawPreview(g, rx + half + 8, top, half, ph, TvBezelPrefs.rightPath(), ModTexts.s("bezel.preview.right"));
     }
 
-    private void drawPreview(GuiGraphics g, int x, int y, int w, int h, Path p, String label) {
-        g.drawString(font, label, x, y - 10, 0x9098A0);
+    private void drawPreview(GuiGraphicsExtractor g, int x, int y, int w, int h, Path p, String label) {
+        g.text(font, label, x, y - 10, 0xFF9098A0);
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, COL_EDGE);
         g.fill(x, y, x + w, y + h, 0xFF07090C);
         if (p == null) {
-            g.drawCenteredString(font, ModTexts.s("bezel.none"), x + w / 2, y + h / 2 - 4, 0x606870);
+            g.centeredText(font, ModTexts.s("bezel.none"), x + w / 2, y + h / 2 - 4, 0xFF606870);
             return;
         }
         TvBezelRenderer.Preview tex = TvBezelRenderer.preview(p, Util.getMillis());
@@ -198,13 +198,16 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
         float scale = Math.min((float) w / tex.w(), (float) h / tex.h());
         int dw = Math.max(1, Math.round(tex.w() * scale));
         int dh = Math.max(1, Math.round(tex.h() * scale));
-        g.blit(tex.id(), x + (w - dw) / 2, y + (h - dh) / 2, dw, dh,
-                0f, 0f, tex.w(), tex.h(), tex.w(), tex.h());
+        g.blit(RenderPipelines.GUI_TEXTURED, tex.id(), x + (w - dw) / 2, y + (h - dh) / 2,
+                0f, 0f, dw, dh, tex.w(), tex.h(), tex.w(), tex.h());
     }
 
     @Override
-    public boolean mouseClicked(double mx, double my, int button) {
-        if (super.mouseClicked(mx, my, button)) return true;
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        if (super.mouseClicked(event, doubleClick)) return true;
+        double mx = event.x();
+        double my = event.y();
+        int button = event.button();
         int x = listX(), w = listW(), top = listTop(), viewH = listViewH();
         if (mx >= x && mx < x + w && my >= top && my < top + viewH) {
             int idx = (int) ((my - top) / ITEM_H) + scroll;

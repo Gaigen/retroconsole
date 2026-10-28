@@ -5,7 +5,7 @@ import com.retroconsole.client.ModKeys;
 import com.retroconsole.client.ScreenBlockEntityRenderer;
 import com.retroconsole.reg.ModBlockEntities;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -32,7 +32,7 @@ public final class RetroConsoleFabricClient implements ClientModInitializer {
 
     private void registerKeys() {
         for (KeyMapping mapping : ModKeys.ALL) {
-            KeyBindingHelper.registerKeyBinding(mapping);
+            KeyMappingHelper.registerKeyMapping(mapping);
         }
     }
 }

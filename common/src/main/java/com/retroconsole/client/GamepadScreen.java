@@ -11,7 +11,8 @@ import com.retroconsole.network.RetroSaveStatePacket;
 import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 
@@ -49,7 +50,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     }
 
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
         if (showHints) {
             renderHintsOverlay(guiGraphics);
         } else {
@@ -57,15 +58,15 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         }
     }
 
-    private void renderHud(GuiGraphics g) {
+    private void renderHud(GuiGraphicsExtractor g) {
         int barH = 20;
         int y = this.height - barH;
         g.fill(0, y, this.width, this.height, COL_PANEL);
         g.fill(0, y, this.width, y + 1, COL_EDGE);
-        g.drawCenteredString(this.font, ModTexts.s("gamepad.hud"), this.width / 2, y + 6, 0xE0E0E0);
+        g.centeredText(this.font, ModTexts.s("gamepad.hud"), this.width / 2, y + 6, 0xFFE0E0E0);
     }
 
-    private void renderHintsOverlay(GuiGraphics g) {
+    private void renderHintsOverlay(GuiGraphicsExtractor g) {
         List<String> left = new ArrayList<>();
         left.add(ModTexts.s("tv.hints.buttons"));
         left.add(hintLine(ModKeys.BTN_A, "A"));
@@ -102,15 +103,15 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         g.fill(0, 0, this.width, this.height, 0x80000000);
         g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, 0xFF3C4250);
         g.fill(x, y, x + cardW, y + cardH, 0xFF14161C);
-        g.drawString(font, ModTexts.s("tv.hints.title"), x + pad, y + pad, 0xFFFFFF);
+        g.text(font, ModTexts.s("tv.hints.title"), x + pad, y + pad, 0xFFFFFFFF);
         int ty = y + pad + 14;
         for (int i = 0; i < left.size(); i++) {
-            g.drawString(font, left.get(i), x + pad, ty + i * 12, 0xE0E0E0);
+            g.text(font, left.get(i), x + pad, ty + i * 12, 0xFFE0E0E0);
         }
         for (int i = 0; i < right.size(); i++) {
-            g.drawString(font, right.get(i), x + pad + colW1 + gap, ty + i * 12, 0xE0E0E0);
+            g.text(font, right.get(i), x + pad + colW1 + gap, ty + i * 12, 0xFFE0E0E0);
         }
-        g.drawString(font, ModTexts.s("gamepad.hints.footer"), x + pad, y + cardH - 12 - 2, 0xFFFFFF);
+        g.text(font, ModTexts.s("gamepad.hints.footer"), x + pad, y + cardH - 12 - 2, 0xFFFFFFFF);
     }
 
     private static String hintLine(KeyMapping key, String action) {
@@ -139,7 +140,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         boolean stillHolding = GamepadItem.isLinkedTo(player.getMainHandItem(), consolePos, consoleId)
                 || GamepadItem.isLinkedTo(player.getOffhandItem(), consolePos, consoleId);
         if (!stillHolding) {
-            player.displayClientMessage(Component.translatable("retroconsole.gamepad.lost"), true);
+            player.sendOverlayMessage(Component.translatable("retroconsole.gamepad.lost"));
             onClose();
             return;
         }
@@ -148,7 +149,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         double distSq = player.distanceToSqr(
                 consolePos.getX() + 0.5, consolePos.getY() + 0.5, consolePos.getZ() + 0.5);
         if (distSq > (double) controlDist * controlDist) {
-            player.displayClientMessage(Component.translatable("retroconsole.gamepad.too_far"), true);
+            player.sendOverlayMessage(Component.translatable("retroconsole.gamepad.too_far"));
             onClose();
             return;
         }
@@ -157,7 +158,8 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+    public boolean keyPressed(KeyEvent event) {
+        int keyCode = event.key();
         if (keyCode == InputConstants.KEY_ESCAPE) {
             if (showHints) {
                 showHints = false;
@@ -179,16 +181,14 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
             return true;
         }
 
-        InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
-        if (input.handleKeyPressed(key)) return true;
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        if (input.handleKeyPressed(event)) return true;
+        return super.keyPressed(event);
     }
 
     @Override
-    public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
-        InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
-        if (input.handleKeyReleased(key)) return true;
-        return super.keyReleased(keyCode, scanCode, modifiers);
+    public boolean keyReleased(KeyEvent event) {
+        if (input.handleKeyReleased(event)) return true;
+        return super.keyReleased(event);
     }
 
     @Override
@@ -213,7 +213,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
         // Keep the world visible.
     }
 }

@@ -2,7 +2,7 @@ package com.retroconsole.client;
 
 import com.retroconsole.config.RetroConfigJson;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
@@ -235,9 +235,8 @@ public final class ConfigScreen extends Screen {
                 current = "balanced";
             }
             return CycleButton
-                    .builder((String v) -> Component.translatable(KEY + "preset." + v))
+                    .<String>builder(v -> Component.translatable(KEY + "preset." + v), current)
                     .withValues("performance", "balanced", "quality")
-                    .withInitialValue(current)
                     .create(x, y, w, h, Component.empty(), (button, value) -> set.accept(value));
         });
     }
@@ -266,23 +265,22 @@ public final class ConfigScreen extends Screen {
     // ----- rendering -------------------------------------------------------
 
     @Override
-    public void render(GuiGraphics g, int mx, int my, float partialTick) {
-        renderBackground(g, mx, my, partialTick);
-        g.drawCenteredString(font, title, width / 2, 12, 0xFFFFFF);
+    public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float partialTick) {
+        g.centeredText(font, title, width / 2, 12, 0xFFFFFFFF);
         // Below the tab row on purpose: the tabs are 18 px tall and used to sit
         // on top of this line at GUI scale 3.
-        g.drawCenteredString(font, Component.literal(elide(RetroConfigJson.file().toString(), width - 24)),
-                width / 2, PATH_Y, 0x707880);
+        g.centeredText(font, Component.literal(elide(RetroConfigJson.file().toString(), width - 24)),
+                width / 2, PATH_Y, 0xFF707880);
 
         int widgetX = width - 12 - WIDGET_W;
         int labelW = widgetX - 24;
         for (int i = 0; i < visible.size() && i < widgets.size(); i++) {
             int y = TOP + i * ROW_H;
             // Sliders show only their value, so every row keeps its name here.
-            g.drawString(font, elide(visible.get(i).label().getString(), labelW),
-                    14, y + 5, 0xC8C8C8, false);
+            g.text(font, elide(visible.get(i).label().getString(), labelW),
+                    14, y + 5, 0xFFC8C8C8, false);
         }
-        super.render(g, mx, my, partialTick);
+        super.extractRenderState(g, mx, my, partialTick);
     }
 
     /** Truncates to {@code maxW} and marks the cut with an ellipsis. */
@@ -296,7 +294,7 @@ public final class ConfigScreen extends Screen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mx, int my, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor g, int mx, int my, float partialTick) {
         g.fill(0, 0, width, height, 0xE00C0E12);
     }
 
