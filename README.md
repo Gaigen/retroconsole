@@ -1,14 +1,14 @@
 # RetroConsole
 
-[![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-62B47A?style=flat-square)](https://www.minecraft.net/)
-[![NeoForge](https://img.shields.io/badge/NeoForge-21.1.x-orange?style=flat-square)](https://neoforged.net/)
-[![Fabric](https://img.shields.io/badge/Fabric-0.16%2B-dbd0b4?style=flat-square)](https://fabricmc.net/)
+[![Minecraft](https://img.shields.io/badge/Minecraft-26.1.2-62B47A?style=flat-square)](https://www.minecraft.net/)
+[![NeoForge](https://img.shields.io/badge/NeoForge-26.1.x-orange?style=flat-square)](https://neoforged.net/)
+[![Fabric](https://img.shields.io/badge/Fabric-0.20.1%2B-dbd0b4?style=flat-square)](https://fabricmc.net/)
 [![License](https://img.shields.io/badge/License-GPL--3.0-blue?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey?style=flat-square)](#requirements)
 
-NeoForge and Fabric mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
+NeoForge and Fabric mod for **Minecraft 26.1.2** (the All the Mods 11 target) that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
-**Version:** 0.3.0 (early release — expect rough edges)
+**Version:** 0.3.1 (early release — expect rough edges)
 
 ## Download
 
@@ -16,10 +16,22 @@ Pre-built JARs: **[GitHub Releases](https://github.com/Gaigen/retroconsole/relea
 
 | Loader | File |
 |--------|------|
-| NeoForge | `retroconsole-0.3.0+1.21.1-neoforge.jar` |
-| Fabric | `retroconsole-0.3.0+1.21.1-fabric.jar` (needs Fabric API) |
+| NeoForge | `retroconsole-0.3.1+26.1.2-neoforge.jar` |
+| Fabric | `retroconsole-0.3.1+26.1.2-fabric.jar` (needs Fabric API) |
 
-Requirements: Minecraft **1.21.1**, NeoForge **21.1.x** or Fabric Loader **0.16+**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs. Both loaders read the same `config/retroconsole.json`, so settings carry over between them.
+Requirements: Minecraft **26.1.2**, NeoForge **26.1.2.124** or Fabric Loader **0.20.1+** with **Fabric API 0.145.1+26.1**, Java **25**. The mod does **not** include libretro cores, BIOS, or ROMs. Both loaders read the same `config/retroconsole.json`, so settings carry over between them.
+
+## What's new in 0.3.1
+
+- **Minecraft 26.1.2** — this branch targets 26.1.2 on both loaders (NeoForge 26.1.2.124 / FancyModLoader 11, Fabric Loader 0.20.1 with Loom 1.19.3) and needs **Java 25**. The shared `common/` sources are the ones 0.3.0 shipped, so behaviour carries over; the 1.21.1 release stays at 0.3.0 for now.
+- **Console chassis styles** — five silhouettes (`classic`, `compact`, `hifi`, `legacy`, `fullblock`), each rendered in three finishes (`cream`, `graphite`, `lavender`) and three visual states (`off`, `standby`, `running`). Style and finish are cosmetic and can be cycled on a placed console.
+- **Screen shell designs and mounts** — five frames (`retro`, `studio`, `wall`, `edge`, `solid`), dye-based finish, and a **front/back mount**; all of it applies to the whole linked wall (the mount is deliberately not sneak-cyclable).
+- **Frameless full-block screen** — the `solid` design drops the bezel so the picture fills the entire block face.
+- **Gamepad item** — three shells (`soft`, `brick`, `grip`) in the same three finishes, sharing one held/ground/item-frame pose.
+- **Screen geometry cache hardening** — the per-tile shape cache is keyed on the full grid slot instead of packing it into 8-bit fields, is synchronized and bounded (4096 entries), and returns empty geometry for stale grid data instead of throwing during chunk/cluster updates.
+- **mkxp-z size handling** — returning to the base canvas size clears a stale probe and an earlier rejected size, so a later genuine resize to that same size is no longer ignored.
+- **`[control]` diagnostics** — power-off, launch (with `loadAuto`) and save-state requests are logged at INFO under the `RetroConsole-Control` logger with player, position and console id; useful when a report says "the button does nothing".
+- **Five new GameTests** (`retroconsole:parity`) cover legacy UUID/NBT round-trip, block-entity survival across cosmetic changes, screen grid NBT, power-off without a running core, and vanilla placement of style/tone.
 
 ## What's new in 0.3.0
 
@@ -51,17 +63,17 @@ Requirements: Minecraft **1.21.1**, NeoForge **21.1.x** or Fabric Loader **0.16+
 
 | Component | Version |
 |-----------|---------|
-| Minecraft | 1.21.1 |
-| NeoForge | 21.1.x (tested with 21.1.215) |
-| Fabric | Loader 0.16+ and Fabric API (tested with 0.20.1 / 0.116.17) |
-| Java | 21 |
+| Minecraft | 26.1.2 |
+| NeoForge | 26.1.2.124 (FancyModLoader 11.0.15) |
+| Fabric | Loader 0.20.1+ and Fabric API 0.145.1+26.1 |
+| Java | 25 |
 | Host OS | **Windows** or **Linux** (64-bit) |
 
 macOS is **not** supported.
 
 ## Quick start (players)
 
-1. Install NeoForge 1.21.1, or Fabric Loader 1.21.1 plus **Fabric API**, and drop the matching jar into the `mods` folder.
+1. Install NeoForge 26.1.2, or Fabric Loader 26.1.2 plus **Fabric API**, and drop the matching jar into the `mods` folder.
 2. Start the game. On first launch the mod creates `config/retroconsole/` under your game directory.
 3. Download libretro cores (`.dll` on Windows, `.so` on Linux) from the [libretro buildbot](https://buildbot.libretro.com/) and place them in `config/retroconsole/cores/`.
 4. Add your legally obtained ROMs under `config/retroconsole/roms/`, preferably in subfolders (`nes/`, `gba/`, `ps2/`, …).
@@ -95,7 +107,7 @@ Place **Screen** blocks so that the **Retro Console touches** any block of the s
    git clone https://github.com/Gaigen/retroconsole.git
    ```
 
-2. Use **Java 21**.
+2. Use **Java 25** — the Gradle toolchain is pinned to it (`java.toolchain.languageVersion = 25`) and 26.x will not run on 21.
 3. Run the NeoForge client:
 
    ```bash
@@ -221,9 +233,9 @@ The library UI recognizes these folders and suggests matching core name patterns
 
 Custom tabs can be added via `systems.json` (on the machine that serves the library — your client in single-player, the server in multiplayer).
 
-### Tested cores (0.3.0)
+### Tested cores (0.3.1)
 
-Smoke-tested during development on **Windows 11** (NeoForge 21.1.215); the Fabric build runs the same shared code and differs only in loader glue. Linux has matching native helpers; treat HW cores there as “should work”, not as a full matrix.
+The matrix below was established on **Windows 11** for 0.3.0 (NeoForge 21.1.215). The 26.1.2 release smoke re-ran `genesis_plus_gx` (Genesis) and `mkxp-z` (RPG Maker) end to end; the remaining rows are carried over unchanged and are **not** yet re-verified on 26.1.2. The Fabric build runs the same shared code and differs only in loader glue. Linux has matching native helpers; treat HW cores there as “should work”, not as a full matrix.
 
 | Core file (libretro) | System | Notes |
 |----------------------|--------|--------|
@@ -355,14 +367,17 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 ## Building a release JAR
 
 ```bash
-./gradlew :neoforge:build                        # NeoForge jar only
-./gradlew :neoforge:build :fabric:build -Pfabric # both loaders
+./gradlew :neoforge:build                         # NeoForge jar only
+./gradlew :neoforge:build :fabric:build -Pfabric  # both loaders
+./gradlew build verifyDistribution -Pfabric       # both jars + metadata/asset/native checks
 ```
 
 Outputs:
 
-- `neoforge/build/libs/retroconsole-0.3.0+1.21.1-neoforge.jar`
-- `fabric/build/libs/retroconsole-0.3.0+1.21.1-fabric.jar`
+- `neoforge/build/libs/retroconsole-0.3.1+26.1.2-neoforge.jar`
+- `fabric/build/libs/retroconsole-0.3.1+26.1.2-fabric.jar`
+
+`verifyDistribution` unzips both jars and asserts the loader metadata, the shared classes, the item resources and the natives are present — run it before tagging. The release workflow builds the Linux `.so` and the Windows `.dll` helper first, then both jars with the same tasks.
 
 To rebuild the bundled headless GL native library (developers only):
 
