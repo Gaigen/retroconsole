@@ -49,6 +49,8 @@ import java.util.UUID;
  */
 public class TvScreen extends TrackedWidgetScreen {
 
+    private static final org.slf4j.Logger CONTROL_LOG = org.slf4j.LoggerFactory.getLogger("RetroConsole-Control");
+
     private static final int BAR_HEIGHT = 24;
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE = 0xFF2A2F3A;
@@ -660,6 +662,7 @@ public class TvScreen extends TrackedWidgetScreen {
         input.sendAnalogZeros();
         sendPointerRelease();
         NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, false));
+        CONTROL_LOG.info("[control] UI Off pos={} console={}", consolePos, consoleId);
         NetAccess.sendToServer(RetroPayloads.POWER_OFF, new RetroPowerOffPacket(consolePos));
         Minecraft.getInstance().setScreen(new CoreSelectScreen(consolePos));
     }

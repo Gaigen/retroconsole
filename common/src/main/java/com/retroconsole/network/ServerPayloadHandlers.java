@@ -26,6 +26,8 @@ public final class ServerPayloadHandlers {
 
     private ServerPayloadHandlers() {}
 
+    private static final org.slf4j.Logger CONTROL_LOG = org.slf4j.LoggerFactory.getLogger("RetroConsole-Control");
+
     public static void handlePointer(RetroPointerPacket pkt, NetContext ctx) {
         ctx.enqueue(() -> withConsole(ctx, pkt.pos(), console -> {
             UUID consoleId = console.getOrAssignConsoleId();
@@ -80,6 +82,7 @@ public final class ServerPayloadHandlers {
 
     public static void handleCoreSelect(RetroCoreSelectPacket pkt, NetContext ctx) {
         ctx.enqueue(() -> {
+            CONTROL_LOG.info("[control] launch received player={} pos={} core={} rom={} loadAuto={}", ctx.player().getUUID(), pkt.pos(), pkt.coreName(), pkt.romId(), pkt.loadAuto());
             if (!(ctx.player() instanceof ServerPlayer player)) return;
             if (!isNear(player, pkt.pos(), controlDistanceSq())) return;
             if (player.level().getBlockEntity(pkt.pos())
@@ -91,14 +94,20 @@ public final class ServerPayloadHandlers {
 
     public static void handleSaveState(RetroSaveStatePacket pkt, NetContext ctx) {
         ctx.enqueue(() -> withConsole(ctx, pkt.pos(), console -> {
+            CONTROL_LOG.info("[control] state accepted console={} slot={} save={} auto={}", console.getConsoleId(), pkt.slot(), pkt.save(), pkt.auto());
             ServerConsoles.handleSaveState(
                     console.getConsoleId(), pkt.slot(), pkt.save(), pkt.auto());
         }));
     }
 
     public static void handlePowerOff(RetroPowerOffPacket pkt, NetContext ctx) {
+        CONTROL_LOG.info("[control] Off received player={} pos={}", ctx.player().getUUID(), pkt.pos());
         ctx.enqueue(() -> withConsole(ctx, pkt.pos(), console -> {
-            if (!ServerConsoles.isOwner(console.getConsoleId(), ctx.player().getUUID())) return;
+            if (!ServerConsoles.isOwner(console.getConsoleId(), ctx.player().getUUID())) {
+                CONTROL_LOG.info("[control] Off rejected: not owner console={}", console.getConsoleId());
+                return;
+            }
+            CONTROL_LOG.info("[control] Off accepted console={}", console.getConsoleId());
             console.powerOff();
         }));
     }
@@ -170,11 +179,17 @@ public final class ServerPayloadHandlers {
 
     private static void withConsole(NetContext ctx, BlockPos pos, Consumer<RetroConsoleBlockEntity> action) {
         if (!(ctx.player() instanceof ServerPlayer player)) return;
-        if (!isNear(player, pos, controlDistanceSq())) return;
+        if (!isNear(player, pos, controlDistanceSq())) {
+            CONTROL_LOG.debug("[control] rejected: out of range player={} pos={}", player.getUUID(), pos);
+            return;
+        }
         if (!(player.level().getBlockEntity(pos)
                 instanceof RetroConsoleBlockEntity console)) return;
         UUID consoleId = console.getOrAssignConsoleId();
-        if (!ServerConsoles.hasEmulator(consoleId)) return;
+        if (!ServerConsoles.hasEmulator(consoleId)) {
+            CONTROL_LOG.debug("[control] rejected: no running Entry console={} booting={}", consoleId, ServerConsoles.isBooting(consoleId));
+            return;
+        }
         action.accept(console);
     }
 }

@@ -4,7 +4,7 @@ import com.retroconsole.style.ScreenDesign;
 import com.retroconsole.style.ScreenMount;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -54,21 +54,25 @@ public final class ScreenShell {
     /** Aperture and video plane of a whole wall, in wall units. */
     public record Aperture(float left, float bottom, float right, float top, float videoZ) {}
 
-    private static final Map<Long, List<Box>> CACHE = new HashMap<>();
+    private record Key(ScreenDesign design, ScreenMount mount, int width, int height, int col, int row) {}
+    private static final int CACHE_LIMIT = 4096;
+    private static final Map<Key, List<Box>> CACHE = new LinkedHashMap<>(64, 0.75f, true);
 
     private ScreenShell() {}
 
     /** Boxes of one tile of a wall. Cached: the geometry only depends on the grid slot. */
-    public static List<Box> boxes(ScreenDesign design, ScreenMount mount,
+    public static synchronized List<Box> boxes(ScreenDesign design, ScreenMount mount,
                                   int gridW, int gridH, int col, int row) {
-        long key = ((long) design.ordinal() << 48) | ((long) mount.ordinal() << 40)
-                | ((long) (gridW & 0xFF) << 32) | ((long) (gridH & 0xFF) << 24)
-                | ((long) (col & 0xFF) << 8) | (row & 0xFF);
+        // Stale grid NBT must not crash the renderer during chunk/cluster updates.
+        if (gridW < 1 || gridH < 1 || col < 0 || row < 0 || col >= gridW || row >= gridH)
+            return List.of();
+        Key key = new Key(design, mount, gridW, gridH, col, row);
         List<Box> cached = CACHE.get(key);
         if (cached != null) return cached;
         List<Box> out = new ArrayList<>();
         build(design, mount, gridW, gridH, col, row, out);
         List<Box> result = List.copyOf(out);
+        if (CACHE.size() >= CACHE_LIMIT) CACHE.remove(CACHE.keySet().iterator().next());
         CACHE.put(key, result);
         return result;
     }

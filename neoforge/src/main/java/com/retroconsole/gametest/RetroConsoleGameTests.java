@@ -42,6 +42,7 @@ public final class RetroConsoleGameTests {
 
     public static void register(IEventBus modBus) {
         FUNCTIONS.register(modBus);
+        PortParityGameTests.register(modBus);
         modBus.addListener(RetroConsoleGameTests::registerTests);
     }
 

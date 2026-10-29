@@ -1833,7 +1833,14 @@ public class LibretroCoreWindows extends LibretroCore {
             adoptBase(w, h, "first geometry");
             return;
         }
-        if (w == retroBaseW && h == retroBaseH) return;
+        if (w == retroBaseW && h == retroBaseH) {
+            // A new canvas cycle starts at the base. Do not retain an old
+            // rejection/probe when a later genuine resize reuses its dimensions.
+            retroProbeW = retroProbeH = 0;
+            retroProbeFrames = 0;
+            retroRejectW = retroRejectH = -1;
+            return;
+        }
         if (w == retroRejectW && h == retroRejectH) return;   // already refused
         if (w > retroBaseW * RETRO_GROWTH_LIMIT || h > retroBaseH * RETRO_GROWTH_LIMIT) {
             refuseCanvas(w, h, "over " + RETRO_GROWTH_LIMIT + "x the base");

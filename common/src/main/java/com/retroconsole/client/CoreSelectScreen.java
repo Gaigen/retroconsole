@@ -39,6 +39,8 @@ import java.util.UUID;
 
 public class CoreSelectScreen extends TrackedWidgetScreen {
 
+    private static final org.slf4j.Logger CONTROL_LOG = org.slf4j.LoggerFactory.getLogger("RetroConsole-Control");
+
     private enum View { CARDS, LIST, MANUAL }
 
     private static final int ITEM_H = 16;
@@ -263,6 +265,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         savePrefs();
         PlayStats.onLaunch(selectedRom.id());
         blip(2.0f);
+        CONTROL_LOG.info("[control] UI launch pos={} core={} rom={} loadAuto={}", consolePos, core.id(), selectedRom.id(), loadAuto);
         NetAccess.sendToServer(RetroPayloads.CORE_SELECT,
                 new RetroCoreSelectPacket(consolePos, core.id(), selectedRom.id(), loadAuto));
         Minecraft.getInstance().setScreen(
