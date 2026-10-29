@@ -47,6 +47,10 @@ loom {
         client {
             runDir = project.hasProperty('isolatedClient')
                     ? "build/client-${minecraft_version}" : '../neoforge/runs/client'
+            // Loom passes no --username, so vanilla picks a fresh "Player###" every
+            // launch and the offline UUID changes with it. That is what made power-off
+            // lose its owner, playtime start at zero and the volume slider reset.
+            programArgs '--username', 'Dev'
         }
         server {
             runDir = '../neoforge/runs/server'
