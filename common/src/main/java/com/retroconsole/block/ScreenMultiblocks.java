@@ -32,6 +32,17 @@ public final class ScreenMultiblocks {
 
     private ScreenMultiblocks() {}
 
+    /**
+     * Blocks of the screen the given one belongs to: same plane, facing and
+     * orientation. Used for changes that belong to the whole display — the shell
+     * design, the finish and the mount — so a wall never ends up half-repainted.
+     */
+    public static Set<BlockPos> clusterOf(Level level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        if (!(state.getBlock() instanceof ScreenBlock)) return Set.of(pos);
+        return collectCluster(level, pos, state, rightOf(state), downOf(state));
+    }
+
     /** Отложенная пересборка (после загрузки чанка / из onLoad). */
     public static void scheduleRebuild(ServerLevel level, BlockPos pos) {
         BlockPos target = pos.immutable();

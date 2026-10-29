@@ -1,8 +1,679 @@
 {
   "variants": {
-    "facing=north": { "model": "retroconsole:block/retro_console" },
-    "facing=south": { "model": "retroconsole:block/retro_console", "y": 180 },
-    "facing=west":  { "model": "retroconsole:block/retro_console", "y": 270 },
-    "facing=east":  { "model": "retroconsole:block/retro_console", "y": 90 }
+    "facing=north,style=classic,state=off,tone=cream": {
+      "model": "retroconsole:block/console/classic/off"
+    },
+    "facing=south,style=classic,state=off,tone=cream": {
+      "model": "retroconsole:block/console/classic/off",
+      "y": 180
+    },
+    "facing=east,style=classic,state=off,tone=cream": {
+      "model": "retroconsole:block/console/classic/off",
+      "y": 90
+    },
+    "facing=west,style=classic,state=off,tone=cream": {
+      "model": "retroconsole:block/console/classic/off",
+      "y": 270
+    },
+    "facing=north,style=classic,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/classic/off_graphite"
+    },
+    "facing=south,style=classic,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/classic/off_graphite",
+      "y": 180
+    },
+    "facing=east,style=classic,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/classic/off_graphite",
+      "y": 90
+    },
+    "facing=west,style=classic,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/classic/off_graphite",
+      "y": 270
+    },
+    "facing=north,style=classic,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/classic/off_lavender"
+    },
+    "facing=south,style=classic,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/classic/off_lavender",
+      "y": 180
+    },
+    "facing=east,style=classic,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/classic/off_lavender",
+      "y": 90
+    },
+    "facing=west,style=classic,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/classic/off_lavender",
+      "y": 270
+    },
+    "facing=north,style=classic,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/classic/standby"
+    },
+    "facing=south,style=classic,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/classic/standby",
+      "y": 180
+    },
+    "facing=east,style=classic,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/classic/standby",
+      "y": 90
+    },
+    "facing=west,style=classic,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/classic/standby",
+      "y": 270
+    },
+    "facing=north,style=classic,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/classic/standby_graphite"
+    },
+    "facing=south,style=classic,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/classic/standby_graphite",
+      "y": 180
+    },
+    "facing=east,style=classic,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/classic/standby_graphite",
+      "y": 90
+    },
+    "facing=west,style=classic,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/classic/standby_graphite",
+      "y": 270
+    },
+    "facing=north,style=classic,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/classic/standby_lavender"
+    },
+    "facing=south,style=classic,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/classic/standby_lavender",
+      "y": 180
+    },
+    "facing=east,style=classic,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/classic/standby_lavender",
+      "y": 90
+    },
+    "facing=west,style=classic,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/classic/standby_lavender",
+      "y": 270
+    },
+    "facing=north,style=classic,state=running,tone=cream": {
+      "model": "retroconsole:block/console/classic/running"
+    },
+    "facing=south,style=classic,state=running,tone=cream": {
+      "model": "retroconsole:block/console/classic/running",
+      "y": 180
+    },
+    "facing=east,style=classic,state=running,tone=cream": {
+      "model": "retroconsole:block/console/classic/running",
+      "y": 90
+    },
+    "facing=west,style=classic,state=running,tone=cream": {
+      "model": "retroconsole:block/console/classic/running",
+      "y": 270
+    },
+    "facing=north,style=classic,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/classic/running_graphite"
+    },
+    "facing=south,style=classic,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/classic/running_graphite",
+      "y": 180
+    },
+    "facing=east,style=classic,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/classic/running_graphite",
+      "y": 90
+    },
+    "facing=west,style=classic,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/classic/running_graphite",
+      "y": 270
+    },
+    "facing=north,style=classic,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/classic/running_lavender"
+    },
+    "facing=south,style=classic,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/classic/running_lavender",
+      "y": 180
+    },
+    "facing=east,style=classic,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/classic/running_lavender",
+      "y": 90
+    },
+    "facing=west,style=classic,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/classic/running_lavender",
+      "y": 270
+    },
+    "facing=north,style=compact,state=off,tone=cream": {
+      "model": "retroconsole:block/console/compact/off"
+    },
+    "facing=south,style=compact,state=off,tone=cream": {
+      "model": "retroconsole:block/console/compact/off",
+      "y": 180
+    },
+    "facing=east,style=compact,state=off,tone=cream": {
+      "model": "retroconsole:block/console/compact/off",
+      "y": 90
+    },
+    "facing=west,style=compact,state=off,tone=cream": {
+      "model": "retroconsole:block/console/compact/off",
+      "y": 270
+    },
+    "facing=north,style=compact,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/compact/off_graphite"
+    },
+    "facing=south,style=compact,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/compact/off_graphite",
+      "y": 180
+    },
+    "facing=east,style=compact,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/compact/off_graphite",
+      "y": 90
+    },
+    "facing=west,style=compact,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/compact/off_graphite",
+      "y": 270
+    },
+    "facing=north,style=compact,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/compact/off_lavender"
+    },
+    "facing=south,style=compact,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/compact/off_lavender",
+      "y": 180
+    },
+    "facing=east,style=compact,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/compact/off_lavender",
+      "y": 90
+    },
+    "facing=west,style=compact,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/compact/off_lavender",
+      "y": 270
+    },
+    "facing=north,style=compact,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/compact/standby"
+    },
+    "facing=south,style=compact,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/compact/standby",
+      "y": 180
+    },
+    "facing=east,style=compact,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/compact/standby",
+      "y": 90
+    },
+    "facing=west,style=compact,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/compact/standby",
+      "y": 270
+    },
+    "facing=north,style=compact,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/compact/standby_graphite"
+    },
+    "facing=south,style=compact,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/compact/standby_graphite",
+      "y": 180
+    },
+    "facing=east,style=compact,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/compact/standby_graphite",
+      "y": 90
+    },
+    "facing=west,style=compact,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/compact/standby_graphite",
+      "y": 270
+    },
+    "facing=north,style=compact,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/compact/standby_lavender"
+    },
+    "facing=south,style=compact,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/compact/standby_lavender",
+      "y": 180
+    },
+    "facing=east,style=compact,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/compact/standby_lavender",
+      "y": 90
+    },
+    "facing=west,style=compact,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/compact/standby_lavender",
+      "y": 270
+    },
+    "facing=north,style=compact,state=running,tone=cream": {
+      "model": "retroconsole:block/console/compact/running"
+    },
+    "facing=south,style=compact,state=running,tone=cream": {
+      "model": "retroconsole:block/console/compact/running",
+      "y": 180
+    },
+    "facing=east,style=compact,state=running,tone=cream": {
+      "model": "retroconsole:block/console/compact/running",
+      "y": 90
+    },
+    "facing=west,style=compact,state=running,tone=cream": {
+      "model": "retroconsole:block/console/compact/running",
+      "y": 270
+    },
+    "facing=north,style=compact,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/compact/running_graphite"
+    },
+    "facing=south,style=compact,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/compact/running_graphite",
+      "y": 180
+    },
+    "facing=east,style=compact,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/compact/running_graphite",
+      "y": 90
+    },
+    "facing=west,style=compact,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/compact/running_graphite",
+      "y": 270
+    },
+    "facing=north,style=compact,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/compact/running_lavender"
+    },
+    "facing=south,style=compact,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/compact/running_lavender",
+      "y": 180
+    },
+    "facing=east,style=compact,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/compact/running_lavender",
+      "y": 90
+    },
+    "facing=west,style=compact,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/compact/running_lavender",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=off,tone=cream": {
+      "model": "retroconsole:block/console/hifi/off"
+    },
+    "facing=south,style=hifi,state=off,tone=cream": {
+      "model": "retroconsole:block/console/hifi/off",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=off,tone=cream": {
+      "model": "retroconsole:block/console/hifi/off",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=off,tone=cream": {
+      "model": "retroconsole:block/console/hifi/off",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/off_graphite"
+    },
+    "facing=south,style=hifi,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/off_graphite",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/off_graphite",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/off_graphite",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/off_lavender"
+    },
+    "facing=south,style=hifi,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/off_lavender",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/off_lavender",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/off_lavender",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/hifi/standby"
+    },
+    "facing=south,style=hifi,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/hifi/standby",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/hifi/standby",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/hifi/standby",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/standby_graphite"
+    },
+    "facing=south,style=hifi,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/standby_graphite",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/standby_graphite",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/standby_graphite",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/standby_lavender"
+    },
+    "facing=south,style=hifi,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/standby_lavender",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/standby_lavender",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/standby_lavender",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=running,tone=cream": {
+      "model": "retroconsole:block/console/hifi/running"
+    },
+    "facing=south,style=hifi,state=running,tone=cream": {
+      "model": "retroconsole:block/console/hifi/running",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=running,tone=cream": {
+      "model": "retroconsole:block/console/hifi/running",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=running,tone=cream": {
+      "model": "retroconsole:block/console/hifi/running",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/running_graphite"
+    },
+    "facing=south,style=hifi,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/running_graphite",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/running_graphite",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/hifi/running_graphite",
+      "y": 270
+    },
+    "facing=north,style=hifi,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/running_lavender"
+    },
+    "facing=south,style=hifi,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/running_lavender",
+      "y": 180
+    },
+    "facing=east,style=hifi,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/running_lavender",
+      "y": 90
+    },
+    "facing=west,style=hifi,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/hifi/running_lavender",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=off,tone=cream": {
+      "model": "retroconsole:block/console/legacy/off"
+    },
+    "facing=south,style=legacy,state=off,tone=cream": {
+      "model": "retroconsole:block/console/legacy/off",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=off,tone=cream": {
+      "model": "retroconsole:block/console/legacy/off",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=off,tone=cream": {
+      "model": "retroconsole:block/console/legacy/off",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/off_graphite"
+    },
+    "facing=south,style=legacy,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/off_graphite",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/off_graphite",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/off_graphite",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/off_lavender"
+    },
+    "facing=south,style=legacy,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/off_lavender",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/off_lavender",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/off_lavender",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/legacy/standby"
+    },
+    "facing=south,style=legacy,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/legacy/standby",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/legacy/standby",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/legacy/standby",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/standby_graphite"
+    },
+    "facing=south,style=legacy,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/standby_graphite",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/standby_graphite",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/standby_graphite",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/standby_lavender"
+    },
+    "facing=south,style=legacy,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/standby_lavender",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/standby_lavender",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/standby_lavender",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=running,tone=cream": {
+      "model": "retroconsole:block/console/legacy/running"
+    },
+    "facing=south,style=legacy,state=running,tone=cream": {
+      "model": "retroconsole:block/console/legacy/running",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=running,tone=cream": {
+      "model": "retroconsole:block/console/legacy/running",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=running,tone=cream": {
+      "model": "retroconsole:block/console/legacy/running",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/running_graphite"
+    },
+    "facing=south,style=legacy,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/running_graphite",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/running_graphite",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/legacy/running_graphite",
+      "y": 270
+    },
+    "facing=north,style=legacy,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/running_lavender"
+    },
+    "facing=south,style=legacy,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/running_lavender",
+      "y": 180
+    },
+    "facing=east,style=legacy,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/running_lavender",
+      "y": 90
+    },
+    "facing=west,style=legacy,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/legacy/running_lavender",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=off,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/off"
+    },
+    "facing=south,style=fullblock,state=off,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/off",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=off,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/off",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=off,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/off",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/off_graphite"
+    },
+    "facing=south,style=fullblock,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/off_graphite",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/off_graphite",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=off,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/off_graphite",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/off_lavender"
+    },
+    "facing=south,style=fullblock,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/off_lavender",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/off_lavender",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=off,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/off_lavender",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/standby"
+    },
+    "facing=south,style=fullblock,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/standby",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/standby",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=standby,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/standby",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/standby_graphite"
+    },
+    "facing=south,style=fullblock,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/standby_graphite",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/standby_graphite",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=standby,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/standby_graphite",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/standby_lavender"
+    },
+    "facing=south,style=fullblock,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/standby_lavender",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/standby_lavender",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=standby,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/standby_lavender",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=running,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/running"
+    },
+    "facing=south,style=fullblock,state=running,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/running",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=running,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/running",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=running,tone=cream": {
+      "model": "retroconsole:block/console/fullblock/running",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/running_graphite"
+    },
+    "facing=south,style=fullblock,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/running_graphite",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/running_graphite",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=running,tone=graphite": {
+      "model": "retroconsole:block/console/fullblock/running_graphite",
+      "y": 270
+    },
+    "facing=north,style=fullblock,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/running_lavender"
+    },
+    "facing=south,style=fullblock,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/running_lavender",
+      "y": 180
+    },
+    "facing=east,style=fullblock,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/running_lavender",
+      "y": 90
+    },
+    "facing=west,style=fullblock,state=running,tone=lavender": {
+      "model": "retroconsole:block/console/fullblock/running_lavender",
+      "y": 270
+    }
   }
 }

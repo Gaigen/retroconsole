@@ -61,9 +61,16 @@ tasks.register('verifyDistribution') {
                         'com/retroconsole/client/ScreenBlockEntityRenderer.class',
                         'com/retroconsole/bridge/LibretroCore.class',
                         'pack.mcmeta',
+                        'assets/retroconsole/textures/block/retro_console_atlas.png',
+                        'assets/retroconsole/blockstates/retro_console.json',
                         'natives/libheadless_gl.dll',
                         'natives/libheadless_gl.so'
                 ]
+                ['classic', 'compact', 'hifi', 'legacy', 'fullblock'].each { style ->
+                    ['off', 'standby', 'running'].each { state ->
+                        required.add("assets/retroconsole/models/block/console/${style}/${state}.json")
+                    }
+                }
                 ['retro_console', 'screen', 'gamepad'].each { item ->
                     required.addAll([
                             "assets/retroconsole/items/${item}.json",

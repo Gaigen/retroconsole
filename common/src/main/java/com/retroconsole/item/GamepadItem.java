@@ -2,6 +2,8 @@ package com.retroconsole.item;
 
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.reg.ModItems;
+import com.retroconsole.style.PadDesign;
+import com.retroconsole.style.RetroTone;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
@@ -12,16 +14,19 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.component.CustomModelData;
 import net.minecraft.world.item.component.TooltipDisplay;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -37,6 +42,33 @@ public class GamepadItem extends Item {
 
     public GamepadItem(Properties properties) {
         super(properties);
+    }
+
+    /** Silhouettes times tones: the stack's {@code custom_model_data} picks one model. */
+    private static final int LOOKS = PadDesign.values().length * RetroTone.values().length;
+
+    public static PadDesign designOf(ItemStack stack) {
+        PadDesign[] designs = PadDesign.values();
+        return designs[Math.min(look(stack) / RetroTone.values().length, designs.length - 1)];
+    }
+
+    public static RetroTone toneOf(ItemStack stack) {
+        RetroTone[] tones = RetroTone.values();
+        return tones[look(stack) % tones.length];
+    }
+
+    private static int look(ItemStack stack) {
+        CustomModelData data = stack.get(DataComponents.CUSTOM_MODEL_DATA);
+        Float index = data != null ? data.getFloat(0) : null;
+        if (index == null) return 0;
+        return Math.max(0, Math.min(LOOKS - 1, Math.round(index)));
+    }
+
+    /** Restyles the pad in place; the item id, link and behaviour stay the same. */
+    public static void setLook(ItemStack stack, PadDesign design, RetroTone tone) {
+        int index = design.ordinal() * RetroTone.values().length + tone.ordinal();
+        stack.set(DataComponents.CUSTOM_MODEL_DATA,
+                new CustomModelData(List.of((float) index), List.of(), List.of(), List.of()));
     }
 
     public static boolean isGamepad(ItemStack stack) {
@@ -112,7 +144,10 @@ public class GamepadItem extends Item {
     public InteractionResult use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
         if (player.isShiftKeyDown()) {
-            return InteractionResult.PASS;
+            // Restyle in place: a dye in the other hand paints, otherwise the
+            // silhouette cycles. Link and play stay on the plain right-click.
+            restyle(level, player, stack, hand);
+            return level.isClientSide() ? InteractionResult.SUCCESS : InteractionResult.SUCCESS_SERVER;
         }
 
         BlockPos linkedPos = resolveConsolePos(level, player, stack);
@@ -158,9 +193,32 @@ public class GamepadItem extends Item {
         return null;
     }
 
+    /** Paints with a dye in the other hand, or cycles the silhouette without one. */
+    private static void restyle(Level level, Player player, ItemStack stack, InteractionHand hand) {
+        InteractionHand other = hand == InteractionHand.MAIN_HAND
+                ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        DyeColor dye = player.getItemInHand(other).get(DataComponents.DYE);
+        RetroTone painted = dye != null ? RetroTone.ofDye(dye) : null;
+        PadDesign design = designOf(stack);
+        if (painted != null) {
+            setLook(stack, design, painted);
+        } else {
+            setLook(stack, design.next(), toneOf(stack));
+        }
+        if (level.isClientSide()) {
+            PadDesign shown = designOf(stack);
+            player.sendOverlayMessage(Component.translatable("retroconsole.gamepad.restyled",
+                    Component.translatable("retroconsole.pad.design." + shown.getSerializedName()),
+                    Component.translatable(toneOf(stack).translationKey())));
+        }
+    }
+
     @Override
     public void appendHoverText(ItemStack stack, Item.TooltipContext context, TooltipDisplay display,
                                 Consumer<Component> tooltip, TooltipFlag flag) {
+        tooltip.accept(Component.translatable("retroconsole.gamepad.tooltip.style",
+                Component.translatable("retroconsole.pad.design." + designOf(stack).getSerializedName()),
+                Component.translatable(toneOf(stack).translationKey())));
         BlockPos linked = getLinkedConsolePos(stack);
         if (linked != null) {
             tooltip.accept(Component.translatable("retroconsole.gamepad.tooltip.linked",
@@ -169,6 +227,8 @@ public class GamepadItem extends Item {
             tooltip.accept(Component.translatable("retroconsole.gamepad.tooltip.unlinked"));
         }
         tooltip.accept(Component.translatable("retroconsole.gamepad.tooltip.hint"));
+        tooltip.accept(Component.translatable("retroconsole.gamepad.tooltip.restyle")
+                .withStyle(ChatFormatting.DARK_GRAY));
 
         if (Minecraft.getInstance().hasAltDown()) {
             tooltip.accept(Component.literal("For d_aranda, who saw the potential before anyone else.")

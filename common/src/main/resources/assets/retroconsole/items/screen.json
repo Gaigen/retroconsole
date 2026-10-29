@@ -1,6 +1,41 @@
 {
   "model": {
-    "type": "minecraft:model",
-    "model": "retroconsole:item/screen"
+    "type": "minecraft:select",
+    "property": "minecraft:block_state",
+    "block_state_property": "design",
+    "cases": [
+      {
+        "when": "studio",
+        "model": {
+          "type": "minecraft:model",
+          "model": "retroconsole:block/screen/studio_1x1"
+        }
+      },
+      {
+        "when": "wall",
+        "model": {
+          "type": "minecraft:model",
+          "model": "retroconsole:block/screen/wall_1x1"
+        }
+      },
+      {
+        "when": "edge",
+        "model": {
+          "type": "minecraft:model",
+          "model": "retroconsole:block/screen/edge_1x1"
+        }
+      },
+      {
+        "when": "solid",
+        "model": {
+          "type": "minecraft:model",
+          "model": "retroconsole:block/screen/solid_1x1"
+        }
+      }
+    ],
+    "fallback": {
+      "type": "minecraft:model",
+      "model": "retroconsole:item/screen"
+    }
   }
 }

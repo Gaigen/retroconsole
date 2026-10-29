@@ -1,0 +1,7 @@
+{
+  "credit": "Console chassis finish (graphite); wraps block/console/legacy/standby.",
+  "parent": "retroconsole:block/console/legacy/standby",
+  "textures": {
+    "atlas": "retroconsole:block/retro_console_atlas_graphite"
+  }
+}

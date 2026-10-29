@@ -6,7 +6,17 @@
       "entries": [
         {
           "type": "minecraft:item",
-          "name": "retroconsole:retro_console"
+          "name": "retroconsole:retro_console",
+          "functions": [
+            {
+              "function": "minecraft:copy_state",
+              "block": "retroconsole:retro_console",
+              "properties": [
+                "style",
+                "tone"
+              ]
+            }
+          ]
         }
       ],
       "conditions": [
