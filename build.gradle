@@ -74,7 +74,6 @@ tasks.register('verifyDistribution') {
                 ['retro_console', 'screen', 'gamepad'].each { item ->
                     required.addAll([
                             "assets/retroconsole/items/${item}.json",
-                            "assets/retroconsole/models/item/${item}.json",
                             "data/retroconsole/recipe/${item}.json"
                     ])
                 }
@@ -85,6 +84,72 @@ tasks.register('verifyDistribution') {
                 required.each { path ->
                     if (zip.getEntry(path.toString()) == null) {
                         throw new GradleException("${artifact.name} is missing ${path}")
+                    }
+                }
+
+                // Every model the item/blockstate definitions point at must be in the jar,
+                // and so must every parent and texture along that chain. 0.3.1 renamed and
+                // generated most model files, so this is what keeps a rename from shipping.
+                def resolve = { Object ref, String kind ->
+                    if (!(ref instanceof String)) return null
+                    String s = (String) ref
+                    if (s.startsWith('#')) return null
+                    if (!s.contains(':')) s = "retroconsole:${s}"
+                    if (!s.startsWith('retroconsole:')) return null
+                    String rest = s.substring('retroconsole:'.length())
+                    return kind == 'model' ? "assets/retroconsole/models/${rest}.json"
+                                          : "assets/retroconsole/textures/${rest}.png"
+                }
+                def modelRefs = new LinkedHashSet<String>()
+                Closure walk
+                walk = { Object node ->
+                    if (node instanceof Map) {
+                        node.each { k, v ->
+                            if (k == 'model' && v instanceof String) modelRefs.add((String) v)
+                            else walk(v)
+                        }
+                    } else if (node instanceof List) {
+                        node.each { walk(it) }
+                    }
+                }
+                zip.entries().findAll { e ->
+                    (e.name.startsWith('assets/retroconsole/items/')
+                            || e.name.startsWith('assets/retroconsole/blockstates/'))
+                            && e.name.endsWith('.json')
+                }.each { e ->
+                    walk(zip.getInputStream(e).withCloseable { new groovy.json.JsonSlurper().parse(it) })
+                }
+                def pendingModels = new ArrayDeque<String>()
+                modelRefs.each { r ->
+                    def resolved = resolve(r, 'model')
+                    if (resolved != null) pendingModels.add(resolved)
+                }
+                def resolvedModels = new LinkedHashSet<String>()
+                while (!pendingModels.isEmpty()) {
+                    String path = pendingModels.poll()
+                    if (!resolvedModels.add(path)) continue
+                    def modelEntry = zip.getEntry(path)
+                    if (modelEntry == null) {
+                        throw new GradleException("${artifact.name} is missing ${path} " +
+                                "(referenced by a definition, a parent or another model)")
+                    }
+                    def model = zip.getInputStream(modelEntry).withCloseable {
+                        new groovy.json.JsonSlurper().parse(it)
+                    }
+                    if (!(model instanceof Map)) continue
+                    if (model.parent instanceof String) {
+                        def parent = resolve(model.parent, 'model')
+                        if (parent != null) pendingModels.add(parent)
+                    }
+                    if (model.textures instanceof Map) {
+                        model.textures.values().each { tex ->
+                            if (!(tex instanceof String)) return
+                            def texturePath = resolve(tex, 'texture')
+                            if (texturePath != null && zip.getEntry(texturePath) == null) {
+                                throw new GradleException("${artifact.name} is missing ${texturePath} " +
+                                        "(texture of ${path})")
+                            }
+                        }
                     }
                 }
                 def foreignMetadata = loader == 'fabric' ? 'META-INF/neoforge.mods.toml' : 'fabric.mod.json'
@@ -100,7 +165,8 @@ tasks.register('verifyDistribution') {
                         throw new GradleException("${artifact.name} has invalid Fabric metadata")
                     }
                 }
-                logger.lifecycle("Verified ${artifact.name}: ${required.size()} required entries")
+                logger.lifecycle("Verified ${artifact.name}: ${required.size()} required entries, " +
+                        "${resolvedModels.size()} models resolved")
             }
         }
     }
