@@ -100,9 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Read mod version
+      - name: Read version metadata
         id: version
-        run: echo "mod_version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "mod_version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "minecraft_version=$(grep '^minecraft_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
       - name: Collect jars
         uses: actions/download-artifact@v4
@@ -114,6 +116,6 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: RetroConsole ${{ steps.version.outputs.mod_version }}
+          name: RetroConsole ${{ steps.version.outputs.mod_version }} (${{ steps.version.outputs.minecraft_version }})
           files: jars/retroconsole-*.jar
           generate_release_notes: true
