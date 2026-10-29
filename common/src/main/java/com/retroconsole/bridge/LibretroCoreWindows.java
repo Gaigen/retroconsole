@@ -252,24 +252,41 @@ public class LibretroCoreWindows extends LibretroCore {
     // the Windows path used to overwrite the field with a hardcoded value.
     private boolean hwBottomLeftOrigin = true;
 
-    // mkxp-z's retro build aliases GraphicsPrivate::winSize to scRes, so a game
-    // that scales its *window* (Pokémon Essentials: Graphics.scale = 1.5) raises
-    // the announced canvas while the screen buffers it blits from keep the real
-    // size. glBlitFramebuffer then reads past the source texture and the surplus
-    // canvas repeats the last row and column — the picture smear. Growth is
-    // therefore probed instead of trusted: retroReal* is the size the core
-    // actually fills, retroCanvas* the scaled canvas it announced, retroProbe*
-    // the candidate screen a probe is currently testing.
-    private int retroRealW = -1;
-    private int retroRealH = -1;
-    private int retroCanvasW = -1;
-    private int retroCanvasH = -1;
-    private int retroProbeW = -1;
-    private int retroProbeH = -1;
-    private int retroProbeFramesLeft;
-    // Long enough to cover the boot window and an auto-loaded save state: the
-    // core can restore its screen size seconds after announcing the canvas.
-    private static final int RETRO_PROBE_FRAMES = 600;
+    // mkxp-z's retro build aliases GraphicsPrivate::winSize to scRes, which turns
+    // every "window" call into a screen announcement:
+    //
+    //   Graphics.resize_screen(w, h)   reallocates the screen, sets
+    //                                  glState.scissorBox to w x h, then announces.
+    //   Graphics.resize_window(w, h)   only mutates winSize (== scRes), announces.
+    //   Graphics.scale = f             == resize_window(scRes * f); this is what
+    //                                  Pokémon Essentials uses for its Screen Size
+    //                                  option (S/M/L/XL via pbSetResizeFactor).
+    //
+    // The second group announces a canvas the core never renders into: the retro
+    // blit then reads past a screen buffer that kept the old size, and the surplus
+    // comes out as a repeat-of-last-row-and-column smear — or, once the render
+    // target has already grown, as a flat remainder with the picture stuck in a
+    // corner.
+    //
+    // So an announcement is never applied on its own. retroBase* is the size the
+    // core really owns; any different canvas is *probed*, and the core's own
+    // scissor box is the proof of which path it took — only resize_screen() leaves
+    // a box as large as the announcement. A probe that never sees that proof is a
+    // scaled window and is ignored, which also keeps repeated Screen Size changes
+    // from compounding (512 -> 768, then 768 x 1.5 = 1152, then 2304, …).
+    private int retroBaseW = -1;
+    private int retroBaseH = -1;
+    /** Canvas currently being verified against the core's scissor box (0 = none). */
+    private int retroProbeW;
+    private int retroProbeH;
+    private int retroProbeFrames;
+    /** Canvas size the last "ignoring" line was logged for (log once per size). */
+    private int retroRejectW = -1;
+    private int retroRejectH = -1;
+    /** A probe is settled this many processed frames after the announcement. */
+    private static final int RETRO_PROBE_FRAMES = 6;
+    /** Never probe a canvas more than this many times the base in either axis. */
+    private static final int RETRO_GROWTH_LIMIT = 4;
 
     /**
      * Latched core-runtime exit. mkxp-z ends its sandbox from inside retro_run()
@@ -525,9 +542,10 @@ public class LibretroCoreWindows extends LibretroCore {
         hwReadbackBuf = null;
         hwReadbackCap = 0;
         hwReadbackInts = new int[0];
-        retroRealW = retroRealH = retroCanvasW = retroCanvasH = -1;
-        retroProbeW = retroProbeH = -1;
-        retroProbeFramesLeft = 0;
+        retroBaseW = retroBaseH = -1;
+        retroProbeW = retroProbeH = 0;
+        retroProbeFrames = 0;
+        retroRejectW = retroRejectH = -1;
     }
 
     /** context_destroy while core is still initialized — must run before retro_deinit. */
@@ -831,10 +849,13 @@ public class LibretroCoreWindows extends LibretroCore {
                 if (!hwFb && frameBuffer.length != len) frameBuffer = new int[len];
                 int[] dst = frameBuffer;
                 if (hwFb) {
-                    // A scaled-window canvas is not a bigger picture (see
-                    // isScaledWindowCanvas): publish the size the core fills.
-                    int fw = retroRealW > 0 ? Math.min(w, retroRealW) : w;
-                    int fh = retroRealH > 0 ? Math.min(h, retroRealH) : h;
+                    // A probed or refused canvas is not a bigger picture (see
+                    // applyGeometry): publish the size the core really renders at.
+                    int fw = w, fh = h;
+                    if (retroBaseW > 0) {
+                        fw = retroProbeW > 0 ? retroBaseW : Math.min(w, retroBaseW);
+                        fh = retroProbeH > 0 ? retroBaseH : Math.min(h, retroBaseH);
+                    }
                     if (verboseLogs() && (fw != hwFrameW || fh != hwFrameH))
                         LOGGER.debug("[geo] video_cb {}x{} -> {}x{}", hwFrameW, hwFrameH, fw, fh);
                     hwFrameW = fw;
@@ -1136,16 +1157,8 @@ public class LibretroCoreWindows extends LibretroCore {
                     if (w > 0 && h > 0) {
                         this.layoutWidth = w;
                         this.layoutHeight = h;
-                        this.width = w;
-                        this.height = h;
                         LOGGER.info("Core set geometry: {}x{}", w, h);
-                        if (hwRenderActive) resizeHwFramebuffer(w, h);
-                        if (retroRealW > 0 && (w > retroRealW || h > retroRealH)) {
-                            // Scaled-window canvas (see isScaledWindowCanvas):
-                            // the frames we publish stay at the real screen size.
-                            this.width = retroRealW;
-                            this.height = retroRealH;
-                        }
+                        applyGeometry(w, h);
                     }
                 }
                 return true;
@@ -1335,6 +1348,23 @@ public class LibretroCoreWindows extends LibretroCore {
                 return false;
             case LibretroEnvironment.SET_FASTFORWARDING_OVERRIDE:
                 return true;
+            case 50: {
+                // GET_TARGET_REFRESH_RATE — mkxp-z adopts this as av_info.timing.fps
+                // and otherwise hardcodes 60, which then fights the pacing the
+                // emulator thread actually runs at.
+                if (data == null) return false;
+                data.setFloat(0, (float) (timingFps > 1.0 && timingFps < 1000.0 ? timingFps : 60.0));
+                return true;
+            }
+            case 81: {
+                // GET_TARGET_SAMPLE_RATE (mkxp-z specific) — the rate we play at, so
+                // the core resamples its synthesised audio to it. Declining made it
+                // fall back to its own SYNTH_SAMPLERATE (44100/48000 depending on
+                // the build) while av_info advertised that same fallback back at us.
+                if (data == null) return false;
+                data.setInt(0, (int) Math.round(audioSampleRate));
+                return true;
+            }
             case 54:
             case 69:
             case 0x10030:
@@ -1772,7 +1802,6 @@ public class LibretroCoreWindows extends LibretroCore {
 
     private void resizeHwFramebuffer(int w, int h) {
         if (!headlessGlReady || w <= 0 || h <= 0) return;
-        if (isScaledWindowCanvas(w, h)) return;
         try {
             if (headlessGl().hlg_make_current() == 0) return;
             if (w != hwPbufW || h != hwPbufH) {
@@ -1787,96 +1816,84 @@ public class LibretroCoreWindows extends LibretroCore {
     }
 
     /**
-     * mkxp-z announces a scaled *window* as the canvas (retro builds alias
-     * {@code GraphicsPrivate::winSize} to {@code scRes}) while still drawing into
-     * the screen buffers of the real resolution, so the surplus canvas comes out
-     * as a clamp-to-edge smear. Growth beyond what the core fills is therefore
-     * probed first — {@link #probeScaledWindow} keeps it only if the frame really
-     * reaches the far edge.
-     *
-     * @return true when the announcement is a scaled window and must be ignored
+     * Reconcile an announced canvas with the size the core really renders at.
+     * See the {@code retroBase*} field comment for why mkxp-z needs this at all.
      */
-    private boolean isScaledWindowCanvas(int w, int h) {
-        if (!isMkxpzCore()) return false;
-        if (retroRealW > 0) {
-            if (w <= retroRealW && h <= retroRealH) {
-                // Cannot exceed the size the core fills: a real (smaller) screen.
-                retroRealW = retroRealH = retroCanvasW = retroCanvasH = -1;
-                return false;
-            }
-            if (w <= retroCanvasW && h <= retroCanvasH) return true;  // same scaled canvas
-        }
-        if (hwPbufW > 0 && hwPbufH > 0 && (w > hwPbufW || h > hwPbufH)) {
-            retroProbeW = hwPbufW;
-            retroProbeH = hwPbufH;
-            retroProbeFramesLeft = RETRO_PROBE_FRAMES;
-            retroCanvasW = w;
-            retroCanvasH = h;
-            LOGGER.info("[geo] probing canvas {}x{} against the {}x{} the core fills",
-                    w, h, retroProbeW, retroProbeH);
-        }
-        return false;
-    }
-
-    /**
-     * Settles a probe on the freshly captured frame: everything right of the
-     * candidate width and below its height repeating the border pixel means the
-     * blit read past its source, i.e. the canvas is only a scaled window. The
-     * render target then drops back to the size the core really fills.
-     */
-    private void probeScaledWindow(int[] px, int w, int h) {
-        if (retroProbeFramesLeft <= 0 || retroProbeW <= 0 || retroProbeH <= 0) return;
-        if (isClampBand(px, w, h, retroProbeW, retroProbeH)) {
-            retroRealW = retroProbeW;
-            retroRealH = retroProbeH;
-            retroProbeFramesLeft = 0;
-            LOGGER.info("mkxp-z canvas {}x{} is a scaled {}x{} screen (clamp-to-edge band) "
-                            + "— keeping the render target at {}x{}",
-                    w, h, retroRealW, retroRealH, retroRealW, retroRealH);
-            try {
-                // Direct resize: resizeHwFramebuffer() would read the pin as a
-                // shrinking real screen and drop it again.
-                headlessGl().hlg_resize(retroRealW, retroRealH);
-                hwPbufW = retroRealW;
-                hwPbufH = retroRealH;
-            } catch (Throwable t) {
-                LOGGER.warn("Could not shrink the HW canvas to {}x{}: {}",
-                        retroRealW, retroRealH, t.getMessage());
-            }
+    private void applyGeometry(int w, int h) {
+        if (!isMkxpzCore()) {
+            // Every other core draws exactly what it announces.
+            this.width = w;
+            this.height = h;
+            if (hwRenderActive) resizeHwFramebuffer(w, h);
             return;
         }
-        if (--retroProbeFramesLeft == 0) {
-            retroRealW = retroRealH = -1;
-            retroProbeW = retroProbeH = -1;
-            LOGGER.info("mkxp-z canvas {}x{} is filled to the edge — keeping it", w, h);
+        if (retroBaseW <= 0 || retroBaseH <= 0) {
+            // The first geometry is the screen the game renders at: the av_info
+            // placeholder only sized an FBO nothing had drawn into yet.
+            adoptBase(w, h, "first geometry");
+            return;
+        }
+        if (w == retroBaseW && h == retroBaseH) {
+            // A new canvas cycle starts at the base. Do not retain an old
+            // rejection/probe when a later genuine resize reuses its dimensions.
+            retroProbeW = retroProbeH = 0;
+            retroProbeFrames = 0;
+            retroRejectW = retroRejectH = -1;
+            return;
+        }
+        if (w == retroRejectW && h == retroRejectH) return;   // already refused
+        if (w > retroBaseW * RETRO_GROWTH_LIMIT || h > retroBaseH * RETRO_GROWTH_LIMIT) {
+            refuseCanvas(w, h, "over " + RETRO_GROWTH_LIMIT + "x the base");
+            return;
+        }
+        retroProbeW = w;
+        retroProbeH = h;
+        retroProbeFrames = 0;
+        LOGGER.info("[geo] canvas {}x{} probed (core owns {}x{})",
+                w, h, retroBaseW, retroBaseH);
+    }
+
+    private void adoptBase(int w, int h, String why) {
+        retroBaseW = w;
+        retroBaseH = h;
+        retroProbeW = retroProbeH = 0;
+        retroProbeFrames = 0;
+        retroRejectW = retroRejectH = -1;
+        this.width = w;
+        this.height = h;
+        if (hwRenderActive) resizeHwFramebuffer(w, h);
+        LOGGER.info("[geo] base {}x{} ({})", w, h, why);
+    }
+
+    private void refuseCanvas(int w, int h, String why) {
+        retroProbeW = retroProbeH = 0;
+        retroProbeFrames = 0;
+        if (w != retroRejectW || h != retroRejectH) {
+            retroRejectW = w;
+            retroRejectH = h;
+            LOGGER.info("[geo] canvas {}x{} ignored — the core still owns {}x{} ({})",
+                    w, h, retroBaseW, retroBaseH, why);
         }
     }
 
     /**
-     * Clamp-to-edge signature of a blit whose source rect is bigger than the
-     * texture it reads from: everything right of {@code cw} repeats the pixel on
-     * that border and everything below {@code ch} repeats that row. Sampled — the
-     * probe runs for seconds, so it must not cost a full-frame scan per frame.
+     * Settle a pending canvas probe against the core's own GL state. Only
+     * {@code Graphics.resize_screen()} leaves a scissor box as large as the
+     * announcement; a scaled window (resize_window / Graphics.scale) leaves the box
+     * at the screen size it never changed, so a frame whose box never matches the
+     * probe is a scaled window. A few frames are sampled instead of one so that a
+     * game clipping with the scissor box is not mistaken for a resize.
      */
-    private static boolean isClampBand(int[] px, int w, int h, int cw, int ch) {
-        if (cw <= 0 || ch <= 0 || cw >= w || ch >= h) return false;
-        int rowStep = Math.max(1, h / 8);
-        for (int y = 0; y < h; y += rowStep) {
-            int row = y * w;
-            int edge = px[row + cw - 1];
-            for (int x = cw; x < w; x += 4) {
-                if (px[row + x] != edge) return false;
-            }
+    private void verifyCanvasProbe() {
+        if (retroProbeW <= 0 || retroProbeH <= 0) return;
+        int pw = retroProbeW, ph = retroProbeH;
+        // hlg_capture_info: out[14..17] = scissor box the core left behind.
+        int[] cap = captureInfo();
+        if (cap[16] == pw && cap[17] == ph) {
+            adoptBase(pw, ph, "the core resized its screen");
+        } else if (++retroProbeFrames >= RETRO_PROBE_FRAMES) {
+            refuseCanvas(pw, ph, "the core kept its screen");
         }
-        int edgeRow = (ch - 1) * w;
-        int bandStep = Math.max(1, (h - ch) / 8);
-        for (int y = ch; y < h; y += bandStep) {
-            int row = y * w;
-            for (int x = 0; x < w; x += 4) {
-                if (px[row + x] != px[edgeRow + x]) return false;
-            }
-        }
-        return true;
     }
 
     /** Prefer SET_GEOMETRY layout for Citra; ignore inflated max_* caps elsewhere. */
@@ -2197,7 +2214,6 @@ public class LibretroCoreWindows extends LibretroCore {
             // what the DLL reads). A top-left core already stores its framebuffer
             // screen-top-first, so undo the flip for those.
             if (!hwBottomLeftOrigin) flipRows(hwReadbackInts, aw, ah);
-            probeScaledWindow(hwReadbackInts, aw, ah);
             diagFrame(hwReadbackInts, aw, ah, vp);
             synchronized (frameLock) {
                 // Swap instead of copy: the sender copies out of frameBuffer under
@@ -2211,6 +2227,9 @@ public class LibretroCoreWindows extends LibretroCore {
                 newFrame = true;
                 zeroSizeFrames = 0;
             }
+            // A canvas announced mid-frame is only real once the core proves it
+            // resized (see applyGeometry); settle it after the frame is published.
+            verifyCanvasProbe();
         } catch (Throwable t) {
             LOGGER.warn("HW readback failed: {}", t.getMessage());
         }
@@ -2256,9 +2275,14 @@ public class LibretroCoreWindows extends LibretroCore {
             if (w - 1 - x < colRep) colRep = w - 1 - x;
         }
         int[] cap = captureInfo();
-        // Expected on a healthy frame: the picture reaches the last row and the
-        // right edge is not a repeated column. Anything else keeps logging.
-        if (h - firstRep <= 2 && colRep <= 8 && diagBaselineLogged) return;
+        // Expected on a healthy frame: the picture reaches the last row and the right
+        // edge is not a repeated strip. The thresholds are generous on purpose — a UI
+        // panel touches the edge with one colour for dozens of pixels legitimately
+        // (Fire Ash: 63), while a clamp-to-edge blit leaves a *band* behind (34-50% of
+        // the height and half the width). Being too strict here made the diag log a
+        // line every 5 s forever, burying real warnings.
+        if (h - firstRep <= Math.max(2, h / 100) && colRep <= Math.max(8, w / 4)
+                && diagBaselineLogged) return;
         diagBaselineLogged = true;
         LOGGER.info("[diag-frame] {}x{} vp={},{},{},{} read={}x{} canvas={}x{} rb={}x{} "
                         + "att={}x{}(qok={},fbo={},qmiss={},heal={}) scissor={}({},{},{},{}) "

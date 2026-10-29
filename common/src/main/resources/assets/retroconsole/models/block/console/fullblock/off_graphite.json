@@ -1,0 +1,7 @@
+{
+  "credit": "Console chassis finish (graphite); wraps block/console/fullblock/off.",
+  "parent": "retroconsole:block/console/fullblock/off",
+  "textures": {
+    "atlas": "retroconsole:block/retro_console_atlas_graphite"
+  }
+}

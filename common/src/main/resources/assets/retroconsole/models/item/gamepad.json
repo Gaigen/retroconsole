@@ -1,6 +1,53 @@
 {
-  "parent": "minecraft:item/generated",
-  "textures": {
-    "layer0": "retroconsole:item/gamepad"
-  }
+  "parent": "retroconsole:item/gamepad/soft_cream",
+  "overrides": [
+    {
+      "predicate": {
+        "custom_model_data": 1
+      },
+      "model": "retroconsole:item/gamepad/soft_graphite"
+    },
+    {
+      "predicate": {
+        "custom_model_data": 2
+      },
+      "model": "retroconsole:item/gamepad/soft_lavender"
+    },
+    {
+      "predicate": {
+        "custom_model_data": 3
+      },
+      "model": "retroconsole:item/gamepad/brick_cream"
+    },
+    {
+      "predicate": {
+        "custom_model_data": 4
+      },
+      "model": "retroconsole:item/gamepad/brick_graphite"
+    },
+    {
+      "predicate": {
+        "custom_model_data": 5
+      },
+      "model": "retroconsole:item/gamepad/brick_lavender"
+    },
+    {
+      "predicate": {
+        "custom_model_data": 6
+      },
+      "model": "retroconsole:item/gamepad/grip_cream"
+    },
+    {
+      "predicate": {
+        "custom_model_data": 7
+      },
+      "model": "retroconsole:item/gamepad/grip_graphite"
+    },
+    {
+      "predicate": {
+        "custom_model_data": 8
+      },
+      "model": "retroconsole:item/gamepad/grip_lavender"
+    }
+  ]
 }

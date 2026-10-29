@@ -30,30 +30,25 @@
   "key.retroconsole.analog_right_down": "Right Analog Down",
   "key.retroconsole.analog_right_left": "Right Analog Left",
   "key.retroconsole.analog_right_right": "Right Analog Right",
-
   "key.retroconsole.btn_mic": "Microphone",
   "key.retroconsole.btn_layout": "Screen Layout",
   "key.retroconsole.btn_lid": "Close Lid",
   "key.retroconsole.btn_cursor_touch": "Touch Cursor",
   "key.retroconsole.virtual_stylus": "Virtual Stylus",
-
   "retroconsole.gui.title": "Retro Console",
   "retroconsole.gui.search": "Search",
   "retroconsole.gui.search.hint": "Search…",
   "retroconsole.gui.folder": "Folder",
   "retroconsole.gui.settings": "⚙",
   "retroconsole.gui.settings.tooltip": "Settings",
-
   "retroconsole.configuration.title": "Retro Console",
   "retroconsole.configuration.common": "Common (paths)",
   "retroconsole.configuration.server": "Server (streaming / video)",
-
   "retroconsole.configuration.paths": "Paths",
   "retroconsole.configuration.coresDir": "Cores directory",
   "retroconsole.configuration.romsDir": "ROMs directory",
   "retroconsole.configuration.systemDir": "System / BIOS directory",
   "retroconsole.configuration.saveDir": "Saves directory",
-
   "retroconsole.configuration.streaming": "Streaming",
   "retroconsole.configuration.videoDistance": "Video distance (blocks)",
   "retroconsole.configuration.audioDistance": "Audio distance (blocks)",
@@ -61,13 +56,11 @@
   "retroconsole.configuration.controlDistance": "Control distance (blocks)",
   "retroconsole.configuration.notifyDistance": "Stop notify distance (blocks)",
   "retroconsole.configuration.worldMaxWidth": "In-world frame max width",
-
   "retroconsole.configuration.limits": "Limits",
   "retroconsole.configuration.maxCoreSlots": "Max core module slots (0 = unlimited)",
   "retroconsole.configuration.maxPcsx2Sessions": "Max PS2 sessions",
   "retroconsole.configuration.maxScreenCluster": "Max screen cluster size",
   "retroconsole.configuration.batteryAutosaveSeconds": "Battery autosave interval (sec)",
-
   "retroconsole.configuration.video": "Video quality",
   "retroconsole.configuration.preset": "Quality preset",
   "retroconsole.configuration.flycastInternalResolution": "Flycast internal resolution",
@@ -91,7 +84,6 @@
   "retroconsole.configuration.preset.performance": "Performance",
   "retroconsole.configuration.preset.balanced": "Balanced",
   "retroconsole.configuration.preset.quality": "Quality",
-
   "retroconsole.error.core_slot_cap": "Core slot limit (%s) reached for %s — stop another console or raise limits.maxCoreSlots",
   "retroconsole.error.core_slot_copy": "Cannot copy core module for %s (disk full or permissions)",
   "retroconsole.error.pcsx2_session_cap": "PS2 session limit (%s) reached — stop another PS2 console or raise limits.maxPcsx2Sessions",
@@ -100,7 +92,6 @@
   "retroconsole.error.3ds_disabled": "Nintendo 3DS (Citra) is disabled in server config",
   "retroconsole.error.core_stopped": "%s stopped on its own: %s",
   "retroconsole.error.core_stopped_rtp": "%s stopped on its own: %s. This game needs the RPG Maker run-time package (RTP) \"%s\" - put its Audio, Graphics and Data folders into %s",
-
   "retroconsole.gui.core_picker": "Core…",
   "retroconsole.gui.start": "▶ Launch",
   "retroconsole.gui.loading": "Loading library from server…",
@@ -111,24 +102,19 @@
   "retroconsole.gui.starting_hint": "Booting the core on the server",
   "retroconsole.gui.starting_elapsed": "%ss",
   "retroconsole.gui.starting_slow": "Still loading - check chat if this hangs",
-
   "retroconsole.gui.view.cards": "Consoles",
   "retroconsole.gui.view.list": "List",
   "retroconsole.gui.view.manual": "Manual",
-
   "retroconsole.count.games.one": "game",
   "retroconsole.count.games.few": "games",
   "retroconsole.count.games.many": "games",
   "retroconsole.count.cores.one": "core",
   "retroconsole.count.cores.few": "cores",
   "retroconsole.count.cores.many": "cores",
-
   "retroconsole.tab.all": "All",
   "retroconsole.tab.all_count": "All (%s)",
-
   "retroconsole.system.other.tab": "Other",
   "retroconsole.system.other.full": "Unknown",
-
   "retroconsole.time.minutes": "%s min",
   "retroconsole.time.hours_minutes": "%s h %s min",
   "retroconsole.time.hours": "%s h",
@@ -136,7 +122,6 @@
   "retroconsole.time.yesterday": "yesterday",
   "retroconsole.time.days_ago": "%s d ago",
   "retroconsole.time.months_ago": "%s mo ago",
-
   "retroconsole.empty.library.server": "No ROMs/cores on server — add files to config/retroconsole/ on the server",
   "retroconsole.empty.library.local": "Add cores to cores and games to roms — «Folder» button",
   "retroconsole.empty.tab.server": "No games on server in roms/%s",
@@ -145,27 +130,22 @@
   "retroconsole.empty.popup.local": "Empty. Add games to roms/%s",
   "retroconsole.empty.cores.server": "No cores on server in config/retroconsole/cores",
   "retroconsole.empty.cores.local": "Place cores (.dll/.so) in cores",
-
   "retroconsole.card.no_core": "  §6no core",
   "retroconsole.hero.continue_label": "§8CONTINUE",
   "retroconsole.hero.played": " • played ",
   "retroconsole.hero.save": " §a• save ",
   "retroconsole.hero.hint": "§8click — continue • Shift+click — new game",
-
   "retroconsole.info.save_short": " §a• sav. ",
   "retroconsole.info.pick_core_manual": "§6select core on the left",
   "retroconsole.info.pick_core_list": "§6click «Core…» to choose how to launch",
   "retroconsole.info.hint": "§8Select a game — ↑↓, tabs — ←→, launch — Enter, RMB — favorite",
-
   "retroconsole.popup.close": "§8Esc — close",
   "retroconsole.popup.continue": "§aEnter — continue §8• Shift+Enter — new game §8• ★ RMB • Esc — close",
   "retroconsole.popup.launch": "§aEnter / double-click — launch §8• ★ RMB • Esc — close",
   "retroconsole.popup.pick_core": "§6Enter — pick core §8• Esc — close",
-
   "retroconsole.picker.title": "Launch with: §e%s",
   "retroconsole.picker.scroll": "scroll wheel — scroll",
   "retroconsole.picker.cancel": "§8Esc or click outside — cancel",
-
   "retroconsole.help.server.00": "§e§lHELP",
   "retroconsole.help.server.01": "",
   "retroconsole.help.server.02": "§6Catalog§r — from the server disk (roms/, cores/,",
@@ -180,7 +160,6 @@
   "retroconsole.help.server.11": "",
   "retroconsole.help.server.12": "§8Click or Esc — close",
   "retroconsole.help.server.13": "",
-
   "retroconsole.help.local.00": "§e§lHELP",
   "retroconsole.help.local.01": "",
   "retroconsole.help.local.02": "§6Games§r — in config/retroconsole/roms",
@@ -199,7 +178,6 @@
   "retroconsole.help.local.15": "launch, RMB — favorite ★, ⚠ — wrong folder.",
   "retroconsole.help.local.16": "",
   "retroconsole.help.local.17": "§8Click or Esc — close",
-
   "retroconsole.tv.power_off": "Off",
   "retroconsole.tv.controls": "? Controls",
   "retroconsole.tv.bezel": "Bezel",
@@ -223,7 +201,6 @@
   "retroconsole.tv.hint.sticks": "§e%s/%s/%s/%s§r — %s",
   "retroconsole.tv.capture": "§eClick§r — capture mouse",
   "retroconsole.tv.capture_active": "§eDel§r — release mouse",
-
   "retroconsole.bezel.title": "Letterbox Art",
   "retroconsole.bezel.left": "Left panel image",
   "retroconsole.bezel.right": "Right panel image",
@@ -242,7 +219,6 @@
   "retroconsole.bezel.fit.fit": "Fit",
   "retroconsole.bezel.fit.fill": "Fill",
   "retroconsole.bezel.fit.stretch": "Stretch",
-
   "retroconsole.gamepad.title": "Gamepad",
   "retroconsole.gamepad.hud": "Playing — Esc to stop · F1 for controls",
   "retroconsole.gamepad.hints.footer": "§8F1 — close",
@@ -252,5 +228,29 @@
   "retroconsole.gamepad.too_far": "Too far from console — control stopped",
   "retroconsole.gamepad.tooltip.linked": "Linked to console: %s, %s, %s",
   "retroconsole.gamepad.tooltip.unlinked": "Not linked",
-  "retroconsole.gamepad.tooltip.hint": "Shift+right-click console to link · Right-click to play"
+  "retroconsole.gamepad.tooltip.hint": "Shift+right-click console to link · Right-click to play",
+  "retroconsole.retro_console.tooltip.style": "Shift+right-click a placed console to cycle the chassis",
+  "retroconsole.gamepad.tooltip.style": "Look: %s · %s",
+  "retroconsole.gamepad.restyled": "%s · %s",
+  "retroconsole.gamepad.tooltip.restyle": "Shift+right-click in the air to cycle the shape · hold a dye for the finish",
+  "retroconsole.retro_console.tooltip.tone": "Right-click with a dye to repaint the chassis",
+  "retroconsole.screen.tooltip.style": "Shift+right-click a placed screen to cycle the shell · dye to repaint · it changes the whole screen",
+  "retroconsole.screen.tooltip.mount": "Right-click it with a screen item to fit the shell to the back of the block",
+  "retroconsole.pad.design.soft": "Soft Retro",
+  "retroconsole.pad.design.brick": "Brick",
+  "retroconsole.pad.design.grip": "Grip",
+  "retroconsole.tone.cream": "Cream",
+  "retroconsole.tone.graphite": "Graphite",
+  "retroconsole.tone.lavender": "Lavender",
+  "retroconsole.tone.painted": "Finish: %s",
+  "retroconsole.tone.dye_hint": "Dye: white to cream, gray or black to graphite, purple to lavender",
+  "retroconsole.screen.design.retro": "Retro TV",
+  "retroconsole.screen.design.studio": "Studio",
+  "retroconsole.screen.design.wall": "Wall panel",
+  "retroconsole.screen.design.edge": "Edge",
+  "retroconsole.screen.design.solid": "Solid",
+  "retroconsole.screen.design.changed": "Shell: %s",
+  "retroconsole.screen.mount.front": "front",
+  "retroconsole.screen.mount.back": "back",
+  "retroconsole.screen.mount.changed": "Mounted at the %s"
 }

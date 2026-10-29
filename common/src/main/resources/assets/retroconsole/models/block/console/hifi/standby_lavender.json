@@ -1,0 +1,7 @@
+{
+  "credit": "Console chassis finish (lavender); wraps block/console/hifi/standby.",
+  "parent": "retroconsole:block/console/hifi/standby",
+  "textures": {
+    "atlas": "retroconsole:block/retro_console_atlas_lavender"
+  }
+}

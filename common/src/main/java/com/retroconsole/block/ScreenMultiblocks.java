@@ -4,6 +4,7 @@ import com.retroconsole.config.RetroSettings;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.TickTask;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -32,15 +33,30 @@ public final class ScreenMultiblocks {
 
     private ScreenMultiblocks() {}
 
+    /**
+     * Blocks of the screen the given one belongs to: same plane, facing and
+     * orientation. Used for changes that belong to the whole display — the shell
+     * design, the finish and the mount — so a wall never ends up half-repainted.
+     */
+    public static Set<BlockPos> clusterOf(Level level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        if (!(state.getBlock() instanceof ScreenBlock)) return Set.of(pos);
+        return collectCluster(level, pos, state, rightOf(state), downOf(state));
+    }
+
     /** Отложенная пересборка (после загрузки чанка / из onLoad). */
     public static void scheduleRebuild(ServerLevel level, BlockPos pos) {
         BlockPos target = pos.immutable();
-        level.getServer().execute(() -> {
+        // execute() may run inline on the server thread while setLevel() has
+        // not yet published the BE in LevelChunk. Always enqueue to avoid
+        // recursive getBlockEntity -> setLevel -> rebuild -> getBlockEntity.
+        var server = level.getServer();
+        server.tell(new TickTask(server.getTickCount(), () -> {
             if (level.isLoaded(target)
                     && level.getBlockState(target).getBlock() instanceof ScreenBlock) {
                 rebuildAround(level, target);
             }
-        });
+        }));
     }
 
     /** Пересобрать раздел кластера, содержащего pos. Идемпотентно. */

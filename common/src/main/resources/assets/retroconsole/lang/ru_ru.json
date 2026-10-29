@@ -30,30 +30,25 @@
   "key.retroconsole.analog_right_down": "Правый стик вниз",
   "key.retroconsole.analog_right_left": "Правый стик влево",
   "key.retroconsole.analog_right_right": "Правый стик вправо",
-
   "key.retroconsole.btn_mic": "Микрофон",
   "key.retroconsole.btn_layout": "Раскладка экрана",
   "key.retroconsole.btn_lid": "Закрыть крышку",
   "key.retroconsole.btn_cursor_touch": "Тап стилусом",
   "key.retroconsole.virtual_stylus": "Виртуальный стилус",
-
   "retroconsole.gui.title": "Retro Console",
   "retroconsole.gui.search": "Поиск",
   "retroconsole.gui.search.hint": "Поиск…",
   "retroconsole.gui.folder": "Папка",
   "retroconsole.gui.settings": "⚙",
   "retroconsole.gui.settings.tooltip": "Настройки",
-
   "retroconsole.configuration.title": "Retro Console",
   "retroconsole.configuration.common": "Общие (пути)",
   "retroconsole.configuration.server": "Сервер (стрим / видео)",
-
   "retroconsole.configuration.paths": "Пути",
   "retroconsole.configuration.coresDir": "Папка ядер",
   "retroconsole.configuration.romsDir": "Папка ROM",
   "retroconsole.configuration.systemDir": "Папка system / BIOS",
   "retroconsole.configuration.saveDir": "Папка сохранений",
-
   "retroconsole.configuration.streaming": "Стриминг",
   "retroconsole.configuration.videoDistance": "Дистанция видео (блоки)",
   "retroconsole.configuration.audioDistance": "Дистанция аудио (блоки)",
@@ -61,13 +56,11 @@
   "retroconsole.configuration.controlDistance": "Дистанция управления (блоки)",
   "retroconsole.configuration.notifyDistance": "Дистанция уведомления об остановке",
   "retroconsole.configuration.worldMaxWidth": "Макс. ширина кадра в мире",
-
   "retroconsole.configuration.limits": "Лимиты",
   "retroconsole.configuration.maxCoreSlots": "Макс. слотов ядер (0 = без лимита)",
   "retroconsole.configuration.maxPcsx2Sessions": "Макс. сессий PS2",
   "retroconsole.configuration.maxScreenCluster": "Макс. размер кластера экранов",
   "retroconsole.configuration.batteryAutosaveSeconds": "Интервал автосохранения (сек)",
-
   "retroconsole.configuration.video": "Качество видео",
   "retroconsole.configuration.preset": "Пресет качества",
   "retroconsole.configuration.flycastInternalResolution": "Flycast: внутреннее разрешение",
@@ -89,7 +82,6 @@
   "retroconsole.configuration.preset.performance": "Производительность",
   "retroconsole.configuration.preset.balanced": "Сбалансированный",
   "retroconsole.configuration.preset.quality": "Качество",
-
   "retroconsole.error.core_slot_cap": "Лимит слотов ядер (%s) для %s — остановите другую консоль или увеличьте limits.maxCoreSlots",
   "retroconsole.error.core_slot_copy": "Не удалось скопировать модуль ядра %s (диск или права доступа)",
   "retroconsole.error.pcsx2_session_cap": "Лимит сессий PS2 (%s) — остановите другую PS2 или увеличьте limits.maxPcsx2Sessions",
@@ -98,7 +90,6 @@
   "retroconsole.error.3ds_disabled": "Nintendo 3DS (Citra) отключён в конфиге сервера",
   "retroconsole.error.core_stopped": "%s остановился: %s",
   "retroconsole.error.core_stopped_rtp": "%s остановился: %s. Игре нужен run-time package (RTP) RPG Maker \"%s\" - положите его папки Audio, Graphics и Data в %s",
-
   "retroconsole.gui.core_picker": "Ядро…",
   "retroconsole.gui.start": "▶ Запустить",
   "retroconsole.gui.loading": "Загрузка библиотеки с сервера…",
@@ -109,24 +100,19 @@
   "retroconsole.gui.starting_hint": "Ядро загружается на сервере",
   "retroconsole.gui.starting_elapsed": "%s с",
   "retroconsole.gui.starting_slow": "Всё ещё грузится — если зависло, смотрите чат",
-
   "retroconsole.gui.view.cards": "Консоли",
   "retroconsole.gui.view.list": "Список",
   "retroconsole.gui.view.manual": "Ручной",
-
   "retroconsole.count.games.one": "игра",
   "retroconsole.count.games.few": "игры",
   "retroconsole.count.games.many": "игр",
   "retroconsole.count.cores.one": "ядро",
   "retroconsole.count.cores.few": "ядра",
   "retroconsole.count.cores.many": "ядер",
-
   "retroconsole.tab.all": "Все",
   "retroconsole.tab.all_count": "Все (%s)",
-
   "retroconsole.system.other.tab": "Другое",
   "retroconsole.system.other.full": "Неопознанные",
-
   "retroconsole.time.minutes": "%s мин",
   "retroconsole.time.hours_minutes": "%s ч %s мин",
   "retroconsole.time.hours": "%s ч",
@@ -134,7 +120,6 @@
   "retroconsole.time.yesterday": "вчера",
   "retroconsole.time.days_ago": "%s дн. назад",
   "retroconsole.time.months_ago": "%s мес. назад",
-
   "retroconsole.empty.library.server": "На сервере нет ROM/ядер — положите файлы в config/retroconsole/ на сервере",
   "retroconsole.empty.library.local": "Закиньте ядра в cores и игры в roms — кнопка «Папка»",
   "retroconsole.empty.tab.server": "На сервере нет игр в roms/%s",
@@ -143,27 +128,22 @@
   "retroconsole.empty.popup.local": "Пусто. Закиньте игры в roms/%s",
   "retroconsole.empty.cores.server": "На сервере нет ядер в config/retroconsole/cores",
   "retroconsole.empty.cores.local": "Положите ядра (.dll/.so) в cores",
-
   "retroconsole.card.no_core": "  §6нет ядра",
   "retroconsole.hero.continue_label": "§8ПРОДОЛЖИТЬ",
   "retroconsole.hero.played": " • наиграно ",
   "retroconsole.hero.save": " §a• сохранение ",
   "retroconsole.hero.hint": "§8клик — продолжить • Shift+клик — новая игра",
-
   "retroconsole.info.save_short": " §a• сохр. ",
   "retroconsole.info.pick_core_manual": "§6выберите ядро слева",
   "retroconsole.info.pick_core_list": "§6нажмите «Ядро…» и выберите, чем запускать",
   "retroconsole.info.hint": "§8Выберите игру — ↑↓, вкладки — ←→, запуск — Enter, ПКМ — избранное",
-
   "retroconsole.popup.close": "§8Esc — закрыть",
   "retroconsole.popup.continue": "§aEnter — продолжить §8• Shift+Enter — новая игра §8• ★ ПКМ • Esc — закрыть",
   "retroconsole.popup.launch": "§aEnter / двойной клик — запуск §8• ★ ПКМ • Esc — закрыть",
   "retroconsole.popup.pick_core": "§6Enter — выбрать ядро §8• Esc — закрыть",
-
   "retroconsole.picker.title": "Чем запускать: §e%s",
   "retroconsole.picker.scroll": "колесо — прокрутка",
   "retroconsole.picker.cancel": "§8Esc или клик мимо — отмена",
-
   "retroconsole.help.server.00": "§e§lСПРАВКА",
   "retroconsole.help.server.01": "",
   "retroconsole.help.server.02": "§6Каталог§r — с диска сервера (roms/, cores/,",
@@ -178,7 +158,6 @@
   "retroconsole.help.server.11": "",
   "retroconsole.help.server.12": "§8Клик или Esc — закрыть",
   "retroconsole.help.server.13": "",
-
   "retroconsole.help.local.00": "§e§lСПРАВКА",
   "retroconsole.help.local.01": "",
   "retroconsole.help.local.02": "§6Игры§r — в config/retroconsole/roms",
@@ -197,7 +176,6 @@
   "retroconsole.help.local.15": "запуск, ПКМ — избранное ★, ⚠ — не своя папка.",
   "retroconsole.help.local.16": "",
   "retroconsole.help.local.17": "§8Клик или Esc — закрыть",
-
   "retroconsole.tv.power_off": "Выкл",
   "retroconsole.tv.controls": "? Управление",
   "retroconsole.tv.bezel": "Безель",
@@ -221,7 +199,6 @@
   "retroconsole.tv.hint.sticks": "§e%s/%s/%s/%s§r — %s",
   "retroconsole.tv.capture": "§eКлик§r — захват мыши",
   "retroconsole.tv.capture_active": "§eDel§r — отпустить мышь",
-
   "retroconsole.bezel.title": "Оформление полос",
   "retroconsole.bezel.left": "Картинка слева",
   "retroconsole.bezel.right": "Картинка справа",
@@ -240,7 +217,6 @@
   "retroconsole.bezel.fit.fit": "Вписать",
   "retroconsole.bezel.fit.fill": "Заполнить",
   "retroconsole.bezel.fit.stretch": "Растянуть",
-
   "retroconsole.gamepad.title": "Геймпад",
   "retroconsole.gamepad.hud": "Игра — Esc чтобы выйти · F1 — управление",
   "retroconsole.gamepad.hints.footer": "§8F1 — закрыть",
@@ -250,5 +226,29 @@
   "retroconsole.gamepad.too_far": "Слишком далеко от консоли — управление остановлено",
   "retroconsole.gamepad.tooltip.linked": "Привязан к консоли: %s, %s, %s",
   "retroconsole.gamepad.tooltip.unlinked": "Не привязан",
-  "retroconsole.gamepad.tooltip.hint": "Shift+ПКМ по консоли — привязать · ПКМ — играть"
+  "retroconsole.gamepad.tooltip.hint": "Shift+ПКМ по консоли — привязать · ПКМ — играть",
+  "retroconsole.retro_console.tooltip.style": "Shift+ПКМ по установленной консоли — сменить корпус",
+  "retroconsole.gamepad.tooltip.style": "Вид: %s · %s",
+  "retroconsole.gamepad.restyled": "%s · %s",
+  "retroconsole.gamepad.tooltip.restyle": "Shift+ПКМ в воздухе — сменить форму · с красителем — сменить цвет",
+  "retroconsole.retro_console.tooltip.tone": "ПКМ красителем — перекрасить корпус",
+  "retroconsole.screen.tooltip.style": "Shift+ПКМ по экрану — сменить корпус · красителем — перекрасить · меняется весь экран",
+  "retroconsole.screen.tooltip.mount": "ПКМ предметом экрана — прижать корпус к задней грани блока",
+  "retroconsole.pad.design.soft": "Мягкий ретро",
+  "retroconsole.pad.design.brick": "Кирпич",
+  "retroconsole.pad.design.grip": "С рукоятками",
+  "retroconsole.tone.cream": "Крем",
+  "retroconsole.tone.graphite": "Графит",
+  "retroconsole.tone.lavender": "Лаванда",
+  "retroconsole.tone.painted": "Цвет: %s",
+  "retroconsole.tone.dye_hint": "Краситель: белый — крем, серый или чёрный — графит, фиолетовый — лаванда",
+  "retroconsole.screen.design.retro": "Ретро-телик",
+  "retroconsole.screen.design.studio": "Студия",
+  "retroconsole.screen.design.wall": "Панель",
+  "retroconsole.screen.design.edge": "Безрамочный",
+  "retroconsole.screen.design.solid": "Фулблок",
+  "retroconsole.screen.design.changed": "Корпус: %s",
+  "retroconsole.screen.mount.front": "спереди",
+  "retroconsole.screen.mount.back": "сзади",
+  "retroconsole.screen.mount.changed": "Крепление: %s"
 }

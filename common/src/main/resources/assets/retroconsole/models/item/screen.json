@@ -1,6 +1,29 @@
 {
-  "parent": "minecraft:item/generated",
-  "textures": {
-    "layer0": "retroconsole:block/screen"
-  }
+  "parent": "retroconsole:block/screen/retro_1x1",
+  "overrides": [
+    {
+      "predicate": {
+        "retroconsole:design": 0.25
+      },
+      "model": "retroconsole:block/screen/studio_1x1"
+    },
+    {
+      "predicate": {
+        "retroconsole:design": 0.5
+      },
+      "model": "retroconsole:block/screen/wall_1x1"
+    },
+    {
+      "predicate": {
+        "retroconsole:design": 0.75
+      },
+      "model": "retroconsole:block/screen/edge_1x1"
+    },
+    {
+      "predicate": {
+        "retroconsole:design": 1.0
+      },
+      "model": "retroconsole:block/screen/solid_1x1"
+    }
+  ]
 }

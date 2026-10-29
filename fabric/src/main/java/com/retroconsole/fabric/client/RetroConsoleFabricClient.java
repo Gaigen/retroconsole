@@ -20,6 +20,7 @@ public final class RetroConsoleFabricClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         FabricClientPlatform.init();
+        com.retroconsole.client.ChassisItemModels.register();
         registerKeys();
         FabricClientNetwork.register();
 

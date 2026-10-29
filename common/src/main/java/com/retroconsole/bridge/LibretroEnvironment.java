@@ -67,6 +67,11 @@ public final class LibretroEnvironment {
     public static final int GET_SAVESTATE_CONTEXT            = 72 | EXPERIMENTAL;
     public static final int GET_DEVICE_POWER                 = 77 | EXPERIMENTAL;
 
+    /** {@code float*} — frame rate the frontend paces at; mkxp-z falls back to 60. */
+    public static final int GET_TARGET_REFRESH_RATE          = 50 | EXPERIMENTAL;
+    /** {@code unsigned*} — audio rate the frontend plays at; mkxp-z falls back to SYNTH_SAMPLERATE. */
+    public static final int GET_TARGET_SAMPLE_RATE           = 81 | EXPERIMENTAL;
+
     public static final int RETRO_HW_CONTEXT_OPENGL_CORE = 3;
 
     /** retro_power_state: mains power, no battery to report on. */
@@ -133,6 +138,8 @@ public final class LibretroEnvironment {
             case 36 -> "SET_MEMORY_MAPS";
             case 40 -> "GET_CURRENT_SOFTWARE_FRAMEBUFFER";
             case 51 -> "GET_INPUT_BITMASKS";
+            case 50 -> "GET_TARGET_REFRESH_RATE";
+            case 81 -> "GET_TARGET_SAMPLE_RATE";
             default -> "UNKNOWN(" + cmd + ", base=" + c + ")";
         };
     }

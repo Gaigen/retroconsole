@@ -1,3 +1,17 @@
 {
-  "parent": "retroconsole:block/retro_console"
+  "parent": "retroconsole:block/console/fullblock/standby",
+  "overrides": [
+    {
+      "predicate": {
+        "retroconsole:tone": 0.5
+      },
+      "model": "retroconsole:block/console/fullblock/standby_graphite"
+    },
+    {
+      "predicate": {
+        "retroconsole:tone": 1.0
+      },
+      "model": "retroconsole:block/console/fullblock/standby_lavender"
+    }
+  ]
 }

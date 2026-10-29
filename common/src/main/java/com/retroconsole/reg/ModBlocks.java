@@ -2,7 +2,8 @@ package com.retroconsole.reg;
 
 import com.retroconsole.block.RetroConsoleBlock;
 import com.retroconsole.block.ScreenBlock;
-import net.minecraft.world.item.BlockItem;
+import com.retroconsole.item.ConsoleItem;
+import com.retroconsole.item.ScreenItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -40,9 +41,9 @@ public final class ModBlocks {
                     .isViewBlocking((state, getter, pos) -> false)
     );
 
-    public static final BlockItem RETRO_CONSOLE_ITEM = new BlockItem(RETRO_CONSOLE, new Item.Properties());
+    public static final ConsoleItem RETRO_CONSOLE_ITEM = new ConsoleItem(RETRO_CONSOLE, new Item.Properties());
 
-    public static final BlockItem SCREEN_ITEM = new BlockItem(SCREEN, new Item.Properties());
+    public static final ScreenItem SCREEN_ITEM = new ScreenItem(SCREEN, new Item.Properties());
 
     private ModBlocks() {}
 }

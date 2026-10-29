@@ -13,6 +13,7 @@ public final class NeoForgeClientPlatform {
     private NeoForgeClientPlatform() {}
 
     public static void init() {
+        net.minecraft.client.Minecraft.getInstance().execute(ChassisItemModels::register);
         ConfigAccess.setScreenOpener((minecraft, parent) ->
                 ConfigScreen.open((Minecraft) minecraft, (Screen) parent));
 

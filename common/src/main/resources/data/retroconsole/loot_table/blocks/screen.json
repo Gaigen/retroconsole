@@ -6,7 +6,18 @@
       "entries": [
         {
           "type": "minecraft:item",
-          "name": "retroconsole:screen"
+          "name": "retroconsole:screen",
+          "functions": [
+            {
+              "function": "minecraft:copy_state",
+              "block": "retroconsole:screen",
+              "properties": [
+                "design",
+                "mount",
+                "tone"
+              ]
+            }
+          ]
         }
       ],
       "conditions": [

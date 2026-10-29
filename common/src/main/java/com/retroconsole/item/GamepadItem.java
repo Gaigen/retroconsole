@@ -2,6 +2,9 @@ package com.retroconsole.item;
 
 import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.reg.ModItems;
+import com.retroconsole.style.PadDesign;
+import com.retroconsole.style.RetroTone;
+import net.minecraft.world.item.component.CustomModelData;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
@@ -36,6 +39,33 @@ public class GamepadItem extends Item {
 
     public GamepadItem(Properties properties) {
         super(properties);
+    }
+
+    /** Silhouettes times tones: the stack's {@code custom_model_data} picks one model. */
+    private static final int LOOKS = PadDesign.values().length * RetroTone.values().length;
+
+    public static PadDesign designOf(ItemStack stack) {
+        PadDesign[] designs = PadDesign.values();
+        return designs[Math.min(look(stack) / RetroTone.values().length, designs.length - 1)];
+    }
+
+    public static RetroTone toneOf(ItemStack stack) {
+        RetroTone[] tones = RetroTone.values();
+        return tones[look(stack) % tones.length];
+    }
+
+    private static int look(ItemStack stack) {
+        CustomModelData data = stack.get(DataComponents.CUSTOM_MODEL_DATA);
+        Integer index = data != null ? data.value() : null;
+        if (index == null) return 0;
+        return Math.max(0, Math.min(LOOKS - 1, index));
+    }
+
+    /** Restyles the pad in place; the item id, link and behaviour stay the same. */
+    public static void setLook(ItemStack stack, PadDesign design, RetroTone tone) {
+        int index = design.ordinal() * RetroTone.values().length + tone.ordinal();
+        stack.set(DataComponents.CUSTOM_MODEL_DATA,
+                new CustomModelData(index));
     }
 
     public static boolean isGamepad(ItemStack stack) {
@@ -116,7 +146,8 @@ public class GamepadItem extends Item {
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
         if (player.isShiftKeyDown()) {
-            return InteractionResultHolder.pass(stack);
+            restyle(level, player, stack, hand);
+            return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
         }
 
         BlockPos linkedPos = resolveConsolePos(level, player, stack);
@@ -161,9 +192,31 @@ public class GamepadItem extends Item {
         return null;
     }
 
+    /** Paints with a dye in the other hand, or cycles the silhouette without one. */
+    private static void restyle(Level level, Player player, ItemStack stack, InteractionHand hand) {
+        InteractionHand other = hand == InteractionHand.MAIN_HAND
+                ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        RetroTone painted = RetroTone.ofStack(player.getItemInHand(other));
+        PadDesign design = designOf(stack);
+        if (painted != null) {
+            setLook(stack, design, painted);
+        } else {
+            setLook(stack, design.next(), toneOf(stack));
+        }
+        if (level.isClientSide()) {
+            PadDesign shown = designOf(stack);
+            player.displayClientMessage(Component.translatable("retroconsole.gamepad.restyled",
+                    Component.translatable("retroconsole.pad.design." + shown.getSerializedName()),
+                    Component.translatable(toneOf(stack).translationKey())), true);
+        }
+    }
+
     @Override
     public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip,
                                 TooltipFlag flag) {
+        tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.style",
+                Component.translatable("retroconsole.pad.design." + designOf(stack).getSerializedName()),
+                Component.translatable(toneOf(stack).translationKey())));
         BlockPos linked = getLinkedConsolePos(stack);
         if (linked != null) {
             tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.linked",
@@ -173,6 +226,7 @@ public class GamepadItem extends Item {
         }
         tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.hint"));
 
+        tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.restyle").withStyle(ChatFormatting.DARK_GRAY));
         if (Screen.hasAltDown()) {
             tooltip.add(Component.literal("For d_aranda, who saw the potential before anyone else.")
                     .withStyle(ChatFormatting.LIGHT_PURPLE, ChatFormatting.ITALIC));

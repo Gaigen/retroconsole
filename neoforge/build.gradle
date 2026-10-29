@@ -55,6 +55,7 @@ runs {
     // Without at least one @GameTest method (see RetroConsoleGameTests) the
     // vanilla server dies with "No test functions were given!".
     gameTestServer {
+        workingDirectory = layout.buildDirectory.dir("gametest-backport-1.21.1")
         systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
     }
 }
