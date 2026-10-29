@@ -78,7 +78,7 @@ public final class ClientPacketHandlers {
     public static void handleOpenScreen(RetroOpenScreenPacket pkt, NetContext ctx) {
         ctx.enqueue(() -> {
             if (pkt.romId() == null || pkt.romId().isEmpty()) {
-                Minecraft.getInstance().setScreen(new CoreSelectScreen(pkt.pos()));
+                Minecraft.getInstance().setScreen(ClientUi.library(pkt.pos()));
             } else {
                 Minecraft.getInstance().setScreen(
                         new TvScreen(pkt.pos(), pkt.consoleId(), pkt.romId(), pkt.systemId()));

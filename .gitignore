@@ -24,6 +24,7 @@ Thumbs.db
 # Caches
 logs/
 *.tmp
+.retro-ui-backups/
 *.bak
 
 docs/
