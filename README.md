@@ -377,7 +377,7 @@ Outputs:
 - `neoforge/build/libs/retroconsole-0.3.1+26.1.2-neoforge.jar`
 - `fabric/build/libs/retroconsole-0.3.1+26.1.2-fabric.jar`
 
-`verifyDistribution` unzips both jars and asserts the loader metadata, the shared classes, the item resources and the natives are present — run it before tagging. The release workflow builds the Linux `.so` and the Windows `.dll` helper first, then both jars with the same tasks.
+`verifyDistribution` unzips both jars, asserts the loader metadata, the shared classes, the blockstates, the recipes and the natives are present, then walks every model an item or blockstate points at and requires it — together with each `parent` and every texture along the chain — to be inside the jar. Run it locally before tagging: the release workflow only calls `build`, so this is the gate that stops a renamed or missing model from shipping. The release workflow builds the Linux `.so` and the Windows `.dll` helper first, then both jars with the same tasks.
 
 To rebuild the bundled headless GL native library (developers only):
 
