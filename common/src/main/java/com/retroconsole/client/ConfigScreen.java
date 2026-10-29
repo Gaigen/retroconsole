@@ -48,6 +48,12 @@ public final class ConfigScreen extends Screen {
     private enum Tab { PATHS, STREAMING, LIMITS, VIDEO, INPUT, DEBUG }
 
     private final Screen parent;
+    private boolean modern;
+    private int modernTop;
+    private int modernLeft;
+    private int modernWidth;
+    private int modernRowH = 22;
+    private int rowOffset, maxRowOffset, modernTotal;
     private Tab tab = Tab.STREAMING;
     private int page;
     private List<Row> visible = List.of();
@@ -67,6 +73,8 @@ public final class ConfigScreen extends Screen {
 
     @Override
     protected void init() {
+        modern = ClientUi.modern();
+        if (modern) { initModern(); return; }
         int tabW = (width - 24) / Tab.values().length - 2;
         int x = 12;
         for (Tab t : Tab.values()) {
@@ -99,6 +107,12 @@ public final class ConfigScreen extends Screen {
             widgets.add(widget);
         }
 
+        addRenderableWidget(Button.builder(ModTexts.c("appearance.title"), b -> {
+                    if (parent instanceof CoreSelectScreen library) library.savePrefs();
+                    minecraft.setScreen(new UiAppearanceScreen(this, () -> this));
+                })
+                .bounds(12, height - 26, 84, 18).build());
+
         int doneW = 100;
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
                 .bounds((width - doneW) / 2, height - 26, doneW, 18)
@@ -122,7 +136,57 @@ public final class ConfigScreen extends Screen {
         }
     }
 
+    private void initModern() {
+        modernWidth = Math.min(720, width - 24);
+        modernLeft = (width-modernWidth)/2;
+        int cols = width < 500 ? 3 : 6;
+        int tabW = (modernWidth - (cols-1)*4)/cols;
+        int index=0;
+        for (Tab t:Tab.values()) {
+            int i=index++;
+            addRenderableWidget(new LibraryButton(modernLeft+(i%cols)*(tabW+4), 26+(i/cols)*22, tabW,18,
+                Component.translatable(KEY+t.name().toLowerCase(Locale.ROOT)), b -> {tab=t;rowOffset=0;page=0;rebuildWidgets();}).selected(() -> tab==t));
+        }
+        modernTop = 26 + ((6+cols-1)/cols)*22 + 8;
+        modernRowH = 22;
+        List<Row> all=rows(tab);modernTotal=all.size();
+        int per=perPage();maxRowOffset=Math.max(0,all.size()-per);
+        rowOffset=Mth.clamp(rowOffset,0,maxRowOffset);
+        visible=all.subList(rowOffset,Math.min(all.size(),rowOffset+per));
+        widgets.clear();
+        int widgetW=Math.max(100,modernWidth*44/100), widgetX=modernLeft+modernWidth-widgetW;
+        for(int i=0;i<visible.size();i++) widgets.add(addRenderableWidget(visible.get(i).create(widgetX,modernTop+i*modernRowH,widgetW,18)));
+        int y=height-28;
+        addRenderableWidget(new LibraryButton(modernLeft,y,94,20,ModTexts.c("appearance.title"),b -> {
+            if(parent instanceof CoreSelectScreen library) library.savePrefs();
+            minecraft.setScreen(new UiAppearanceScreen(this,()->this));
+        }));
+        addRenderableWidget(new LibraryButton(modernLeft+modernWidth-94,y,94,20,CommonComponents.GUI_DONE,b->onClose()).primary());
+        if(maxRowOffset>0) {
+            var prev=addRenderableWidget(new LibraryButton(width/2-24,y,22,20,Component.literal("↑"),b->scrollRows(-1)));prev.active=rowOffset>0;
+            var next=addRenderableWidget(new LibraryButton(width/2+2,y,22,20,Component.literal("↓"),b->scrollRows(1)));next.active=rowOffset<maxRowOffset;
+        }
+    }
+
+    private void scrollRows(int delta) {
+        int next=Mth.clamp(rowOffset+delta,0,maxRowOffset);
+        if(next!=rowOffset) {rowOffset=next;rebuildWidgets();}
+    }
+    @Override public boolean mouseScrolled(double mx,double my,double hx,double hy) {
+        if(modern&&my>=modernTop&&my<height-32) {
+            if(hy!=0)scrollRows(hy>0?-1:1);return true;
+        }
+        return super.mouseScrolled(mx,my,hx,hy);
+    }
+    @Override public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+        if(modern&&!(getFocused() instanceof EditBox)) {
+            if(event.key()==266||event.key()==267) {scrollRows(event.key()==266?-perPage():perPage());return true;}
+        }
+        return super.keyPressed(event);
+    }
+
     private int perPage() {
+        if(modern) return Math.max(1,(height-modernTop-36)/modernRowH);
         return Math.max(1, (height - TOP - FOOTER) / ROW_H);
     }
 
@@ -224,8 +288,12 @@ public final class ConfigScreen extends Screen {
     }
 
     private Row bool(String labelKey, BooleanSupplier get, Consumer<Boolean> set) {
-        return new TableRow(labelKey, (x, y, w, h) -> CycleButton.onOffBuilder(get.getAsBoolean())
-                .create(x, y, w, h, Component.empty(), (button, value) -> set.accept(value)));
+        return new TableRow(labelKey, (x,y,w,h) -> {
+            if(!modern) return CycleButton.onOffBuilder(get.getAsBoolean()).create(x,y,w,h,Component.empty(),(button,value)->set.accept(value));
+            return new LibraryButton(x,y,w,h,Component.translatable(get.getAsBoolean()?"options.on":"options.off"), b->{
+                set.accept(!get.getAsBoolean()); b.setMessage(Component.translatable(get.getAsBoolean()?"options.on":"options.off"));
+            });
+        });
     }
 
     private Row preset(Supplier<String> get, Consumer<String> set) {
@@ -233,6 +301,13 @@ public final class ConfigScreen extends Screen {
             String current = get.get();
             if (!"performance".equals(current) && !"quality".equals(current)) {
                 current = "balanced";
+            }
+            if(modern) {
+                final String[] values={"performance","balanced","quality"};
+                return new LibraryButton(x,y,w,h,Component.translatable(KEY+"preset."+current),b->{
+                    int index=java.util.Arrays.asList(values).indexOf(get.get());
+                    String next=values[(index+1)%values.length];set.accept(next);b.setMessage(Component.translatable(KEY+"preset."+next));
+                });
             }
             return CycleButton
                     .<String>builder(v -> Component.translatable(KEY + "preset." + v), current)
@@ -254,8 +329,9 @@ public final class ConfigScreen extends Screen {
 
     private Row text(String labelKey, Supplier<String> get, Consumer<String> set) {
         return new TableRow(labelKey, (x, y, w, h) -> {
-            EditBox box = new EditBox(font, x, y, w, h, Component.translatable(KEY + labelKey));
+            EditBox box = new EditBox(modern ? UiTypography.editingFont(font) : font, x, y, w, h, Component.translatable(KEY + labelKey));
             box.setMaxLength(128);
+            if(modern) box.setTextShadow(false);
             box.setValue(get.get());
             box.setResponder(set);
             return box;
@@ -266,6 +342,32 @@ public final class ConfigScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float partialTick) {
+        if(modern) {
+            g.fill(0,0,width,height,0xFF101318);
+            g.text(font,UiTypography.text(title),modernLeft,10,0xFFE8EAF0,false);
+            g.fill(modernLeft,modernTop-7,modernLeft+modernWidth,modernTop-6,0xFF353F50);
+            int widgetX=modernLeft+modernWidth-modernWidth*44/100;
+            for(int i=0;i<visible.size();i++) {
+                int y=modernTop+i*modernRowH;
+                String label=UiTypography.trim(font,visible.get(i).label().getString(),widgetX-modernLeft-12);
+                g.text(font,UiTypography.text(label),modernLeft,y+5,0xFFE8EAF0,false);
+                g.fill(modernLeft,y+modernRowH-3,modernLeft+modernWidth,y+modernRowH-2,0xFF242C39);
+            }
+            if(maxRowOffset>0) {
+                int bottom=modernTop+perPage()*modernRowH;
+                int trackH=bottom-modernTop,thumbH=Math.max(12,trackH*perPage()/modernTotal);
+                int sy=modernTop+(trackH-thumbH)*rowOffset/maxRowOffset;
+                int sx=modernLeft+modernWidth+4;
+                g.fill(sx,modernTop,sx+2,bottom,0xFF353F50);g.fill(sx,sy,sx+2,sy+thumbH,0xFF818FBF);
+            }
+            super.extractRenderState(g,mx,my,partialTick);
+            for(int i=0;i<visible.size();i++) {
+                int y=modernTop+i*modernRowH;
+                if(mx>=modernLeft&&mx<widgetX-8&&my>=y&&my<y+modernRowH && UiTypography.width(font,visible.get(i).label().getString())>widgetX-modernLeft-12)
+                    g.setTooltipForNextFrame(font,UiTypography.text(visible.get(i).label()),mx,my);
+            }
+            return;
+        }
         g.centeredText(font, title, width / 2, 12, 0xFFFFFFFF);
         // Below the tab row on purpose: the tabs are 18 px tall and used to sit
         // on top of this line at GUI scale 3.
@@ -295,13 +397,18 @@ public final class ConfigScreen extends Screen {
 
     @Override
     public void extractBackground(GuiGraphicsExtractor g, int mx, int my, float partialTick) {
-        g.fill(0, 0, width, height, 0xE00C0E12);
+        g.fill(0, 0, width, height, modern ? 0xFF101318 : 0xE00C0E12);
     }
 
     @Override
     public void onClose() {
         RetroConfigJson.get().save();
-        minecraft.setScreen(parent);
+        if (parent instanceof CoreSelectScreen library
+                && ((library instanceof ModernCoreSelectScreen) != ClientUi.modern())) {
+            minecraft.setScreen(ClientUi.library(library.consolePos()));
+        } else {
+            minecraft.setScreen(parent);
+        }
     }
 
     @Override
@@ -312,6 +419,10 @@ public final class ConfigScreen extends Screen {
     // ----- widgets ---------------------------------------------------------
 
     private static final class IntSlider extends AbstractSliderButton {
+        private final boolean modern = ClientUi.modern();
+        @Override public void extractWidgetRenderState(GuiGraphicsExtractor g,int mx,int my,float pt) {
+            if(modern) {UiSlider.paint(g,this,value);handleCursor(g);} else super.extractWidgetRenderState(g,mx,my,pt);
+        }
 
         private final int min;
         private final int max;
@@ -355,6 +466,10 @@ public final class ConfigScreen extends Screen {
     }
 
     private static final class DoubleSlider extends AbstractSliderButton {
+        private final boolean modern = ClientUi.modern();
+        @Override public void extractWidgetRenderState(GuiGraphicsExtractor g,int mx,int my,float pt) {
+            if(modern) {UiSlider.paint(g,this,value);handleCursor(g);} else super.extractWidgetRenderState(g,mx,my,pt);
+        }
 
         private final double min;
         private final double max;

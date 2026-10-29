@@ -60,6 +60,9 @@ public class TvScreen extends TrackedWidgetScreen {
     /** When the "check the chat" line appears under the boot indicator. */
     private static final long BOOT_SLOW_MS = 10_000L;
 
+    private final boolean modern = ClientUi.modern();
+    private final TvMenu menu;
+    private boolean viewSubscribed;
     private final BlockPos consolePos;
     private final UUID consoleId;
     private final String romId;
@@ -110,6 +113,13 @@ public class TvScreen extends TrackedWidgetScreen {
         this.input = new RetroInputSender(consolePos);
         this.gamepad = new GamepadPoller(this.input);
         this.mouse = new MouseCapture(consolePos);
+        this.menu = modern ? new TvMenu(this) : null;
+    }
+
+    @Override public void resize(int width,int height) {
+        if(!modern) {super.resize(width,height);return;}
+        this.width=width;this.height=height;
+        menu.resize(width,height);
     }
 
     private static String prettyName(String romId) {
@@ -124,9 +134,13 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     protected void init() {
-        NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, true));
+        if (!viewSubscribed) {
+            NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, true));
+            viewSubscribed = true;
+        }
         // Covers a login that raced the connection: mute is a server-side filter.
         ClientAudioHandler.syncMuteToServer();
+        if (modern) { menu.init(width,height); return; }
 
         int y = this.height - BAR_HEIGHT + 3;
         int h = BAR_HEIGHT - 6;
@@ -171,16 +185,21 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
-        mouse.poll(minecraft);
+        if (!modern || !menu.isOpen()) mouse.poll(minecraft);
         renderTvFrame(guiGraphics);
-        TvBezelRenderer.render(guiGraphics, width, height, BAR_HEIGHT,
+        TvBezelRenderer.render(guiGraphics, videoWidth(), height, modern ? 0 : BAR_HEIGHT,
                 frameX, frameY, frameW, frameH, Util.getMillis());
-        renderBar(guiGraphics);
-        renderTrackedWidgets(guiGraphics, mouseX, mouseY, partialTick);
-        if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+        if (!modern) {
+            renderBar(guiGraphics);
+            renderTrackedWidgets(guiGraphics, mouseX, mouseY, partialTick);
+        } else if(menu.isOpen()) menu.extractRenderState(guiGraphics,mouseX,mouseY,partialTick);
+        else if (frameX >= 74 && System.currentTimeMillis()-openedAtMs < 6000) {
+            guiGraphics.text(font,UiTypography.text(ModTexts.s("play.open_hint")),8,height-18,0xFFADB7C8,false);
+        }
+        if ((!modern || !menu.isOpen()) && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             renderTouchCursor(guiGraphics);
         }
-        if (showHints) renderHintsOverlay(guiGraphics);
+        if (!modern && showHints) renderHintsOverlay(guiGraphics);
     }
 
     @Override
@@ -188,17 +207,20 @@ public class TvScreen extends TrackedWidgetScreen {
         guiGraphics.fill(0, 0, this.width, this.height, 0xFF000000);
     }
 
+    private int videoWidth() { return modern ? menu.videoWidth() : width; }
+
     private void renderTvFrame(GuiGraphicsExtractor guiGraphics) {
         ClientConsoles.ScreenEntry entry = ClientConsoles.getScreen(consoleId);
-        int screenH = this.height - BAR_HEIGHT;
+        int screenH = this.height - (modern ? 0 : BAR_HEIGHT);
+        int screenW = videoWidth();
 
         if (entry != null) {
             int texW = entry.width();
             int texH = entry.height();
-            float scale = Math.min((float) this.width / texW, (float) screenH / texH);
+            float scale = Math.min((float) screenW / texW, (float) screenH / texH);
             frameW = (int) (texW * scale);
             frameH = (int) (texH * scale);
-            frameX = (this.width - frameW) / 2;
+            frameX = (screenW - frameW) / 2;
             frameY = (screenH - frameH) / 2;
             // Nearest only looks right at whole-number scales; anywhere else it eats
             // 1px glyph stems and small text becomes unreadable (see setLinear).
@@ -228,10 +250,10 @@ public class TvScreen extends TrackedWidgetScreen {
 
         if (!hasGame || stopped || elapsedMs >= BOOT_TIMEOUT_MS) {
             g.centeredText(this.font, ModTexts.s("gui.no_signal"),
-                    this.width / 2, screenH / 2, 0xFFFFFFFF);
+                    videoWidth() / 2, screenH / 2, 0xFFFFFFFF);
             if (hasGame) {
-                String name = this.font.plainSubstrByWidth(displayName, Math.max(60, this.width - 40));
-                g.centeredText(this.font, name, this.width / 2, screenH / 2 + 12, 0xFF707888);
+                String name = this.font.plainSubstrByWidth(displayName, Math.max(60, videoWidth() - 40));
+                g.centeredText(this.font, name, videoWidth() / 2, screenH / 2 + 12, 0xFF707888);
             }
             return;
         }
@@ -242,27 +264,27 @@ public class TvScreen extends TrackedWidgetScreen {
         // Long ROM names ("Castle of Illusion Starring Mickey Mouse…") must not
         // push the card past the window, so bound the name before measuring.
         String name = this.font.plainSubstrByWidth(displayName,
-                Math.max(80, Math.min(260, this.width - 100)));
+                Math.max(80, Math.min(260, videoWidth() - 100)));
         String title = ModTexts.s("gui.starting", name) + ".".repeat(dots);
         String hint = ModTexts.s("gui.starting_hint") + " \u00b7 "
                 + ModTexts.s("gui.starting_elapsed", sec);
         boolean slow = elapsedMs >= BOOT_SLOW_MS;
 
-        int cardW = Math.min(this.width - 40, Math.max(232,
+        int cardW = Math.min(videoWidth() - 40, Math.max(232,
                 Math.max(this.font.width(title), this.font.width(hint)) + 32));
         int cardH = slow ? 80 : 62;
-        int x = (this.width - cardW) / 2;
+        int x = (videoWidth() - cardW) / 2;
         int y = (screenH - cardH) / 2;
 
         g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, COL_EDGE);
         g.fill(x, y, x + cardW, y + cardH, COL_PANEL_2);
 
-        g.centeredText(this.font, title, this.width / 2, y + 11, 0xFFFFFFFF);
+        g.centeredText(this.font, title, videoWidth() / 2, y + 11, 0xFFFFFFFF);
         renderBootBar(g, x + 16, y + 30, cardW - 32);
-        g.centeredText(this.font, hint, this.width / 2, y + 39, 0xFF9AA2B4);
+        g.centeredText(this.font, hint, videoWidth() / 2, y + 39, 0xFF9AA2B4);
         if (slow) {
             g.centeredText(this.font, ModTexts.s("gui.starting_slow"),
-                    this.width / 2, y + 55, 0xFF707888);
+                    videoWidth() / 2, y + 55, 0xFF707888);
         }
     }
 
@@ -409,7 +431,7 @@ public class TvScreen extends TrackedWidgetScreen {
         if (frameW > 0 && frameH > 0) {
             return PointerMapper.insideFrame(x, y, frameX, frameY, frameW, frameH);
         }
-        return y < this.height - BAR_HEIGHT;
+        return x < videoWidth() && y < this.height - (modern ? 0 : BAR_HEIGHT);
     }
 
     /**
@@ -420,6 +442,7 @@ public class TvScreen extends TrackedWidgetScreen {
     private boolean handleCapturedKeyPress(int keyCode) {
         if (keyCode == InputConstants.KEY_DELETE) {
             releaseInputCapture();
+            if(modern) menu.open(TvMenu.Page.MAIN);
             return true;
         }
         int retroKey = KeyboardMapper.toRetroKey(keyCode);
@@ -465,8 +488,8 @@ public class TvScreen extends TrackedWidgetScreen {
     @Override
     public void tick() {
         super.tick();
-        if (!closed) gamepad.poll();
-        if (virtualStylus && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+        if (!closed && (!modern || !menu.isOpen())) gamepad.poll();
+        if ((!modern || !menu.isOpen()) && virtualStylus && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             var rightStick = input.rightStick();
             int dx = rightStick.directionX();
             int dy = rightStick.directionY();
@@ -501,6 +524,12 @@ public class TvScreen extends TrackedWidgetScreen {
     public boolean keyPressed(KeyEvent event) {
         int keyCode = event.key();
         if (mouse.isActive()) return handleCapturedKeyPress(keyCode);
+        if (modern) {
+            if(menu.isOpen()) { menu.keyPressed(event); return true; }
+            if(keyCode==InputConstants.KEY_ESCAPE){onClose();return true;}
+            if(keyCode==InputConstants.KEY_F4){menu.open(TvMenu.Page.MAIN);return true;}
+            if(keyCode==InputConstants.KEY_F1){menu.open(TvMenu.Page.CONTROLS);return true;}
+        }
         if (keyCode == InputConstants.KEY_ESCAPE) {
             if (showHints) {
                 showHints = false;
@@ -546,6 +575,7 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     public boolean keyReleased(KeyEvent event) {
+        if(modern && menu.isOpen()){menu.keyReleased(event);return true;}
         if (mouse.isActive()) {
             int retroKey = KeyboardMapper.toRetroKey(event.key());
             if (retroKey >= 0 && heldKeys.remove(retroKey)) sendKey(retroKey, false);
@@ -563,6 +593,7 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        if(modern && menu.isOpen()){menu.mouseClicked(event,doubleClick);return true;}
         double mouseX = event.x();
         double mouseY = event.y();
         int button = event.button();
@@ -592,6 +623,7 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+        if(modern && menu.isOpen()){menu.mouseDragged(event,dx,dy);return true;}
         if (pointerDown && event.button() == 0) {
             pointer = PointerMapper.fromScreen(event.x(), event.y(), frameX, frameY, frameW, frameH);
             sendPointerIfChanged(true);
@@ -602,6 +634,7 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
+        if(modern && menu.isOpen()){menu.mouseReleased(event);return true;}
         if (mouse.isActive()) {
             mouse.setButton(event.button(), false);
             return true;
@@ -621,6 +654,7 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if(modern && menu.isOpen())return menu.mouseScrolled(mouseX,mouseY,scrollX,scrollY);
         if (mouse.isActive()) {
             if (scrollY != 0) mouse.addWheel((int) Math.signum(scrollY));
             return true;
@@ -664,12 +698,12 @@ public class TvScreen extends TrackedWidgetScreen {
         NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, false));
         CONTROL_LOG.info("[control] UI Off pos={} console={}", consolePos, consoleId);
         NetAccess.sendToServer(RetroPayloads.POWER_OFF, new RetroPowerOffPacket(consolePos));
-        Minecraft.getInstance().setScreen(new CoreSelectScreen(consolePos));
+        Minecraft.getInstance().setScreen(ClientUi.library(consolePos));
     }
 
-    @Override
-    public void onClose() {
-        if (closed) return;
+    /** Shared close path; menu navigation never invokes it. */
+    private boolean closeView() {
+        if (closed) return false;
         closed = true;
         releaseInputCapture();
         if (!romId.isEmpty()) {
@@ -680,8 +714,27 @@ public class TvScreen extends TrackedWidgetScreen {
         gamepad.reset();
         sendPointerRelease();
         NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, false));
-        super.onClose();
+        return true;
     }
+    @Override public void onClose() { if(closeView())super.onClose(); }
+
+    String gameName() { return displayName.isEmpty()?ModTexts.s("gui.title"):displayName; }
+    boolean touchProfile() {return inputProfile==CoreInputProfile.TOUCH_DUAL_SCREEN;}
+    boolean keyboardProfile() {return isKeyboardMouse();}
+    void suspendGameInput() {
+        releaseInputCapture();input.releaseAll();input.clearKeyboardAnalog();input.sendAnalogZeros();gamepad.reset();
+        pointerDown=false;setDragging(false);sendPointerRelease();setFocused(null);
+    }
+    void requestState(boolean save) {
+        NetAccess.sendToServer(RetroPayloads.SAVE_STATE,new RetroSaveStatePacket(consolePos,0,save,false));
+    }
+    boolean p2Requested() { return coopP2; }
+    void requestP2(boolean join) {
+        coopP2=join;
+        NetAccess.sendToServer(RetroPayloads.COOP,new RetroCoopPacket(consolePos,join));
+    }
+    void returnToLibrary() {if(closeView())minecraft.setScreen(ClientUi.library(consolePos));}
+    void powerOffFromMenu() {powerOffToMenu();}
 
     private void snapshotThumb(ClientConsoles.ScreenEntry entry) {
         int[] abgr = entry.lastAbgr();

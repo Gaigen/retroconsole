@@ -8,7 +8,7 @@
 
 NeoForge and Fabric mod for **Minecraft 26.1.2** (the All the Mods 11 target) that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
-**Version:** 0.3.1 (early release — expect rough edges)
+**Version:** 0.3.2 (early release — expect rough edges)
 
 ## Download
 
@@ -16,10 +16,18 @@ Pre-built JARs: **[GitHub Releases](https://github.com/Gaigen/retroconsole/relea
 
 | Loader | File |
 |--------|------|
-| NeoForge | `retroconsole-0.3.1+26.1.2-neoforge.jar` |
-| Fabric | `retroconsole-0.3.1+26.1.2-fabric.jar` (needs Fabric API) |
+| NeoForge | `retroconsole-0.3.2+26.1.2-neoforge.jar` |
+| Fabric | `retroconsole-0.3.2+26.1.2-fabric.jar` (needs Fabric API) |
 
 Requirements: Minecraft **26.1.2**, NeoForge **26.1.2.124** or Fabric Loader **0.20.1+** with **Fabric API 0.145.1+26.1**, Java **25**. The mod does **not** include libretro cores, BIOS, or ROMs. Both loaders read the same `config/retroconsole.json`, so settings carry over between them.
+
+## What's new in 0.3.2
+
+- **New client UI (opt-in)** — the library, settings, in-game panel and bezel are redrawn: three library layouts (consoles / list / manual pick) with search, favourites and a per-game card popup; all six settings sections with the same fields, ranges and `retroconsole.json`; a bezel page that lists the real images, previews, enables, scales and reloads without tearing down the streamed session. Toggle it in **Library → UI → New interface**; the classic UI stays the default on a clean profile and is one click away. The choice is local (`config/retroconsole/client-ui.properties`) and never goes to the server.
+- **Panel instead of always-on buttons** — **F4** opens/closes the panel, **F1** opens Controls, **Esc** closes the viewer while input is not captured. With keyboard/mouse capture Esc stays the game's key and **Delete** releases capture and opens the panel. The panel does not pause the core: the picture refits beside it and keeps running.
+- **Controls built from the real bindings** — a two-column table read from the live `KeyMapping`s (both sticks, extra DS actions), directions in ↑ ↓ ← → order, ellipsis plus hover for long rebinds. Help has localized paragraph sections, two columns when wide, scrolling with the wheel / PageUp / PageDown when narrow, and a pinned header and footer.
+- **Bundled UI font** — Liberation Sans (SIL OFL) with Cyrillic, shipped as its own font (`retroconsole:ui`) rasterized per GUI scale 1–8, used only by the new UI; the Controls table uses a slightly smaller variant so rows stay inside their cells. The vanilla font and the classic UI are untouched.
+- **Carried fixes** — window resize no longer recreates the viewer, its subscription or the panel state; one P2 button that sends the next connect/disconnect request; **Start over** launches without the auto-state and does **not** delete SRAM or in-game saves; single manual slot 0 (F5/F6) plus the separate auto-state; save and load results are never faked in the UI, and a missing thumbnail reads "no frame yet" instead of showing someone else's.
 
 ## What's new in 0.3.1
 
@@ -50,6 +58,7 @@ Requirements: Minecraft **26.1.2**, NeoForge **26.1.2.124** or Fabric Loader **0
 - Server-side emulation with video/audio streaming to nearby players
 - Per-player saves, play-time stats, PS2 memory-card sync
 - In-game config UI (paths, streaming distances, session limits, video presets)
+- Optional **new client UI** with bundled font, side panel and bezel settings (classic UI still available)
 - HW-render cores (PS2, PSP, Dreamcast, Doom 3, RPG Maker) via bundled headless OpenGL helper
 - **Doom 3** through the boom3 core — retail or the free demo
 - **RPG Maker XP / VX / VX Ace** through the mkxp-z core — one library entry per game folder, RTP-aware
@@ -374,8 +383,8 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 
 Outputs:
 
-- `neoforge/build/libs/retroconsole-0.3.1+26.1.2-neoforge.jar`
-- `fabric/build/libs/retroconsole-0.3.1+26.1.2-fabric.jar`
+- `neoforge/build/libs/retroconsole-0.3.2+26.1.2-neoforge.jar`
+- `fabric/build/libs/retroconsole-0.3.2+26.1.2-fabric.jar`
 
 `verifyDistribution` unzips both jars, asserts the loader metadata, the shared classes, the blockstates, the recipes and the natives are present, then walks every model an item or blockstate points at and requires it — together with each `parent` and every texture along the chain — to be inside the jar. Run it locally before tagging: the release workflow only calls `build`, so this is the gate that stops a renamed or missing model from shipping. The release workflow builds the Linux `.so` and the Windows `.dll` helper first, then both jars with the same tasks.
 

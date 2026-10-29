@@ -25,6 +25,7 @@ Thumbs.db
 logs/
 *.tmp
 *.bak
+.retro-ui-backups/
 
 docs/
 

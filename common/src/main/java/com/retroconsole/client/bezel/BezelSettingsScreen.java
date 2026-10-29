@@ -1,6 +1,10 @@
 package com.retroconsole.client.bezel;
 
 import com.retroconsole.client.ModTexts;
+import com.retroconsole.client.ClientUi;
+import com.retroconsole.client.LibraryButton;
+import com.retroconsole.client.UiTypography;
+import com.retroconsole.client.UiSlider;
 import com.retroconsole.client.TrackedWidgetScreen;
 import net.minecraft.util.Util;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -32,6 +36,8 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
     private static final int COL_HOVER   = 0xFF1B1F29;
     private static final int COL_SEL     = 0xFF232B45;
 
+    private net.minecraft.client.gui.Font font = net.minecraft.client.Minecraft.getInstance().font;
+    private boolean modern;
     private final Screen parent;
     private List<String> files = List.of();
     private int scroll;
@@ -43,14 +49,17 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
 
     private int listX() { return 10; }
     private int listW() { return width / 2 - 18; }
-    private int listTop() { return 46; }
+    private int listTop() { return modern ? 62 : 46; }
     private int listViewH() { return ((height - listTop() - 32) / ITEM_H) * ITEM_H; }
     private int rightX() { return width / 2 + 2; }
     private int rightW() { return width - rightX() - 10; }
 
     @Override
     protected void init() {
+        modern=ClientUi.modern();
+        font=modern?UiTypography.editingFont(net.minecraft.client.Minecraft.getInstance().font):net.minecraft.client.Minecraft.getInstance().font;
         refreshFiles();
+        if(modern) { initModern(); return; }
 
         int rx = rightX();
         int rw = rightW();
@@ -87,6 +96,21 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
                 .bounds(rx + (rw - 100) / 2, y, 100, 18).build());
     }
 
+    private void initModern() {
+        int rx=rightX(), rw=rightW(), y=height-144;
+        addRenderableWidget(new LibraryButton(rx,y,rw,22,enabledLabel(),b->{TvBezelPrefs.setEnabled(!TvBezelPrefs.enabled());b.setMessage(enabledLabel());}));y+=26;
+        addRenderableWidget(new LibraryButton(rx,y,rw,22,fitLabel(),b->{
+            var modes=TvBezelPrefs.FitMode.values();TvBezelPrefs.setFitMode(modes[(TvBezelPrefs.fitMode().ordinal()+1)%modes.length]);b.setMessage(fitLabel());
+        }));y+=26;
+        addRenderableWidget(new UiSlider(rx,y,rw,24,TvBezelPrefs.opacity(),v->TvBezelPrefs.setOpacity((float)v),v->ModTexts.c("bezel.opacity",(int)Math.round(v*100))));y+=28;
+        int half=(rw-4)/2;
+        addRenderableWidget(new LibraryButton(rx,y,half,22,ModTexts.c("bezel.open_folder"),b->Util.getPlatform().openFile(TvBezelPrefs.bezelDir().toFile())));
+        addRenderableWidget(new LibraryButton(rx+half+4,y,half,22,ModTexts.c("bezel.refresh"),b->{TvBezelRenderer.invalidateAll();refreshFiles();rebuildWidgets();}));y+=28;
+        addRenderableWidget(new LibraryButton(rx,y,rw,24,Component.translatable("gui.done"),b->onClose()).primary());
+    }
+    private Component enabledLabel() {return ModTexts.c("bezel.enabled").copy().append(": ").append(Component.translatable(TvBezelPrefs.enabled()?"options.on":"options.off"));}
+    private Component fitLabel() {return ModTexts.c("bezel.fit").copy().append(": ").append(ModTexts.c("bezel.fit."+TvBezelPrefs.fitMode().name().toLowerCase(Locale.ROOT)));}
+
     private void refreshFiles() {
         files = TvBezelPrefs.listArtOptions();
         scroll = Mth.clamp(scroll, 0, maxScroll());
@@ -113,6 +137,7 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float pt) {
+        if(modern) g.fill(0,0,width,height,0xFF101318);
         g.fill(0, 0, width, 20, COL_PANEL_2);
         g.fill(0, 19, width, 20, COL_EDGE);
         g.centeredText(font, title, width / 2, 6, 0xFFFFFFFF);
@@ -179,7 +204,7 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
     private void renderPreviews(GuiGraphicsExtractor g) {
         int rx = rightX(), rw = rightW();
         int top = listTop() + 12;
-        int ph = Math.max(40, height - 132 - top);
+        int ph = Math.max(14, height - (modern ? 158 : 132) - top);
         int half = (rw - 8) / 2;
         drawPreview(g, rx, top, half, ph, TvBezelPrefs.leftPath(), ModTexts.s("bezel.preview.left"));
         drawPreview(g, rx + half + 8, top, half, ph, TvBezelPrefs.rightPath(), ModTexts.s("bezel.preview.right"));
