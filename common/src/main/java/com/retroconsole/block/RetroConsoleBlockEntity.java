@@ -4,7 +4,6 @@ import com.retroconsole.bridge.LibretroCore;
 import com.retroconsole.reg.ModBlockEntities;
 import com.retroconsole.server.ServerConsoles;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.HolderLookup;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
@@ -62,7 +61,7 @@ public class RetroConsoleBlockEntity extends BlockEntity {
         BlockPos pos = worldPosition;
         for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {
             if (player.level() != serverLevel || player.connection == null) continue;
-            if (!player.getChunkTrackingView().contains(new ChunkPos(pos))) continue;
+            if (!serverLevel.getChunkSource().chunkMap.getPlayers(new ChunkPos(pos), false).contains(player)) continue;
             player.connection.send(packet);
         }
     }
@@ -181,8 +180,8 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.saveAdditional(tag, registries);
+    protected void saveAdditional(CompoundTag tag) {
+        super.saveAdditional(tag);
         UUID id = level != null && !level.isClientSide() ? getOrAssignConsoleId() : consoleId;
         if (id != null) {
             tag.putUUID("ConsoleId", id);
@@ -195,8 +194,8 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.loadAdditional(tag, registries);
+    public void load(CompoundTag tag) {
+        super.load(tag);
         consoleId = tag.hasUUID("ConsoleId") ? tag.getUUID("ConsoleId") : null;
         romId = tag.getString("RomId");
         coreName = tag.getString("CoreName");
@@ -204,9 +203,9 @@ public class RetroConsoleBlockEntity extends BlockEntity {
     }
 
     @Override
-    public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        CompoundTag tag = super.getUpdateTag(registries);
-        saveAdditional(tag, registries);
+    public CompoundTag getUpdateTag() {
+        CompoundTag tag = super.getUpdateTag();
+        saveAdditional(tag);
         return tag;
     }
 

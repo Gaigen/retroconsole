@@ -1,0 +1,19 @@
+#!/bin/bash
+# Build headless_gl.so — headless EGL/Mesa context for libretro HW rendering.
+# Requires: libEGL-dev, libGL-dev (mesa)
+#   sudo apt install libegl-dev libgl-dev
+
+set -e
+cd "$(dirname "$0")"
+
+OUT="../run/forge/config/retroconsole/cores/.libheadless_gl.so"
+RES="../common/src/main/resources/natives/libheadless_gl.so"
+SRC="headless_gl.c"
+
+mkdir -p "$(dirname "$OUT")" "$(dirname "$RES")"
+
+echo "Compiling $SRC -> $OUT"
+gcc -shared -fPIC -O2 -Wall -o "$OUT" "$SRC" -lEGL -lGL -ldl -lpthread
+strip "$OUT"
+cp "$OUT" "$RES"
+echo "Done: $(ls -lh "$OUT" | awk '{print $5}') (also copied to $RES)"

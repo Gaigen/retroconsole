@@ -1,3 +1,5 @@
+> For this Minecraft 1.20.1 backport, use JDK 17 and the commands/paths in BACKPORT-1.20.1.md. The historical upstream notes below are retained for reference.
+
 # RetroConsole в WSL
 
 Нативная копия проекта в WSL собирается и запускается **быстрее**, чем с `/mnt/c/...`.

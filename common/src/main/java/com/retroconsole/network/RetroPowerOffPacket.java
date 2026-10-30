@@ -2,7 +2,7 @@ package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.StreamCodec;
 
 /**
  * C2S: player pressed Power Off in TvScreen. Server stops emulation via
@@ -12,5 +12,5 @@ import net.minecraft.network.codec.StreamCodec;
 public record RetroPowerOffPacket(BlockPos pos) {
 
     public static final StreamCodec<ByteBuf, RetroPowerOffPacket> STREAM_CODEC =
-            BlockPos.STREAM_CODEC.map(RetroPowerOffPacket::new, RetroPowerOffPacket::pos);
+            com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS.map(RetroPowerOffPacket::new, RetroPowerOffPacket::pos);
 }

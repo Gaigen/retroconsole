@@ -3,7 +3,7 @@ package com.retroconsole.network;
 import io.netty.buffer.ByteBuf;
 import io.netty.handler.codec.DecoderException;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.StreamCodec;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.zip.DataFormatException;

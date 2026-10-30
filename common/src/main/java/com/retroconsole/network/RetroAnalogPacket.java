@@ -2,8 +2,8 @@ package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 /**
  * C2S: full gamepad analog state (both axes of both sticks).
@@ -20,7 +20,7 @@ public record RetroAnalogPacket(
 
     public static final StreamCodec<ByteBuf, RetroAnalogPacket> STREAM_CODEC =
             StreamCodec.composite(
-                    BlockPos.STREAM_CODEC, RetroAnalogPacket::pos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS, RetroAnalogPacket::pos,
                     ByteBufCodecs.SHORT,   RetroAnalogPacket::lx,
                     ByteBufCodecs.SHORT,   RetroAnalogPacket::ly,
                     ByteBufCodecs.SHORT,   RetroAnalogPacket::rx,

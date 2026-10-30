@@ -109,8 +109,6 @@ public final class RetroInputBindings {
         boolean left;
         boolean right;
 
-        public void clear() { up = down = left = right = false; }
-
         public short analogX() {
             if (right && !left) return 32767;
             if (left && !right) return -32768;

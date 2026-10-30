@@ -1,0 +1,47 @@
+plugins {
+ id 'java-library'
+ id 'net.minecraftforge.gradle' version '6.0.54'
+}
+base { archivesName = "${mod_id}-forge" }
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+minecraft {
+ mappings channel: 'official', version: minecraft_version
+ copyIdeResources = true
+ runs {
+  configureEach {
+   workingDirectory project.file('../run/forge')
+   property 'forge.logging.console.level', 'info'
+   mods { retroconsole { source sourceSets.main } }
+  }
+  client {}
+  server { args '--nogui' }
+  gameTestServer { property 'forge.enabledGameTestNamespaces', 'retroconsole' }
+ }
+}
+sourceSets.main {
+ java.srcDir project(':common').file('src/main/java')
+ resources.srcDir project(':common').file('src/main/resources')
+ resources.srcDir project(':common').file('src/generated/resources')
+}
+repositories { mavenCentral() }
+dependencies {
+ minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+ implementation 'net.java.dev.jna:jna:5.12.1'
+}
+processResources {
+ def props = [minecraft_version_range:minecraft_version_range,forge_version_range:'[47,)',loader_version_range:'[47,)',mod_id:mod_id,mod_name:mod_name,mod_license:mod_license,mod_version:mod_version,mod_authors:mod_authors,mod_description:mod_description]
+ inputs.properties props
+ filesMatching('META-INF/mods.toml') { expand props }
+}
+tasks.withType(JavaCompile).configureEach { options.encoding='UTF-8' }
+tasks.named('jar') {
+ archiveFileName = "${mod_id}-${mod_version}+${minecraft_version}-forge.jar"
+ finalizedBy 'reobfJar'
+}
+
+tasks.register('buildHeadlessGL', Exec) {
+ group = 'native'
+ description = 'Rebuild optional headless GL helper (requires compiler and GL headers)'
+ if (System.getProperty('os.name').toLowerCase().contains('win')) commandLine 'cmd', '/c', 'build_headless_gl.bat'
+ else commandLine 'bash', 'build_headless_gl.sh'
+}

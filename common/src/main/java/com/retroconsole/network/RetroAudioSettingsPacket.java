@@ -1,8 +1,8 @@
 package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 /**
  * C2S: the client muted (or unmuted) console audio.

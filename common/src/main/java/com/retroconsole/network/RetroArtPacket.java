@@ -3,8 +3,8 @@ package com.retroconsole.network;
 import io.netty.buffer.ByteBuf;
 import io.netty.handler.codec.DecoderException;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +27,7 @@ public record RetroArtPacket(BlockPos consolePos, List<ArtEntry> images) {
 
     public static final StreamCodec<ByteBuf, RetroArtPacket> STREAM_CODEC =
             StreamCodec.composite(
-                    BlockPos.STREAM_CODEC, RetroArtPacket::consolePos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS, RetroArtPacket::consolePos,
                     IMAGE_LIST, RetroArtPacket::images,
                     RetroArtPacket::new);
 

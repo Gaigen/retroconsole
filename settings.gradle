@@ -1,21 +1,10 @@
 pluginManagement {
-    repositories {
-        gradlePluginPortal()
-        maven { url = 'https://maven.neoforged.net/releases' }
-        maven { url = 'https://maven.fabricmc.net/' }
-    }
+ repositories { maven { url='https://maven.fabricmc.net/' }; maven { url='https://maven.minecraftforge.net/' }; gradlePluginPortal() }
 }
-
+// Both loader modules request a Java 17 toolchain, so let Gradle fetch one
+// when the machine only has a newer JDK installed.
 plugins {
-    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+ id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
 }
-
-rootProject.name = 'retroconsole'
-
-include 'common'
-include 'neoforge'
-
-// Fabric is opt-in until it reaches parity: ./gradlew build -Pfabric
-if (providers.gradleProperty('fabric').isPresent()) {
-    include 'fabric'
-}
+rootProject.name='retroconsole'
+include 'common', 'fabric', 'forge'

@@ -34,7 +34,7 @@ public class RetroConsoleFabric implements ModInitializer {
         // Server -> client delivery. The client -> server half is installed by the
         // client entrypoint, because ClientPlayNetworking is client-only.
         NetAccess.setPlayerSender((player, definition, value) ->
-                ServerPlayNetworking.send(player, FabricPayload.create(definition, value)));
+                ServerPlayNetworking.send(player, FabricPayload.type(definition), FabricPayload.encode(definition, value)));
 
         FabricRegistries.register();
         FabricNetwork.registerCommon();

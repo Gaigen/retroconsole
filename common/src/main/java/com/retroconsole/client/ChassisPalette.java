@@ -19,7 +19,7 @@ public final class ChassisPalette {
 
     /** Uniform white image; the vertex colour does all the work. */
     public static final ResourceLocation PLAIN =
-            ResourceLocation.fromNamespaceAndPath("retroconsole", "textures/block/chassis_plain.png");
+            new ResourceLocation("retroconsole", "textures/block/chassis_plain.png");
 
     public static final int CREAM = 0xD7CFB9;
     public static final int SHADE = 0xAAA390;

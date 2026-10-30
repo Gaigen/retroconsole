@@ -75,8 +75,6 @@ public final class RetroInputSender {
         }
     }
 
-    public void clearKeyboardAnalog() { leftStick.clear(); rightStick.clear(); }
-
     public void sendAnalogZeros() {
         gpLx = gpLy = gpRx = gpRy = 0;
         sentLx = sentLy = sentRx = sentRy = 0;

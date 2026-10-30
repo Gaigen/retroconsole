@@ -4,11 +4,9 @@ import com.retroconsole.block.RetroConsoleBlockEntity;
 import com.retroconsole.reg.ModItems;
 import com.retroconsole.style.PadDesign;
 import com.retroconsole.style.RetroTone;
-import net.minecraft.world.item.component.CustomModelData;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
@@ -18,7 +16,6 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
-import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -55,8 +52,7 @@ public class GamepadItem extends Item {
     }
 
     private static int look(ItemStack stack) {
-        CustomModelData data = stack.get(DataComponents.CUSTOM_MODEL_DATA);
-        Integer index = data != null ? data.value() : null;
+        Integer index = stack.hasTag() && stack.getTag().contains("CustomModelData", 3) ? stack.getTag().getInt("CustomModelData") : null;
         if (index == null) return 0;
         return Math.max(0, Math.min(LOOKS - 1, index));
     }
@@ -64,8 +60,7 @@ public class GamepadItem extends Item {
     /** Restyles the pad in place; the item id, link and behaviour stay the same. */
     public static void setLook(ItemStack stack, PadDesign design, RetroTone tone) {
         int index = design.ordinal() * RetroTone.values().length + tone.ordinal();
-        stack.set(DataComponents.CUSTOM_MODEL_DATA,
-                new CustomModelData(index));
+        stack.getOrCreateTag().putInt("CustomModelData", index);
     }
 
     public static boolean isGamepad(ItemStack stack) {
@@ -74,9 +69,8 @@ public class GamepadItem extends Item {
 
     @Nullable
     public static UUID getLinkedConsoleId(ItemStack stack) {
-        CustomData custom = stack.get(DataComponents.CUSTOM_DATA);
-        if (custom == null) return null;
-        CompoundTag tag = custom.copyTag();
+        CompoundTag tag = stack.getTag();
+        if (tag == null) return null;
         if (tag.hasUUID(TAG_CONSOLE_ID)) {
             return tag.getUUID(TAG_CONSOLE_ID);
         }
@@ -85,9 +79,8 @@ public class GamepadItem extends Item {
 
     @Nullable
     public static BlockPos getLinkedConsolePos(ItemStack stack) {
-        CustomData custom = stack.get(DataComponents.CUSTOM_DATA);
-        if (custom == null) return null;
-        CompoundTag tag = custom.copyTag();
+        CompoundTag tag = stack.getTag();
+        if (tag == null) return null;
         if (tag.contains(TAG_CONSOLE_POS)) {
             return BlockPos.of(tag.getLong(TAG_CONSOLE_POS));
         }
@@ -107,13 +100,14 @@ public class GamepadItem extends Item {
 
     public static void setLinkedConsole(ItemStack stack, UUID consoleId, BlockPos consolePos) {
         if (consoleId == null) {
-            stack.remove(DataComponents.CUSTOM_DATA);
+            stack.removeTagKey(TAG_CONSOLE_ID);
+            stack.removeTagKey(TAG_CONSOLE_POS);
             return;
         }
-        CompoundTag tag = new CompoundTag();
+        CompoundTag tag = stack.getOrCreateTag();
         tag.putUUID(TAG_CONSOLE_ID, consoleId);
         tag.putLong(TAG_CONSOLE_POS, consolePos.asLong());
-        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+        stack.setTag(tag);
     }
 
     @Override
@@ -212,7 +206,7 @@ public class GamepadItem extends Item {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip,
+    public void appendHoverText(ItemStack stack, net.minecraft.world.level.Level context, List<Component> tooltip,
                                 TooltipFlag flag) {
         tooltip.add(Component.translatable("retroconsole.gamepad.tooltip.style",
                 Component.translatable("retroconsole.pad.design." + designOf(stack).getSerializedName()),

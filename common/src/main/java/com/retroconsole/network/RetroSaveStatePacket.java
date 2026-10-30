@@ -2,8 +2,8 @@ package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 /** F5/F6 — save/load state slot on server; auto — autosave when leaving TvScreen. */
 public record RetroSaveStatePacket(
@@ -15,7 +15,7 @@ public record RetroSaveStatePacket(
 
     public static final StreamCodec<ByteBuf, RetroSaveStatePacket> STREAM_CODEC =
             StreamCodec.composite(
-                    BlockPos.STREAM_CODEC, RetroSaveStatePacket::pos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS, RetroSaveStatePacket::pos,
                     ByteBufCodecs.VAR_INT, RetroSaveStatePacket::slot,
                     ByteBufCodecs.BOOL,    RetroSaveStatePacket::save,
                     ByteBufCodecs.BOOL,    RetroSaveStatePacket::auto,

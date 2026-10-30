@@ -30,7 +30,7 @@ public final class FabricClientPlatform {
         GamepadScreens.setOpener(pos -> Minecraft.getInstance().setScreen(new GamepadScreen(pos)));
 
         NetAccess.setServerSender((definition, value) ->
-                ClientPlayNetworking.send(FabricPayload.create(definition, value)));
+                ClientPlayNetworking.send(FabricPayload.type(definition), FabricPayload.encode(definition, value)));
 
         ClientAccess.setLifecycle(new ClientAccess.Lifecycle() {
             @Override

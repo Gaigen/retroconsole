@@ -1,3 +1,5 @@
+> **Minecraft 1.20.1 backport:** read [BACKPORT-1.20.1.md](BACKPORT-1.20.1.md) first. The upstream instructions below are preserved for reference; their 1.21.1 build commands and historical test claims do not describe this backport.
+
 # RetroConsole
 
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.21.1-62B47A?style=flat-square)](https://www.minecraft.net/)
@@ -8,7 +10,7 @@
 
 NeoForge and Fabric mod for **Minecraft 1.21.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
-**Version:** 0.3.2 (early release — expect rough edges)
+**Version:** 0.3.0 (early release — expect rough edges)
 
 ## Download
 
@@ -16,19 +18,10 @@ Pre-built JARs: **[GitHub Releases](https://github.com/Gaigen/retroconsole/relea
 
 | Loader | File |
 |--------|------|
-| NeoForge | `retroconsole-0.3.2+1.21.1-neoforge.jar` |
-| Fabric | `retroconsole-0.3.2+1.21.1-fabric.jar` (needs Fabric API) |
+| NeoForge | `retroconsole-0.3.0+1.21.1-neoforge.jar` |
+| Fabric | `retroconsole-0.3.0+1.21.1-fabric.jar` (needs Fabric API) |
 
 Requirements: Minecraft **1.21.1**, NeoForge **21.1.x** or Fabric Loader **0.16+**, Java **21**. The mod does **not** include libretro cores, BIOS, or ROMs. Both loaders read the same `config/retroconsole.json`, so settings carry over between them.
-
-## What's new in 0.3.2
-
-- **New client UI (opt-in)** — the 26.1.2 interface is backported to 1.21.1: three library layouts (consoles / list / manual pick) with search, favourites and a per-game card popup; all six settings sections over the same `retroconsole.json`; a bezel page that lists the real images with preview, scale, opacity and reload. Toggle it in **Library → UI → New interface**; the classic UI stays the default on a clean profile and is one click away. The choice is local (`config/retroconsole/client-ui.properties`) and never goes to the server.
-- **Panel instead of always-on buttons** — **F4** opens/closes the panel, **F1** opens Controls, **Esc** closes the viewer while input is not captured. With keyboard/mouse capture Esc stays the game's key and **Delete** releases capture and opens the panel. The panel does not pause the core and resize no longer recreates the viewer or its subscription.
-- **Controls built from the real bindings** — a two-column table read from the live `KeyMapping`s, directions in ↑ ↓ ← → order, a smaller table font with vertical centring, ellipsis plus hover for long rebinds. Help has localized paragraph sections, two columns when wide, scrolling when narrow.
-- **Bundled UI font** — Liberation Sans (SIL OFL) with Cyrillic, rasterized per GUI scale 1–8 and used only by the new UI; the vanilla font and the classic UI are untouched.
-- **1.21.1 specifics** — button captions sit on 1.21.1's TTF baseline (2 px lower than a straight port put them), the settings page keeps its own labels when `Screen.render` re-runs `renderBackground`, and rebuilding the F4 panel or the side strips no longer fires the global screen-init event.
-- **Carried fixes** — one P2 request button, **Start over** without the auto-state and without deleting SRAM, an honest "no frame yet" instead of a borrowed thumbnail, and the 0.3.1 chassis/screen appearance rework stays as it was.
 
 ## What's new in 0.3.0
 
@@ -370,8 +363,8 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 
 Outputs:
 
-- `neoforge/build/libs/retroconsole-0.3.2+1.21.1-neoforge.jar`
-- `fabric/build/libs/retroconsole-0.3.2+1.21.1-fabric.jar`
+- `neoforge/build/libs/retroconsole-0.3.0+1.21.1-neoforge.jar`
+- `fabric/build/libs/retroconsole-0.3.0+1.21.1-fabric.jar`
 
 To rebuild the bundled headless GL native library (developers only):
 

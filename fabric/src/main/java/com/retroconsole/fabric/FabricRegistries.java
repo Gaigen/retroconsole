@@ -64,6 +64,6 @@ public final class FabricRegistries {
     }
 
     private static ResourceLocation id(String path) {
-        return ResourceLocation.fromNamespaceAndPath(RetroConsoleFabric.MOD_ID, path);
+        return new ResourceLocation(RetroConsoleFabric.MOD_ID, path);
     }
 }

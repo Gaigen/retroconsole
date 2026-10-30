@@ -21,9 +21,9 @@ $coreUrl = 'https://buildbot.libretro.com/nightly/windows/x86_64/latest/boom3_li
 
 if (-not $GameDir) {
     # every dev run dir the mod may start from, plus the repo-level config copy
-    $GameDir = @((Join-Path $repo 'runs\client'), $repo) |
+    $GameDir = @((Join-Path $repo 'run\forge'), $repo) |
         Where-Object { $_ -eq $repo -or (Test-Path $_) }
-    foreach ($extra in @('fabric\run', 'neoforge\runs\client')) {
+    foreach ($extra in @('run\client', 'run\server')) {
         $p = Join-Path $repo $extra
         if (Test-Path $p) { $GameDir += $p }
     }

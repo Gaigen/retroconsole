@@ -6,7 +6,7 @@ base {
     archivesName = "${mod_id}-fabric"
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 def commonProject = project(':common')
 
@@ -38,7 +38,7 @@ dependencies {
 
     // JNA for loading native libretro cores (.so/.dll). NeoForge puts it on the
     // game classpath; Loom's Minecraft classpath does not, so it is explicit here.
-    implementation 'net.java.dev.jna:jna:5.14.0'
+    implementation 'net.java.dev.jna:jna:5.12.1'
 }
 
 loom {
@@ -47,10 +47,10 @@ loom {
     // is loader-specific (mods/ is empty; mod code comes from the classpath).
     runs {
         client {
-            runDir = '../neoforge/runs/client'
+            runDir = '../run/client'
         }
         server {
-            runDir = '../neoforge/runs/server'
+            runDir = '../run/server'
         }
     }
 }
@@ -79,4 +79,18 @@ idea {
     module {
         downloadSources = true
     }
+}
+
+dependencies {
+ testImplementation 'org.junit.jupiter:junit-jupiter:5.10.3'
+ testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+test { useJUnitPlatform() }
+tasks.register('runGamepadSmokeTest', JavaExec) {
+ classpath = sourceSets.main.runtimeClasspath
+ mainClass = 'com.retroconsole.client.input.GamepadLogicSmokeTest'
+}
+
+test {
+ if (project.hasProperty('nativeSmokeCore')) systemProperty 'retroconsole.testCore', project.property('nativeSmokeCore')
 }

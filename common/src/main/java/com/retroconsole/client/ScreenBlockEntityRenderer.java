@@ -16,7 +16,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.List;
 /** 26 screen geometry/aperture, emitted immediately through the 1.21.1 buffer API. */
 public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBlockEntity> {
- private static final ResourceLocation SCREENSAVER=ResourceLocation.fromNamespaceAndPath("retroconsole","textures/block/screensaver.png");
+ private static final ResourceLocation SCREENSAVER=new ResourceLocation("retroconsole","textures/block/screensaver.png");
  private static final float SHADE_UP=1, SHADE_DOWN=0.5f, SHADE_X=0.6f, SHADE_Z=0.8f;
  public ScreenBlockEntityRenderer(BlockEntityRendererProvider.Context ctx) {}
  private static class ScreenRenderState {
@@ -174,11 +174,11 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
     private static void vert(VertexConsumer vc, PoseStack.Pose pose, float x, float y, float z,
                              float u, float v, int light,
                              float r, float g, float b, float nx, float ny, float nz) {
-        vc.addVertex(pose, x, y, z)
-                .setColor(r, g, b, 1.0f)
-                .setUv(u, v)
-                .setOverlay(OverlayTexture.NO_OVERLAY)
-                .setLight(light)
-                .setNormal(pose, nx, ny, nz);
+        vc.vertex(pose.pose(), x, y, z)
+                .color(r, g, b, 1.0f)
+                .uv(u, v)
+                .overlayCoords(OverlayTexture.NO_OVERLAY)
+                .uv2(light)
+                .normal(pose.normal(), nx, ny, nz).endVertex();
     }
 }

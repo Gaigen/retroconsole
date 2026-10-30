@@ -2,8 +2,8 @@ package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 import java.util.UUID;
 
@@ -13,7 +13,7 @@ public record RetroAudioPayload(UUID consoleId, BlockPos pos, int sampleRate, by
     public static final StreamCodec<ByteBuf, RetroAudioPayload> STREAM_CODEC =
             StreamCodec.composite(
                     RetroPackets.UUID_CODEC,  RetroAudioPayload::consoleId,
-                    BlockPos.STREAM_CODEC,    RetroAudioPayload::pos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS,    RetroAudioPayload::pos,
                     ByteBufCodecs.VAR_INT,    RetroAudioPayload::sampleRate,
                     ByteBufCodecs.BYTE_ARRAY, RetroAudioPayload::pcm,
                     RetroAudioPayload::new);

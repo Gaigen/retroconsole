@@ -9,14 +9,14 @@ rsync -a --delete \
   --exclude='.gradle' \
   --exclude='build' \
   --exclude='runs' \
+  --exclude='run' \
   --exclude='.idea' \
   --exclude='out' \
   "$SRC/" "$DST/"
 chmod +x "$DST/gradlew"
 
-mkdir -p "$DST/neoforge/runs/server/config/retroconsole"/{cores,roms,system,saves,art}
-mkdir -p "$DST/neoforge/runs/client/config/retroconsole"/{cores,roms,system,saves,art}
-test -f "$DST/neoforge/runs/server/eula.txt" || printf 'eula=true\n' > "$DST/neoforge/runs/server/eula.txt"
+mkdir -p "$DST/run/forge/config/retroconsole"/{cores,roms,system,saves,art}
+echo "For a dedicated server, review the Minecraft EULA and set eula=true in run/forge/eula.txt."
 
 echo "Synced to $DST"
 echo "Open in IDE: \\\\wsl$\\Ubuntu-24.04\\home\\$(whoami)\\dev\\retroconsole"

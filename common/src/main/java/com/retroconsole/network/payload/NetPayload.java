@@ -1,7 +1,7 @@
 package com.retroconsole.network.payload;
 
 import io.netty.buffer.ByteBuf;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.StreamCodec;
 
 /**
  * Loader-agnostic description of a network payload: a stable id plus a codec.

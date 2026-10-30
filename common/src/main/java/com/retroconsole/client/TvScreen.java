@@ -31,7 +31,7 @@ import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
-
+import net.minecraft.util.FastColor;
 import net.minecraft.util.Mth;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -46,8 +46,6 @@ import java.util.UUID;
  */
 public class TvScreen extends TrackedWidgetScreen {
 
-    private static final org.slf4j.Logger CONTROL_LOG = org.slf4j.LoggerFactory.getLogger("RetroConsole-Control");
-
     private static final int BAR_HEIGHT = 24;
     private static final int COL_PANEL_2 = 0xFF14161C;
     private static final int COL_EDGE = 0xFF2A2F3A;
@@ -57,9 +55,6 @@ public class TvScreen extends TrackedWidgetScreen {
     /** When the "check the chat" line appears under the boot indicator. */
     private static final long BOOT_SLOW_MS = 10_000L;
 
-    private final boolean modern = ClientUi.modern();
-    private final TvMenu menu;
-    private boolean viewSubscribed;
     private final BlockPos consolePos;
     private final UUID consoleId;
     private final String romId;
@@ -110,14 +105,6 @@ public class TvScreen extends TrackedWidgetScreen {
         this.input = new RetroInputSender(consolePos);
         this.gamepad = new GamepadPoller(this.input);
         this.mouse = new MouseCapture(consolePos);
-        this.menu = modern ? new TvMenu(this) : null;
-    }
-
-    @Override protected void repositionElements() {
-        // Both physical resize and Screen.init/re-init must reflow the same embedded menu.
-        // Reflow does not close it, change its page, or repeat the VIEW subscription.
-        if(modern) {menu.resize(minecraft,width,height);return;}
-        super.repositionElements();
     }
 
     private static String prettyName(String romId) {
@@ -132,39 +119,36 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     protected void init() {
-        if (!viewSubscribed) {
-            NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, true));
-            viewSubscribed = true;
-        }
+        NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, true));
         // Covers a login that raced the connection: mute is a server-side filter.
         ClientAudioHandler.syncMuteToServer();
-        if (modern) { menu.resize(minecraft,width,height); return; }
 
-        int y = this.height - BAR_HEIGHT + 3;
-        int h = BAR_HEIGHT - 6;
+        int y = this.height - BAR_HEIGHT + 2;
+        int h = BAR_HEIGHT - 4;
 
+        int[] widths = TvToolbarLayout.widths(this.width);
         int barLeft = 4;
         barLeft = addLeft(Button.builder(ModTexts.c("tv.power_off"), b -> {
             blip(0.8f);
             powerOffToMenu();
-        }), barLeft, y, 48, h);
+        }), barLeft, y, widths[0], h);
         barLeft = addLeft(Button.builder(ModTexts.c("tv.controls"), b -> {
             blip(1.2f);
             showHints = !showHints;
-        }), barLeft, y, 88, h);
+        }), barLeft, y, widths[1], h);
         barLeft = addLeft(Button.builder(ModTexts.c("tv.bezel"), b -> {
             blip(1.0f);
             minecraft.setScreen(new BezelSettingsScreen(this));
-        }), barLeft, y, 56, h);
+        }), barLeft, y, widths[2], h);
         barLeft = addLeft(Button.builder(Component.literal("P2 Join"), b -> {
             blip(1.0f);
             coopP2 = !coopP2;
             NetAccess.sendToServer(RetroPayloads.COOP, new RetroCoopPacket(consolePos, coopP2));
             b.setMessage(Component.literal(coopP2 ? "P2 Leave" : "P2 Join"));
-        }), barLeft, y, 56, h);
+        }), barLeft, y, widths[3], h);
 
         int barRight = this.width - 4;
-        barRight = addRight(new VolumeSlider(0, y, 110, h, SoundPrefs.volume()), barRight);
+        barRight = addRight(new VolumeSlider(0, y, widths[4], h, SoundPrefs.volume()), barRight);
 
         barTextLeft = barLeft;
         barTextRight = barRight;
@@ -183,50 +167,41 @@ public class TvScreen extends TrackedWidgetScreen {
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(guiGraphics,mouseX,mouseY,partialTick);
-        if (!modern || !menu.isOpen()) mouse.poll(minecraft);
+        mouse.poll(minecraft);
+        renderBackground(guiGraphics);
         renderTvFrame(guiGraphics);
-        TvBezelRenderer.render(guiGraphics, videoWidth(), height, modern ? 0 : BAR_HEIGHT,
+        TvBezelRenderer.render(guiGraphics, width, height, BAR_HEIGHT,
                 frameX, frameY, frameW, frameH, Util.getMillis());
-        if (!modern) {
-            renderBar(guiGraphics);
-            renderTrackedWidgets(guiGraphics, mouseX, mouseY, partialTick);
-        } else if(menu.isOpen()) menu.render(guiGraphics,mouseX,mouseY,partialTick);
-        else if (frameX >= 74 && System.currentTimeMillis()-openedAtMs < 6000) {
-            guiGraphics.drawString(font,UiTypography.text(ModTexts.s("play.open_hint")),8,height-18,0xFFADB7C8,false);
-        }
-        if ((!modern || !menu.isOpen()) && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+        renderBar(guiGraphics);
+        renderTrackedWidgets(guiGraphics, mouseX, mouseY, partialTick);
+        if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             renderTouchCursor(guiGraphics);
         }
-        if (!modern && showHints) renderHintsOverlay(guiGraphics);
+        if (showHints) renderHintsOverlay(guiGraphics);
     }
 
     @Override
-    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+    public void renderBackground(GuiGraphics guiGraphics) {
         guiGraphics.fill(0, 0, this.width, this.height, 0xFF000000);
     }
 
-    private int videoWidth() { return modern ? menu.videoWidth() : width; }
-
     private void renderTvFrame(GuiGraphics guiGraphics) {
         ClientConsoles.ScreenEntry entry = ClientConsoles.getScreen(consoleId);
-        int screenH = this.height - (modern ? 0 : BAR_HEIGHT);
-        int screenW = videoWidth();
+        int screenH = this.height - BAR_HEIGHT;
 
         if (entry != null) {
             int texW = entry.width();
             int texH = entry.height();
-            float scale = Math.min((float) screenW / texW, (float) screenH / texH);
+            float scale = Math.min((float) this.width / texW, (float) screenH / texH);
             frameW = (int) (texW * scale);
             frameH = (int) (texH * scale);
-            frameX = (screenW - frameW) / 2;
+            frameX = (this.width - frameW) / 2;
             frameY = (screenH - frameH) / 2;
             // Nearest only looks right at whole-number scales; anywhere else it eats
             // 1px glyph stems and small text becomes unreadable (see setLinear).
             float effective = (float) frameW / texW;
             entry.setLinear(Math.abs(effective - Math.round(effective)) > 0.02f);
-            guiGraphics.blit(entry.id(), frameX, frameY,
-                    0f, 0f, frameW, frameH, frameW, frameH);
+            guiGraphics.blit(entry.id(), frameX, frameY, 0, 0, frameW, frameH, frameW, frameH);
         } else {
             frameX = frameY = frameW = frameH = 0;
             renderStandby(guiGraphics, screenH);
@@ -249,10 +224,10 @@ public class TvScreen extends TrackedWidgetScreen {
 
         if (!hasGame || stopped || elapsedMs >= BOOT_TIMEOUT_MS) {
             g.drawCenteredString(this.font, ModTexts.s("gui.no_signal"),
-                    videoWidth() / 2, screenH / 2, 0xFFFFFFFF);
+                    this.width / 2, screenH / 2, 0xFFFFFF);
             if (hasGame) {
-                String name = this.font.plainSubstrByWidth(displayName, Math.max(60, videoWidth() - 40));
-                g.drawCenteredString(this.font, name, videoWidth() / 2, screenH / 2 + 12, 0xFF707888);
+                String name = this.font.plainSubstrByWidth(displayName, Math.max(60, this.width - 40));
+                g.drawCenteredString(this.font, name, this.width / 2, screenH / 2 + 12, 0xFF707888);
             }
             return;
         }
@@ -263,27 +238,27 @@ public class TvScreen extends TrackedWidgetScreen {
         // Long ROM names ("Castle of Illusion Starring Mickey Mouse…") must not
         // push the card past the window, so bound the name before measuring.
         String name = this.font.plainSubstrByWidth(displayName,
-                Math.max(80, Math.min(260, videoWidth() - 100)));
+                Math.max(80, Math.min(260, this.width - 100)));
         String title = ModTexts.s("gui.starting", name) + ".".repeat(dots);
         String hint = ModTexts.s("gui.starting_hint") + " \u00b7 "
                 + ModTexts.s("gui.starting_elapsed", sec);
         boolean slow = elapsedMs >= BOOT_SLOW_MS;
 
-        int cardW = Math.min(videoWidth() - 40, Math.max(232,
+        int cardW = Math.min(this.width - 40, Math.max(232,
                 Math.max(this.font.width(title), this.font.width(hint)) + 32));
         int cardH = slow ? 80 : 62;
-        int x = (videoWidth() - cardW) / 2;
+        int x = (this.width - cardW) / 2;
         int y = (screenH - cardH) / 2;
 
         g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, COL_EDGE);
         g.fill(x, y, x + cardW, y + cardH, COL_PANEL_2);
 
-        g.drawCenteredString(this.font, title, videoWidth() / 2, y + 11, 0xFFFFFFFF);
+        g.drawCenteredString(this.font, title, this.width / 2, y + 11, 0xFFFFFF);
         renderBootBar(g, x + 16, y + 30, cardW - 32);
-        g.drawCenteredString(this.font, hint, videoWidth() / 2, y + 39, 0xFF9AA2B4);
+        g.drawCenteredString(this.font, hint, this.width / 2, y + 39, 0xFF9AA2B4);
         if (slow) {
             g.drawCenteredString(this.font, ModTexts.s("gui.starting_slow"),
-                    videoWidth() / 2, y + 55, 0xFF707888);
+                    this.width / 2, y + 55, 0xFF707888);
         }
     }
 
@@ -326,7 +301,7 @@ public class TvScreen extends TrackedWidgetScreen {
         }
         if (!displayName.isEmpty()) {
             String title = this.font.plainSubstrByWidth(displayName, avail);
-            guiGraphics.drawCenteredString(this.font, title, barTextLeft + avail / 2, centerY, 0xFFC8C8C8);
+            guiGraphics.drawCenteredString(this.font, title, barTextLeft + avail / 2, centerY, 0xC8C8C8);
         }
     }
 
@@ -377,28 +352,33 @@ public class TvScreen extends TrackedWidgetScreen {
         int pad = 14;
         int gap = 20;
         int rows = Math.max(left.size(), right.size());
-        int cardW = pad * 2 + colW1 + gap + colW2;
+        int cardW = Math.max(pad * 2 + colW1 + gap + colW2,
+                font.width(ModTexts.s("tv.hints.footer")) + pad * 2);
         int cardH = pad * 2 + 14 + rows * 12 + 14;
-        int x = (this.width - cardW) / 2;
-        int y = (this.height - BAR_HEIGHT - cardH) / 2;
+        float scale = Math.min(1f, Math.min((this.width - 12f) / cardW,
+                (this.height - BAR_HEIGHT - 12f) / cardH));
+        int x = (int) ((this.width / scale - cardW) / 2);
+        int y = (int) (((this.height - BAR_HEIGHT) / scale - cardH) / 2);
 
-g.pose().pushPose(); g.pose().translate(0,0,400); try {
+        g.pose().pushPose();
+        g.pose().translate(0, 0, 400);
         g.fill(0, 0, this.width, this.height, 0xB0000000);
+        g.pose().scale(scale, scale, 1f);
         g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, 0xFF3C4250);
         g.fill(x, y, x + cardW, y + cardH, COL_PANEL_2);
 
-        g.drawString(font, ModTexts.s("tv.hints.title"), x + pad, y + pad, 0xFFFFFFFF);
+        g.drawString(font, ModTexts.s("tv.hints.title"), x + pad, y + pad, 0xFFFFFF);
         int ty = y + pad + 14;
         for (int i = 0; i < left.size(); i++) {
-            g.drawString(font, left.get(i), x + pad, ty + i * 12, 0xFFE0E0E0);
+            g.drawString(font, left.get(i), x + pad, ty + i * 12, 0xE0E0E0);
         }
         for (int i = 0; i < right.size(); i++) {
-            g.drawString(font, right.get(i), x + pad + colW1 + gap, ty + i * 12, 0xFFE0E0E0);
+            g.drawString(font, right.get(i), x + pad + colW1 + gap, ty + i * 12, 0xE0E0E0);
         }
         g.drawString(font, ModTexts.s("tv.hints.footer"),
-                x + pad, y + cardH - 12 - 2, 0xFFFFFFFF);
-    } finally { g.pose().popPose(); }
-}
+                x + pad, y + cardH - 12 - 2, 0xFFFFFF);
+        g.pose().popPose();
+    }
 
     private static String line(KeyMapping key, String action) {
         return ModTexts.s("tv.hint.bind", key.getTranslatedKeyMessage().getString(), action);
@@ -431,7 +411,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         if (frameW > 0 && frameH > 0) {
             return PointerMapper.insideFrame(x, y, frameX, frameY, frameW, frameH);
         }
-        return x < videoWidth() && y < this.height - (modern ? 0 : BAR_HEIGHT);
+        return y < this.height - BAR_HEIGHT;
     }
 
     /**
@@ -442,7 +422,6 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     private boolean handleCapturedKeyPress(int keyCode) {
         if (keyCode == InputConstants.KEY_DELETE) {
             releaseInputCapture();
-            if(modern) menu.open(TvMenu.Page.MAIN);
             return true;
         }
         int retroKey = KeyboardMapper.toRetroKey(keyCode);
@@ -488,8 +467,8 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     @Override
     public void tick() {
         super.tick();
-        if (!closed && (!modern || !menu.isOpen())) gamepad.poll();
-        if ((!modern || !menu.isOpen()) && virtualStylus && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
+        if (!closed) gamepad.poll();
+        if (virtualStylus && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             var rightStick = input.rightStick();
             int dx = rightStick.directionX();
             int dy = rightStick.directionY();
@@ -522,14 +501,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        
         if (mouse.isActive()) return handleCapturedKeyPress(keyCode);
-        if (modern) {
-            if(menu.isOpen()) { menu.keyPressed(keyCode, scanCode, modifiers); return true; }
-            if(keyCode==InputConstants.KEY_ESCAPE){onClose();return true;}
-            if(keyCode==InputConstants.KEY_F4){menu.open(TvMenu.Page.MAIN);return true;}
-            if(keyCode==InputConstants.KEY_F1){menu.open(TvMenu.Page.CONTROLS);return true;}
-        }
         if (keyCode == InputConstants.KEY_ESCAPE) {
             if (showHints) {
                 showHints = false;
@@ -538,7 +510,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             this.onClose();
             return true;
         }
-        if (ModKeys.isActiveAndMatches(ModKeys.VIRTUAL_STYLUS, InputConstants.getKey(keyCode,scanCode))
+        if (ModKeys.isActiveAndMatches(ModKeys.VIRTUAL_STYLUS, InputConstants.getKey(keyCode, scanCode))
                 && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             virtualStylus = !virtualStylus;
             return true;
@@ -556,8 +528,9 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             return true;
         }
 
+        InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
         if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
-                && ModKeys.isActiveAndMatches(ModKeys.BTN_CURSOR_TOUCH, InputConstants.getKey(keyCode,scanCode))) {
+                && ModKeys.isActiveAndMatches(ModKeys.BTN_CURSOR_TOUCH, key)) {
             double mx = minecraft.mouseHandler.xpos()
                     * this.width / (double) minecraft.getWindow().getScreenWidth();
             double my = minecraft.mouseHandler.ypos()
@@ -569,34 +542,30 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             sendPointerState(true);
             return true;
         }
-        if (input.handleKeyPressed(InputConstants.getKey(keyCode,scanCode))) return true;
+        if (input.handleKeyPressed(key)) return true;
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
     public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
-        if(modern && menu.isOpen()){menu.keyReleased(keyCode, scanCode, modifiers);return true;}
         if (mouse.isActive()) {
             int retroKey = KeyboardMapper.toRetroKey(keyCode);
             if (retroKey >= 0 && heldKeys.remove(retroKey)) sendKey(retroKey, false);
             return true;
         }
+        InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
         if (inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN
-                && ModKeys.isActiveAndMatches(ModKeys.BTN_CURSOR_TOUCH, InputConstants.getKey(keyCode,scanCode))) {
+                && ModKeys.isActiveAndMatches(ModKeys.BTN_CURSOR_TOUCH, key)) {
             pointerDown = false;
             sendPointerState(false);
             return true;
         }
-        if (input.handleKeyReleased(InputConstants.getKey(keyCode,scanCode))) return true;
+        if (input.handleKeyReleased(key)) return true;
         return super.keyReleased(keyCode, scanCode, modifiers);
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if(modern && menu.isOpen()){menu.mouseClicked(mouseX, mouseY, button);return true;}
-        
-        
-        
         if (mouse.isActive()) {
             mouse.setButton(button, true);
             return true;
@@ -623,7 +592,6 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dx, double dy) {
-        if(modern && menu.isOpen()){menu.mouseDragged(mouseX, mouseY, button, dx, dy);return true;}
         if (pointerDown && button == 0) {
             pointer = PointerMapper.fromScreen(mouseX, mouseY, frameX, frameY, frameW, frameH);
             sendPointerIfChanged(true);
@@ -634,7 +602,6 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if(modern && menu.isOpen()){menu.mouseReleased(mouseX, mouseY, button);return true;}
         if (mouse.isActive()) {
             mouse.setButton(button, false);
             return true;
@@ -653,13 +620,12 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if(modern && menu.isOpen())return menu.mouseScrolled(mouseX,mouseY,scrollX,scrollY);
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
         if (mouse.isActive()) {
             if (scrollY != 0) mouse.addWheel((int) Math.signum(scrollY));
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+        return super.mouseScrolled(mouseX, mouseY, scrollY);
     }
 
     private void sendPointerState(boolean pressed) {
@@ -696,14 +662,13 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         input.sendAnalogZeros();
         sendPointerRelease();
         NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, false));
-        CONTROL_LOG.info("[control] UI Off pos={} console={}", consolePos, consoleId);
         NetAccess.sendToServer(RetroPayloads.POWER_OFF, new RetroPowerOffPacket(consolePos));
-        Minecraft.getInstance().setScreen(ClientUi.library(consolePos));
+        Minecraft.getInstance().setScreen(new CoreSelectScreen(consolePos));
     }
 
-    /** Shared close path; menu navigation never invokes it. */
-    private boolean closeView() {
-        if (closed) return false;
+    @Override
+    public void onClose() {
+        if (closed) return;
         closed = true;
         releaseInputCapture();
         if (!romId.isEmpty()) {
@@ -714,27 +679,8 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         gamepad.reset();
         sendPointerRelease();
         NetAccess.sendToServer(RetroPayloads.VIEW, new RetroViewPacket(consolePos, false));
-        return true;
+        super.onClose();
     }
-    @Override public void onClose() { if(closeView())super.onClose(); }
-
-    String gameName() { return displayName.isEmpty()?ModTexts.s("gui.title"):displayName; }
-    boolean touchProfile() {return inputProfile==CoreInputProfile.TOUCH_DUAL_SCREEN;}
-    boolean keyboardProfile() {return isKeyboardMouse();}
-    void suspendGameInput() {
-        releaseInputCapture();input.releaseAll();input.clearKeyboardAnalog();input.sendAnalogZeros();gamepad.reset();
-        pointerDown=false;setDragging(false);sendPointerRelease();setFocused(null);
-    }
-    void requestState(boolean save) {
-        NetAccess.sendToServer(RetroPayloads.SAVE_STATE,new RetroSaveStatePacket(consolePos,0,save,false));
-    }
-    boolean p2Requested() { return coopP2; }
-    void requestP2(boolean join) {
-        coopP2=join;
-        NetAccess.sendToServer(RetroPayloads.COOP,new RetroCoopPacket(consolePos,join));
-    }
-    void returnToLibrary() {if(closeView())minecraft.setScreen(ClientUi.library(consolePos));}
-    void powerOffFromMenu() {powerOffToMenu();}
 
     private void snapshotThumb(ClientConsoles.ScreenEntry entry) {
         int[] abgr = entry.lastAbgr();
@@ -756,7 +702,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
                     int r = p & 0xFF;
                     int g = (p >> 8) & 0xFF;
                     int b = (p >> 16) & 0xFF;
-                    img.setPixelRGBA(x, y, net.minecraft.util.FastColor.ARGB32.color(255, b, g, r));
+                    img.setPixelRGBA(x, y, FastColor.ABGR32.color(255, b, g, r));
                 }
             }
             var thumb = SaveStates.thumbFor(romId);

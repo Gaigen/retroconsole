@@ -2,8 +2,8 @@ package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 /**
  * C2S: raw keyboard press/release for a console.
@@ -18,7 +18,7 @@ public record RetroKeyPacket(
 
     public static final StreamCodec<ByteBuf, RetroKeyPacket> STREAM_CODEC =
             StreamCodec.composite(
-                    BlockPos.STREAM_CODEC, RetroKeyPacket::pos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS, RetroKeyPacket::pos,
                     ByteBufCodecs.VAR_INT, RetroKeyPacket::key,
                     ByteBufCodecs.BOOL,    RetroKeyPacket::pressed,
                     RetroKeyPacket::new);

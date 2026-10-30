@@ -2,7 +2,6 @@ package com.retroconsole.block;
 
 import com.retroconsole.reg.ModBlockEntities;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.server.level.ServerLevel;
@@ -62,7 +61,7 @@ public class ScreenBlockEntity extends BlockEntity {
         BlockPos pos = worldPosition;
         for (ServerPlayer player : serverLevel.getServer().getPlayerList().getPlayers()) {
             if (player.level() != serverLevel || player.connection == null) continue;
-            if (!player.getChunkTrackingView().contains(new ChunkPos(pos))) continue;
+            if (!serverLevel.getChunkSource().chunkMap.getPlayers(new ChunkPos(pos), false).contains(player)) continue;
             player.connection.send(packet);
         }
     }
@@ -83,8 +82,8 @@ public class ScreenBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.saveAdditional(tag, registries);
+    protected void saveAdditional(CompoundTag tag) {
+        super.saveAdditional(tag);
         if (consoleId != null) {
             tag.putUUID("ConsoleId", consoleId);
         }
@@ -97,8 +96,8 @@ public class ScreenBlockEntity extends BlockEntity {
     }
 
     @Override
-    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.loadAdditional(tag, registries);
+    public void load(CompoundTag tag) {
+        super.load(tag);
         consoleId = tag.hasUUID("ConsoleId") ? tag.getUUID("ConsoleId") : null;
         assembled = tag.contains("GridW");
         xIndex = tag.getInt("GridX");
@@ -108,9 +107,9 @@ public class ScreenBlockEntity extends BlockEntity {
     }
 
     @Override
-    public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        CompoundTag tag = super.getUpdateTag(registries);
-        saveAdditional(tag, registries);
+    public CompoundTag getUpdateTag() {
+        CompoundTag tag = super.getUpdateTag();
+        saveAdditional(tag);
         return tag;
     }
 

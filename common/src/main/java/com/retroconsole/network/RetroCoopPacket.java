@@ -2,8 +2,8 @@ package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 /** C2S: join or leave co-op as Player 2 (port 1) at the given console. */
 public record RetroCoopPacket(
@@ -13,7 +13,7 @@ public record RetroCoopPacket(
 
     public static final StreamCodec<ByteBuf, RetroCoopPacket> STREAM_CODEC =
             StreamCodec.composite(
-                    BlockPos.STREAM_CODEC, RetroCoopPacket::pos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS, RetroCoopPacket::pos,
                     ByteBufCodecs.BOOL,     RetroCoopPacket::join,
                     RetroCoopPacket::new);
 }

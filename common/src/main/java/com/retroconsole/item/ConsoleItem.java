@@ -18,7 +18,7 @@ public class ConsoleItem extends BlockItem {
     }
 
     @Override
-    public void appendHoverText(ItemStack stack, Item.TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
+    public void appendHoverText(ItemStack stack, net.minecraft.world.level.Level context, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("retroconsole.retro_console.tooltip.style")
                 .withStyle(ChatFormatting.GRAY));
         tooltip.add(Component.translatable("retroconsole.retro_console.tooltip.tone")

@@ -1,10 +1,6 @@
 package com.retroconsole.client.bezel;
 
 import com.retroconsole.client.ModTexts;
-import com.retroconsole.client.ClientUi;
-import com.retroconsole.client.LibraryButton;
-import com.retroconsole.client.UiTypography;
-import com.retroconsole.client.UiSlider;
 import com.retroconsole.client.TrackedWidgetScreen;
 import net.minecraft.Util;
 import net.minecraft.client.gui.GuiGraphics;
@@ -34,8 +30,6 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
     private static final int COL_HOVER   = 0xFF1B1F29;
     private static final int COL_SEL     = 0xFF232B45;
 
-    private net.minecraft.client.gui.Font font = net.minecraft.client.Minecraft.getInstance().font;
-    private boolean modern;
     private final Screen parent;
     private List<String> files = List.of();
     private int scroll;
@@ -47,76 +41,50 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
 
     private int listX() { return 10; }
     private int listW() { return width / 2 - 18; }
-    private int listTop() { return modern ? 62 : 46; }
+    private int listTop() { return 46; }
     private int listViewH() { return ((height - listTop() - 32) / ITEM_H) * ITEM_H; }
     private int rightX() { return width / 2 + 2; }
     private int rightW() { return width - rightX() - 10; }
 
-    private boolean embedded;
-    /** TvMenu owns this view. It is not a global Minecraft screen. */
-    public void initEmbedded(net.minecraft.client.Minecraft mc,int w,int h) {
-        embedded=true;minecraft=mc;font=mc.font;width=w;height=h;rebuildWidgets();
-    }
-    @Override protected void rebuildWidgets() {
-        if(!embedded) {super.rebuildWidgets();return;}
-        clearWidgets();clearFocus();setDragging(false);init();setInitialFocus();
-    }
-
     @Override
     protected void init() {
-        modern=ClientUi.modern();
-        font=modern?UiTypography.editingFont(net.minecraft.client.Minecraft.getInstance().font):net.minecraft.client.Minecraft.getInstance().font;
         refreshFiles();
-        if(modern) { initModern(); return; }
 
         int rx = rightX();
         int rw = rightW();
         int y = height - 118;
 
         addRenderableWidget(CycleButton.onOffBuilder(TvBezelPrefs.enabled())
-                .create(rx, y, rw, 18, ModTexts.c("bezel.enabled"),
+                .create(rx, y, rw, 20, ModTexts.c("bezel.enabled"),
                         (b, v) -> TvBezelPrefs.setEnabled(v)));
         y += 22;
 
-        addRenderableWidget(CycleButton.<TvBezelPrefs.FitMode>builder(
-                        m -> ModTexts.c("bezel.fit." + m.name().toLowerCase(Locale.ROOT))).withInitialValue(TvBezelPrefs.fitMode())
+        addRenderableWidget(CycleButton.builder(
+                        (TvBezelPrefs.FitMode m) ->
+                                ModTexts.c("bezel.fit." + m.name().toLowerCase(Locale.ROOT)))
                 .withValues(TvBezelPrefs.FitMode.FIT, TvBezelPrefs.FitMode.FILL, TvBezelPrefs.FitMode.STRETCH)
-                .create(rx, y, rw, 18, ModTexts.c("bezel.fit"),
+                .withInitialValue(TvBezelPrefs.fitMode())
+                .create(rx, y, rw, 20, ModTexts.c("bezel.fit"),
                         (b, v) -> TvBezelPrefs.setFitMode(v)));
         y += 22;
 
-        addRenderableWidget(new OpacitySlider(rx, y, rw, 18));
+        addRenderableWidget(new OpacitySlider(rx, y, rw, 20));
         y += 22;
 
         int half = (rw - 4) / 2;
         addRenderableWidget(Button.builder(ModTexts.c("bezel.open_folder"),
                         b -> Util.getPlatform().openFile(TvBezelPrefs.bezelDir().toFile()))
-                .bounds(rx, y, half, 18).build());
+                .bounds(rx, y, half, 20).build());
         addRenderableWidget(Button.builder(ModTexts.c("bezel.refresh"), b -> {
             TvBezelRenderer.invalidateAll();
             refreshFiles();
             rebuildWidgets();
-        }).bounds(rx + half + 4, y, half, 18).build());
+        }).bounds(rx + half + 4, y, half, 20).build());
         y += 26;
 
         addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose())
-                .bounds(rx + (rw - 100) / 2, y, 100, 18).build());
+                .bounds(rx + (rw - 100) / 2, y, 100, 20).build());
     }
-
-    private void initModern() {
-        int rx=rightX(), rw=rightW(), y=height-144;
-        addRenderableWidget(new LibraryButton(rx,y,rw,22,enabledLabel(),b->{TvBezelPrefs.setEnabled(!TvBezelPrefs.enabled());b.setMessage(enabledLabel());}));y+=26;
-        addRenderableWidget(new LibraryButton(rx,y,rw,22,fitLabel(),b->{
-            var modes=TvBezelPrefs.FitMode.values();TvBezelPrefs.setFitMode(modes[(TvBezelPrefs.fitMode().ordinal()+1)%modes.length]);b.setMessage(fitLabel());
-        }));y+=26;
-        addRenderableWidget(new UiSlider(rx,y,rw,24,TvBezelPrefs.opacity(),v->TvBezelPrefs.setOpacity((float)v),v->ModTexts.c("bezel.opacity",(int)Math.round(v*100))));y+=28;
-        int half=(rw-4)/2;
-        addRenderableWidget(new LibraryButton(rx,y,half,22,ModTexts.c("bezel.open_folder"),b->Util.getPlatform().openFile(TvBezelPrefs.bezelDir().toFile())));
-        addRenderableWidget(new LibraryButton(rx+half+4,y,half,22,ModTexts.c("bezel.refresh"),b->{TvBezelRenderer.invalidateAll();refreshFiles();rebuildWidgets();}));y+=28;
-        addRenderableWidget(new LibraryButton(rx,y,rw,24,Component.translatable("gui.done"),b->onClose()).primary());
-    }
-    private Component enabledLabel() {return ModTexts.c("bezel.enabled").copy().append(": ").append(Component.translatable(TvBezelPrefs.enabled()?"options.on":"options.off"));}
-    private Component fitLabel() {return ModTexts.c("bezel.fit").copy().append(": ").append(ModTexts.c("bezel.fit."+TvBezelPrefs.fitMode().name().toLowerCase(Locale.ROOT)));}
 
     private void refreshFiles() {
         files = TvBezelPrefs.listArtOptions();
@@ -144,14 +112,13 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
 
     @Override
     public void render(GuiGraphics g, int mx, int my, float pt) {
-        if(!modern) renderBackground(g,mx,my,pt);
-        if(modern) g.fill(0,0,width,height,0xFF101318);
+        renderBackground(g);
         g.fill(0, 0, width, 20, COL_PANEL_2);
         g.fill(0, 19, width, 20, COL_EDGE);
-        g.drawCenteredString(font, title, width / 2, 6, 0xFFFFFFFF);
+        g.drawCenteredString(font, title, width / 2, 6, 0xFFFFFF);
         String folder = TvBezelPrefs.bezelDir().toAbsolutePath().toString();
-        g.drawCenteredString(font, font.plainSubstrByWidth(folder, width - 20), width / 2, 23, 0xFF707880);
-        g.drawCenteredString(font, ModTexts.s("bezel.assign_hint"), width / 2, 34, 0xFF9098A0);
+        g.drawCenteredString(font, font.plainSubstrByWidth(folder, width - 20), width / 2, 23, 0x707880);
+        g.drawCenteredString(font, ModTexts.s("bezel.assign_hint"), width / 2, 34, 0x9098A0);
 
         renderList(g, mx, my);
         renderPreviews(g);
@@ -160,8 +127,8 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mx, int my, float pt) {
-        g.fill(0, 0, width, height, 0xE00C0E12);
+    public void renderBackground(GuiGraphics g) {
+        g.fill(0, 0, width, height, 0xFF0C0E12);
     }
 
     private void renderList(GuiGraphics g, int mx, int my) {
@@ -194,7 +161,7 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
             }
             String label = isNone ? ModTexts.s("bezel.none") : name;
             g.drawString(font, font.plainSubstrByWidth(label, x + w - tx - 6), tx, y + 5,
-                    hover ? 0xFFFFFFFF : isNone ? 0xFF9098A0 : 0xFFC8C8C8);
+                    hover ? 0xFFFFFF : isNone ? 0x9098A0 : 0xC8C8C8);
         }
 
         int contentH = files.size() * ITEM_H;
@@ -205,25 +172,30 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
             g.fill(x + w + 2, barY, x + w + 5, barY + barH, 0xC0AAAAAA);
         }
         if (files.size() <= 1) {
-            g.drawCenteredString(font, ModTexts.s("bezel.empty"), x + w / 2, top + 24, 0xFF808890);
+            int textY = top + 24;
+            for (var line : font.split(ModTexts.c("bezel.empty"), w - 12)) {
+                if (textY + font.lineHeight > top + viewH) break;
+                g.drawString(font, line, x + 6, textY, 0x808890);
+                textY += font.lineHeight + 2;
+            }
         }
     }
 
     private void renderPreviews(GuiGraphics g) {
         int rx = rightX(), rw = rightW();
         int top = listTop() + 12;
-        int ph = Math.max(14, height - (modern ? 158 : 132) - top);
+        int ph = Math.max(40, height - 132 - top);
         int half = (rw - 8) / 2;
         drawPreview(g, rx, top, half, ph, TvBezelPrefs.leftPath(), ModTexts.s("bezel.preview.left"));
         drawPreview(g, rx + half + 8, top, half, ph, TvBezelPrefs.rightPath(), ModTexts.s("bezel.preview.right"));
     }
 
     private void drawPreview(GuiGraphics g, int x, int y, int w, int h, Path p, String label) {
-        g.drawString(font, label, x, y - 10, 0xFF9098A0);
+        g.drawString(font, label, x, y - 10, 0x9098A0);
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, COL_EDGE);
         g.fill(x, y, x + w, y + h, 0xFF07090C);
         if (p == null) {
-            g.drawCenteredString(font, ModTexts.s("bezel.none"), x + w / 2, y + h / 2 - 4, 0xFF606870);
+            g.drawCenteredString(font, ModTexts.s("bezel.none"), x + w / 2, y + h / 2 - 4, 0x606870);
             return;
         }
         TvBezelRenderer.Preview tex = TvBezelRenderer.preview(p, Util.getMillis());
@@ -231,15 +203,13 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
         float scale = Math.min((float) w / tex.w(), (float) h / tex.h());
         int dw = Math.max(1, Math.round(tex.w() * scale));
         int dh = Math.max(1, Math.round(tex.h() * scale));
-        g.blit(tex.id(), x + (w - dw) / 2, y + (h - dh) / 2, dw, dh, 0f, 0f, tex.w(), tex.h(), tex.w(), tex.h());
+        g.blit(tex.id(), x + (w - dw) / 2, y + (h - dh) / 2, dw, dh,
+                0f, 0f, tex.w(), tex.h(), tex.w(), tex.h());
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (super.mouseClicked(mouseX, mouseY, button)) return true;
-        double mx = mouseX;
-        double my = mouseY;
-        
+    public boolean mouseClicked(double mx, double my, int button) {
+        if (super.mouseClicked(mx, my, button)) return true;
         int x = listX(), w = listW(), top = listTop(), viewH = listViewH();
         if (mx >= x && mx < x + w && my >= top && my < top + viewH) {
             int idx = (int) ((my - top) / ITEM_H) + scroll;
@@ -254,7 +224,7 @@ public class BezelSettingsScreen extends TrackedWidgetScreen {
     }
 
     @Override
-    public boolean mouseScrolled(double mx, double my, double hx, double hy) {
+    public boolean mouseScrolled(double mx, double my, double hy) {
         scroll = Mth.clamp(scroll - (int) Math.signum(hy), 0, maxScroll());
         return true;
     }

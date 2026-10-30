@@ -1,121 +1,19 @@
-name: Release
-
-on:
-  push:
-    tags:
-      - 'v*'
-
-permissions:
-  contents: write
-
+name: Backport release artifacts
+on: workflow_dispatch
 jobs:
-  native-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install native build deps
-        run: sudo apt-get update && sudo apt-get install -y libegl-dev libgl-dev
-
-      - name: Build Linux native from source
-        run: bash neoforge/build_headless_gl.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-linux
-          path: common/src/main/resources/natives/libheadless_gl.so
-          if-no-files-found: error
-
-  native-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: mingw-w64-x86_64-gcc
-
-      - name: Build Windows native from source
-        shell: msys2 {0}
-        run: |
-          mkdir -p runs/client/config/retroconsole/cores
-          mkdir -p common/src/main/resources/natives
-          gcc -shared -O2 -static -o runs/client/config/retroconsole/cores/.libheadless_gl.dll neoforge/headless_gl_win.c -lopengl32 -lgdi32 -luser32
-          cp runs/client/config/retroconsole/cores/.libheadless_gl.dll common/src/main/resources/natives/libheadless_gl.dll
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-windows
-          path: common/src/main/resources/natives/libheadless_gl.dll
-          if-no-files-found: error
-
   build:
-    needs: [native-linux, native-windows]
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - loader: neoforge
-            task: ':neoforge:build'
-            flags: ''
-          - loader: fabric
-            task: ':fabric:build'
-            flags: '-Pfabric'
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Download built natives
-        uses: actions/download-artifact@v4
-        with:
-          path: natives-out
-
-      - name: Install natives into resources
-        run: |
-          mkdir -p common/src/main/resources/natives
-          cp natives-out/native-linux/libheadless_gl.so common/src/main/resources/natives/
-          cp natives-out/native-windows/libheadless_gl.dll common/src/main/resources/natives/
-
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
-
+          java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-
-      - name: Build ${{ matrix.loader }} jar
-        run: ./gradlew ${{ matrix.task }} ${{ matrix.flags }} --no-daemon
-
+      - run: chmod +x gradlew && ./gradlew build
       - uses: actions/upload-artifact@v4
         with:
-          name: jar-${{ matrix.loader }}
-          path: ${{ matrix.loader }}/build/libs/retroconsole-*.jar
-          if-no-files-found: error
-
-  release:
-    needs: [build]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Read version metadata
-        id: version
-        run: |
-          echo "mod_version=$(grep '^mod_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
-          echo "minecraft_version=$(grep '^minecraft_version=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
-
-      - name: Collect jars
-        uses: actions/download-artifact@v4
-        with:
-          pattern: jar-*
-          path: jars
-          merge-multiple: true
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: RetroConsole ${{ steps.version.outputs.mod_version }} (${{ steps.version.outputs.minecraft_version }})
-          files: jars/retroconsole-*.jar
-          generate_release_notes: true
+          name: retroconsole-1.20.1-release
+          path: |
+            forge/build/libs/*.jar
+            fabric/build/libs/*.jar

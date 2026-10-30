@@ -32,3 +32,7 @@ docs/
 # Local game dir / dev sandboxes (ROMs, cores, BIOS, Ren'Py SDKs, loader experiments)
 /config/
 /.hermes/
+
+# 1.20.1 local QA instances and generated native fixture
+/run/
+/tests/native/*.so

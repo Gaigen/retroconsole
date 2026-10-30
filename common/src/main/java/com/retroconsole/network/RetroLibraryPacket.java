@@ -5,8 +5,8 @@ import com.retroconsole.library.RomLibrary;
 import io.netty.buffer.ByteBuf;
 import io.netty.handler.codec.DecoderException;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -113,7 +113,7 @@ public record RetroLibraryPacket(
 
     public static final StreamCodec<ByteBuf, RetroLibraryPacket> STREAM_CODEC =
             StreamCodec.composite(
-                    BlockPos.STREAM_CODEC, RetroLibraryPacket::consolePos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS, RetroLibraryPacket::consolePos,
                     SYSTEM_LIST, RetroLibraryPacket::systems,
                     CORE_LIST, RetroLibraryPacket::cores,
                     ROM_LIST, RetroLibraryPacket::roms,

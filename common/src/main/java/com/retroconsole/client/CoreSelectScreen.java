@@ -36,57 +36,54 @@ import java.util.UUID;
 
 public class CoreSelectScreen extends TrackedWidgetScreen {
 
-    protected static final org.slf4j.Logger CONTROL_LOG = org.slf4j.LoggerFactory.getLogger("RetroConsole-Control");
+    private enum View { CARDS, LIST, MANUAL }
 
-    protected enum View { CARDS, LIST, MANUAL }
-
-    protected static final int ITEM_H = 16;
-    protected static final int CARD_H = 88;
+    private static final int ITEM_H = 16;
+    private static final int CARD_H = 88;
 
     // System tab strip of the list view. It scrolls sideways instead of wrapping
     // because a library with a dozen systems would otherwise eat the list height.
-    protected static final int TAB_TOP = 48;
-    protected int tabTop() { return TAB_TOP; }
-    protected static final int TAB_H = 18;
-    protected static final int TAB_EDGE = 10;
-    protected static final int TAB_ARROW = 12;
+    private static final int TAB_TOP = 48;
+    private static final int TAB_H = 18;
+    private static final int TAB_EDGE = 10;
+    private static final int TAB_ARROW = 12;
 
-    protected static final int COL_PANEL   = 0xFF101318;
-    protected static final int COL_PANEL_2 = 0xFF14161C;
-    protected static final int COL_EDGE    = 0xFF2A2F3A;
-    protected static final int COL_ROW_A   = 0xFF12151C;
-    protected static final int COL_ROW_B   = 0xFF14171F;
-    protected static final int COL_HOVER   = 0xFF1B1F29;
-    protected static final int COL_SEL     = 0xFF232B45;
+    private static final int COL_PANEL   = 0xFF101318;
+    private static final int COL_PANEL_2 = 0xFF14161C;
+    private static final int COL_EDGE    = 0xFF2A2F3A;
+    private static final int COL_ROW_A   = 0xFF12151C;
+    private static final int COL_ROW_B   = 0xFF14171F;
+    private static final int COL_HOVER   = 0xFF1B1F29;
+    private static final int COL_SEL     = 0xFF232B45;
 
-    protected final BlockPos consolePos;
-    protected final RomLibrary lib = new RomLibrary();
+    private final BlockPos consolePos;
+    private final RomLibrary lib = new RomLibrary();
 
-    protected View view = View.CARDS;
-    protected final List<GameSystem> tabs = new ArrayList<>();
-    protected GameSystem activeTab = null;
+    private View view = View.CARDS;
+    private final List<GameSystem> tabs = new ArrayList<>();
+    private GameSystem activeTab = null;
 
-    protected List<RomLibrary.Rom> shown = new ArrayList<>();
-    protected RomLibrary.Rom selectedRom, heroRom;
-    protected RomLibrary.Core selectedCore;
-    protected final Map<String, String> overrides = new HashMap<>();       // romId -> coreId
-    protected final Map<String, String> systemOverrides = new HashMap<>(); // systemId -> coreId
+    private List<RomLibrary.Rom> shown = new ArrayList<>();
+    private RomLibrary.Rom selectedRom, heroRom;
+    private RomLibrary.Core selectedCore;
+    private final Map<String, String> overrides = new HashMap<>();       // romId -> coreId
+    private final Map<String, String> systemOverrides = new HashMap<>(); // systemId -> coreId
 
-    protected double scrollRoms, targetRoms, scrollCores, targetCores, scrollCards, targetCards;
-    protected int pickerScroll;
-    protected int tabScroll;
+    private double scrollRoms, targetRoms, scrollCores, targetCores, scrollCards, targetCards;
+    private int pickerScroll;
+    private int tabScroll;
 
-    protected EditBox searchBox;
-    protected Button startBtn, pickCoreBtn, backBtn, modeBtn, folderBtn, settingsBtn, helpBtn, appearanceBtn;
-    protected boolean showHelp, showCorePicker;
-    protected boolean serverLibrary;
-    protected boolean libraryLoading;
-    protected long lastClickTime;
-    protected RomLibrary.Rom lastClicked;
+    private EditBox searchBox;
+    private Button startBtn, pickCoreBtn, backBtn, modeBtn, folderBtn;
+    private boolean showHelp, showCorePicker;
+    private boolean serverLibrary;
+    private boolean libraryLoading;
+    private long lastClickTime;
+    private RomLibrary.Rom lastClicked;
 
-    protected GameSystem popupSystem;
-    protected List<RomLibrary.Rom> popupRoms = List.of();
-    protected int popupScroll;
+    private GameSystem popupSystem;
+    private List<RomLibrary.Rom> popupRoms = List.of();
+    private int popupScroll;
 
     public CoreSelectScreen(BlockPos consolePos) {
         super(ModTexts.c("gui.title"));
@@ -102,32 +99,32 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         super.init();
         serverLibrary = ClientLibraryCache.useServerLibrary();
 
-        backBtn = addRenderableWidget(button(Component.literal("⌂"), b -> {
+        backBtn = addRenderableWidget(Button.builder(Component.literal("⌂"), b -> {
             view = View.CARDS;
             modeBtn.setMessage(viewLabel());
             blip(1.2f);
         }).pos(10, 22).size(20, 18).build());
 
-        searchBox = new EditBox(this instanceof ModernCoreSelectScreen ? UiTypography.editingFont(font) : font, 36, 24, 140, 16, ModTexts.c("gui.search"));
-        searchBox.setHint(this instanceof ModernCoreSelectScreen ? UiTypography.text(ModTexts.c("gui.search.hint")) : ModTexts.c("gui.search.hint"));
+        searchBox = new EditBox(font, 36, 24, Math.min(140, width - 216), 16, ModTexts.c("gui.search"));
+        searchBox.setHint(ModTexts.c("gui.search.hint"));
         searchBox.setResponder(s -> refreshShown());
         addRenderableWidget(searchBox);
 
-        folderBtn = addRenderableWidget(button(ModTexts.c("gui.folder"),
+        folderBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.folder"),
                         b -> Util.getPlatform().openFile(RomLibrary.ensureDir(currentFolder()).toFile()))
                 .pos(width - 104, 22).size(44, 18).build());
         folderBtn.active = !serverLibrary;
 
-        settingsBtn = addRenderableWidget(button(ModTexts.c("gui.settings"),
+        addRenderableWidget(Button.builder(ModTexts.c("gui.settings"),
                         b -> { blip(1.1f); ConfigAccess.openScreen(Minecraft.getInstance(), this); })
                 .pos(width - 56, 22).size(20, 18)
                 .tooltip(net.minecraft.client.gui.components.Tooltip.create(ModTexts.c("gui.settings.tooltip")))
                 .build());
 
-        helpBtn = addRenderableWidget(button(Component.literal("?"), b -> showHelp = !showHelp)
+        addRenderableWidget(Button.builder(Component.literal("?"), b -> showHelp = !showHelp)
                 .pos(width - 32, 22).size(20, 18).build());
 
-        modeBtn = addRenderableWidget(button(viewLabel(), b -> {
+        modeBtn = addRenderableWidget(Button.builder(viewLabel(), b -> {
             view = switch (view) {
                 case CARDS -> View.LIST;
                 case LIST -> View.MANUAL;
@@ -139,19 +136,13 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
             ensureActiveTabVisible();
         }).pos(width - 172, 22).size(64, 18).build());
 
-        pickCoreBtn = addRenderableWidget(button(ModTexts.c("gui.core_picker"),
+        pickCoreBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.core_picker"),
                         b -> { if (selectedRom != null) { showCorePicker = true; pickerScroll = 0; } })
                 .pos(width - 86, height - 51).size(76, 18).build());
 
-        startBtn = addRenderableWidget(button(ModTexts.c("gui.start"),
+        startBtn = addRenderableWidget(Button.builder(ModTexts.c("gui.start"),
                         b -> startEmulator())
                 .pos(width / 2 - 60, height - 26).size(120, 20).build());
-
-        appearanceBtn = addRenderableWidget(button(Component.literal("UI"), b -> {
-            savePrefs();
-            minecraft.setScreen(new UiAppearanceScreen(this, () -> ClientUi.library(consolePos)));
-        }).pos(width - 32, 2).size(20, 16)
-                .tooltip(net.minecraft.client.gui.components.Tooltip.create(ModTexts.c("appearance.title"))).build());
 
         if (serverLibrary) {
             libraryLoading = true;
@@ -179,7 +170,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         }
     }
 
-    protected void onLibraryReady() {
+    private void onLibraryReady() {
         rebuildTabs();
         loadPrefs();
         String heroId = PlayStats.lastPlayedRomId();
@@ -192,7 +183,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         refreshShown();
     }
 
-    protected Component viewLabel() {
+    private Component viewLabel() {
         return switch (view) {
             case CARDS -> ModTexts.c("gui.view.cards");
             case LIST -> ModTexts.c("gui.view.list");
@@ -200,7 +191,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         };
     }
 
-    protected void rebuildTabs() {
+    private void rebuildTabs() {
         tabs.clear();
         for (GameSystem s : GameSystem.all()) {
             boolean hasGames = lib.roms.stream().anyMatch(r -> r.system() == s);
@@ -210,7 +201,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         if (activeTab != null && !tabs.contains(activeTab)) activeTab = null;
     }
 
-    protected void refreshShown() {
+    private void refreshShown() {
         String q = searchBox == null ? "" : searchBox.getValue().toLowerCase(Locale.ROOT).trim();
         shown = lib.roms.stream()
                 .filter(r -> view != View.LIST || activeTab == null || r.system() == activeTab)
@@ -223,13 +214,13 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         if (selectedRom != null && !shown.contains(selectedRom)) selectedRom = null;
     }
 
-    protected RomLibrary.Core coreById(String id) {
+    private RomLibrary.Core coreById(String id) {
         if (id == null) return null;
         for (RomLibrary.Core c : lib.cores) if (c.id().equals(id)) return c;
         return null;
     }
 
-    protected RomLibrary.Core coreForSystem(GameSystem s) {
+    private RomLibrary.Core coreForSystem(GameSystem s) {
         RomLibrary.Core c = coreById(systemOverrides.get(s.id));
         if (c != null) return c;
         for (String hint : s.coreHints)
@@ -239,23 +230,23 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
     }
 
     /** Core for a game: per-file player choice → per-system choice → system priorities. */
-    protected RomLibrary.Core coreFor(RomLibrary.Rom rom) {
+    private RomLibrary.Core coreFor(RomLibrary.Rom rom) {
         if (rom == null) return null;
         RomLibrary.Core c = coreById(overrides.get(rom.id()));
         return c != null ? c : coreForSystem(rom.system());
     }
 
-    protected Path currentFolder() {
+    private Path currentFolder() {
         if (view == View.LIST && activeTab != null && activeTab != GameSystem.OTHER)
             return RomLibrary.romsDir().resolve(activeTab.folder);
         return RomLibrary.romsDir();
     }
 
-    protected void startEmulator() {
+    private void startEmulator() {
         startEmulator(false);
     }
 
-    protected void startEmulator(boolean loadAuto) {
+    private void startEmulator(boolean loadAuto) {
         if (selectedRom == null) return;
         RomLibrary.Core core = view == View.MANUAL ? selectedCore : coreFor(selectedRom);
         if (core == null) {
@@ -269,14 +260,13 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         savePrefs();
         PlayStats.onLaunch(selectedRom.id());
         blip(2.0f);
-        CONTROL_LOG.info("[control] UI launch pos={} core={} rom={} loadAuto={}", consolePos, core.id(), selectedRom.id(), loadAuto);
         NetAccess.sendToServer(RetroPayloads.CORE_SELECT,
                 new RetroCoreSelectPacket(consolePos, core.id(), selectedRom.id(), loadAuto));
         Minecraft.getInstance().setScreen(
                 new TvScreen(consolePos, resolveConsoleId(), selectedRom.id(), selectedRom.system().id));
     }
 
-    protected UUID resolveConsoleId() {
+    private UUID resolveConsoleId() {
         var level = Minecraft.getInstance().level;
         if (level == null) return null;
         if (level.getBlockEntity(consolePos) instanceof RetroConsoleBlockEntity console) {
@@ -293,7 +283,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
         return null;
     }
 
-    protected List<RomLibrary.Rom> romsOf(GameSystem s) {
+    private List<RomLibrary.Rom> romsOf(GameSystem s) {
         return lib.roms.stream().filter(r -> r.system() == s)
                 .sorted(Comparator
                         .comparing((RomLibrary.Rom r) -> !PlayStats.favorite(r.id()))
@@ -301,7 +291,7 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
                 .toList();
     }
 
-    protected void openPopup(GameSystem s) {
+    private void openPopup(GameSystem s) {
         popupSystem = s;
         popupRoms = romsOf(s);
         popupScroll = 0;
@@ -310,27 +300,28 @@ public class CoreSelectScreen extends TrackedWidgetScreen {
     }
 
     /** Popup geometry: [x, y, w, h, visible rows]. */
-    protected int[] popupGeom() {
+    private int[] popupGeom() {
         int w = Math.min(width - 60, 440);
         int visible = Math.max(3, Math.min(Math.max(popupRoms.size(), 1), (height - 140) / ITEM_H));
         int h = visible * ITEM_H + 66;
         return new int[]{(width - w) / 2, (height - h) / 2, w, h, visible};
     }
 
-    protected void renderGamePopup(GuiGraphics g, int mx, int my) {
+    private void renderGamePopup(GuiGraphics g, int mx, int my) {
         int[] geo = popupGeom();
         int x = geo[0], y = geo[1], w = geo[2], h = geo[3], visible = geo[4];
-g.pose().pushPose(); g.pose().translate(0,0,400); try {
+        g.pose().pushPose();
+        g.pose().translate(0, 0, 400);
         g.fill(0, 0, width, height, 0xB0000000);
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF3C4250);
         g.fill(x, y, x + w, y + h, COL_PANEL_2);
         g.fill(x, y, x + w, y + 2, popupSystem.color);
 
         long total = popupRoms.stream().mapToLong(r -> PlayStats.playtimeSec(r.id())).sum();
-        drawText(g, "§l" + ModTexts.fullName(popupSystem), x + 12, y + 10, 0xFFFFFFFF);
+        g.drawString(font, "§l" + ModTexts.fullName(popupSystem), x + 12, y + 10, 0xFFFFFF);
         String hdr = popupRoms.size() + " " + ModTexts.gamesWord(popupRoms.size())
                 + (total > 0 ? " • " + PlayStats.formatPlaytime(total) : "");
-        drawText(g, hdr, x + w - textWidth(hdr) - 12, y + 10, 0xFF9098A0);
+        g.drawString(font, hdr, x + w - font.width(hdr) - 12, y + 10, 0x9098A0);
 
         int listY = y + 26;
         for (int i = popupScroll; i < popupRoms.size() && i < popupScroll + visible; i++) {
@@ -348,18 +339,18 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             String right = (SaveStates.hasSave(rom.id()) ? "§a●§r " : "")
                     + (pt > 0 ? "§7" + PlayStats.formatPlaytime(pt) + "§r  " : "")
                     + "§8" + formatSize(rom.size());
-            int rightW = textWidth(right);
-            String name = trimText(rom.displayName(),
+            int rightW = font.width(right);
+            String name = font.plainSubstrByWidth(rom.displayName(),
                     w - 40 - rightW - (fav ? 12 : 0));
-            int color = !playable ? 0xFF707070 : sel ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8;
-            drawText(g, (fav ? "§e★ §r" : "") + name, x + 14, ry + 4, color);
-            drawText(g, right, x + w - rightW - 10, ry + 4, 0xFFFFFFFF);
+            int color = !playable ? 0x707070 : sel ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8;
+            g.drawString(font, (fav ? "§e★ §r" : "") + name, x + 14, ry + 4, color);
+            g.drawString(font, right, x + w - rightW - 10, ry + 4, 0xFFFFFF);
         }
         if (popupRoms.isEmpty())
-            centerText(g, serverLibrary
+            g.drawCenteredString(font, serverLibrary
                             ? ModTexts.s("empty.popup.server", popupSystem.folder)
                             : ModTexts.s("empty.popup.local", popupSystem.folder),
-                    x + w / 2, listY + 16, 0xFF808890);
+                    x + w / 2, listY + 16, 0x808890);
 
         RomLibrary.Core core = coreFor(selectedRom);
         boolean hasSave = selectedRom != null && SaveStates.hasSave(selectedRom.id());
@@ -368,47 +359,23 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
                     ? ModTexts.s("popup.continue")
                     : ModTexts.s("popup.launch"))
                 : ModTexts.s("popup.pick_core");
-        drawText(g, foot, x + 12, y + h - 16, 0xFFFFFFFF);
-    } finally { g.pose().popPose(); }
-}
-
-    protected Button.Builder button(Component message, Button.OnPress action) {
-        return Button.builder(message, action);
+        g.drawString(font, font.plainSubstrByWidth(foot, w - 24), x + 12, y + h - 16, 0xFFFFFF);
+        g.pose().popPose();
     }
 
-    protected void drawText(GuiGraphics g, String text, int x, int y, int color) {
-        g.drawString(font, text, x, y, color);
-    }
-
-    protected void drawText(GuiGraphics g, String text, int x, int y, int color, boolean shadow) {
-        g.drawString(font, text, x, y, color, shadow);
-    }
-
-    protected void centerText(GuiGraphics g, String text, int x, int y, int color) {
-        g.drawCenteredString(font, text, x, y, color);
-    }
-
-    protected int textWidth(String text) { return font.width(text); }
-    protected String trimText(String text, int width) { return font.plainSubstrByWidth(text, Math.max(0, width)); }
-    protected int coreW() { return width / 2 - 18; }
-    protected int gameX() { return view == View.LIST ? 10 : width / 2 + 8; }
-    protected int gameW() { return view == View.LIST ? width - 20 : width / 2 - 18; }
-
-    protected int listTop() { return view == View.LIST ? 70 : 48; }
-    protected int listHeight() { return ((height - listTop() - 58) / ITEM_H) * ITEM_H; }
-    protected int cardCols() { return Math.max(2, (width - 20) / 168); }
-    protected int cardW() { return (width - 20 - (cardCols() - 1) * 8) / cardCols(); }
-    protected int heroY() { return 54; }
-    protected int cardsTop() { return heroY() + (heroRom == null ? 0 : 76); }
+    private int listTop() { return view == View.LIST ? 70 : 48; }
+    private int listHeight() { return ((height - listTop() - 58) / ITEM_H) * ITEM_H; }
+    private int cardCols() { return Math.max(2, (width - 20) / 168); }
+    private int cardW() { return (width - 20 - (cardCols() - 1) * 8) / cardCols(); }
+    private int cardsTop() { return 54 + (heroRom == null ? 0 : 76); }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mx, int my, float pt) {
+    public void renderBackground(GuiGraphics g) {
         g.fill(0, 0, width, height, 0xE00C0E12);
     }
 
     @Override
     public void render(GuiGraphics g, int mx, int my, float pt) {
-        renderBackground(g,mx,my,pt);
         scrollRoms = approach(scrollRoms, targetRoms);
         scrollCores = approach(scrollCores, targetCores);
         scrollCards = approach(scrollCards, targetCards);
@@ -419,9 +386,12 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         startBtn.visible = !cards;
         if (cards) pickCoreBtn.visible = false;
 
-        renderHeader(g);
+        renderBackground(g);
+        g.fill(0, 0, width, 46, COL_PANEL_2);
+        g.fill(0, 45, width, 46, COL_EDGE);
+        g.drawString(font, "§lRETRO CONSOLE", 10, 8, 0xFFE0E0E0);
         if (libraryLoading) {
-            centerText(g, ModTexts.s("gui.loading"), width / 2, height / 2, 0xFFC0C8D0);
+            g.drawCenteredString(font, ModTexts.s("gui.loading"), width / 2, height / 2, 0xC0C8D0);
             renderTrackedWidgets(g, mx, my, pt);
             return;
         }
@@ -429,7 +399,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             String stats = lib.roms.size() + " " + ModTexts.gamesWord(lib.roms.size())
                     + " • " + lib.cores.size() + " " + ModTexts.coresWord(lib.cores.size());
             if (serverLibrary) stats += " " + ModTexts.s("gui.server_tag");
-            renderStats(g, stats);
+            g.drawString(font, "§8" + stats, 110, 8, 0xFFFFFF);
         }
 
         switch (view) {
@@ -437,13 +407,13 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             case LIST -> {
                 renderTabs(g, mx, my);
                 renderPanel(g);
-                renderGameList(g, mx, my, gameX(), gameW());
+                renderGameList(g, mx, my, 10, width - 20);
                 renderInfoBar(g);
             }
             case MANUAL -> {
                 renderPanel(g);
                 renderCoreList(g, mx, my);
-                renderGameList(g, mx, my, gameX(), gameW());
+                renderGameList(g, mx, my, width / 2 + 8, width / 2 - 18);
                 renderInfoBar(g);
             }
         }
@@ -455,24 +425,16 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         if (showCorePicker) renderCorePicker(g, mx, my);
     }
 
-    protected void renderHeader(GuiGraphics g) {
-        g.fill(0, 0, width, 46, COL_PANEL_2);
-        g.fill(0, 45, width, 46, COL_EDGE);
-        drawText(g, "§lRETRO CONSOLE", 10, 8, 0xFFE0E0E0);
-    }
-
-    protected void renderStats(GuiGraphics g, String stats) { drawText(g, "§8" + stats, 110, 8, 0xFFFFFFFF); }
-
-    protected void renderPanel(GuiGraphics g) {
+    private void renderPanel(GuiGraphics g) {
         int top = listTop(), viewH = listHeight();
         g.fill(8, top - 3, width - 8, top + viewH + 3, COL_PANEL);
         g.fill(8, top - 3, width - 8, top - 2, COL_EDGE);
     }
 
-    protected void renderCards(GuiGraphics g, int mx, int my) {
+    private void renderCards(GuiGraphics g, int mx, int my) {
         if (heroRom != null) renderHero(g, mx, my);
         if (tabs.isEmpty()) {
-            centerText(g, emptyLibraryHint(), width / 2, height / 2, 0xFF808890);
+            g.drawCenteredString(font, emptyLibraryHint(), width / 2, height / 2, 0x808890);
             return;
         }
         int cols = cardCols(), cw = cardW(), top = cardsTop();
@@ -486,7 +448,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         g.disableScissor();
     }
 
-    protected void renderCard(GuiGraphics g, GameSystem s, int x, int y, int w, int mx, int my) {
+    private void renderCard(GuiGraphics g, GameSystem s, int x, int y, int w, int mx, int my) {
         boolean hover = mx >= x && mx < x + w && my >= y && my < y + CARD_H && my >= cardsTop() - 4;
         long games = lib.roms.stream().filter(r -> r.system() == s).count();
         boolean hasCore = coreForSystem(s) != null;
@@ -498,17 +460,17 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         g.fill(x, y, x + w, y + artH, dim(s.color, 0.15f));
         g.fill(x, y + artH, x + w, y + artH + 2, s.color);
 
-        drawText(g, trimText(ModTexts.tab(s), w - 12), x + 6, y + artH + 6, 0xFFFFFFFF);
+        g.drawString(font, font.plainSubstrByWidth(ModTexts.tab(s), w - 12), x + 6, y + artH + 6, 0xFFFFFF);
         long played = lib.roms.stream().filter(r -> r.system() == s)
                 .mapToLong(r -> PlayStats.playtimeSec(r.id())).sum();
         String info = games + " " + ModTexts.gamesWord(games)
                 + (hasCore ? "" : ModTexts.s("card.no_core"))
                 + (played > 0 ? "  §8" + PlayStats.formatPlaytime(played) : "");
-        drawText(g, trimText(info, w - 12), x + 6, y + artH + 16, 0xFF9098A0);
+        g.drawString(font, font.plainSubstrByWidth(info, w - 12), x + 6, y + artH + 16, 0x9098A0);
     }
 
-    protected void renderHero(GuiGraphics g, int mx, int my) {
-        int x = 10, y = heroY(), w = width - 20, h = 68;
+    private void renderHero(GuiGraphics g, int mx, int my) {
+        int x = 10, y = 54, w = width - 20, h = 68;
         boolean hover = mx >= x && mx < x + w && my >= y && my < y + h;
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, hover ? 0xFF4A5468 : COL_EDGE);
         g.fill(x, y, x + w, y + h, hover ? COL_SEL : COL_PANEL_2);
@@ -517,34 +479,35 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         g.fill(x + 4, y + 4, x + 4 + tw, y + h - 4, dim(heroRom.system().color, 0.15f));
 
         int tx = x + tw + 14;
-        drawText(g, ModTexts.s("hero.continue_label"), tx, y + 9, 0xFFFFFFFF);
-        drawText(g, "§l" + trimText(heroRom.displayName(), w - tw - 60),
-                tx, y + 22, hover ? 0xFF80FF90 : 0xFFFFFFFF);
+        g.drawString(font, ModTexts.s("hero.continue_label"), tx, y + 9, 0xFFFFFF);
+        g.drawString(font, "§l" + font.plainSubstrByWidth(heroRom.displayName(), w - tw - 60),
+                tx, y + 22, hover ? 0x80FF90 : 0xFFFFFF);
         String line = ModTexts.fullName(heroRom.system());
         long pt = PlayStats.playtimeSec(heroRom.id());
         if (pt > 0) line += ModTexts.s("hero.played") + PlayStats.formatPlaytime(pt);
         long st = SaveStates.saveTime(heroRom.id());
         if (st > 0) line += ModTexts.s("hero.save") + PlayStats.formatAgo(st);
-        drawText(g, trimText(line, w - tw - 60), tx, y + 38, 0xFF9098A0);
-        drawText(g, ModTexts.s("hero.hint"), tx, y + 52, 0xFF707880);
+        g.drawString(font, font.plainSubstrByWidth(line, w - tw - 60), tx, y + 38, 0x9098A0);
+        g.drawString(font, ModTexts.s("hero.hint"), tx, y + 52, 0x707880);
 
         g.pose().pushPose();
         g.pose().translate(x + w - 24, y + h / 2f - 8, 0);
         g.pose().scale(2f, 2f, 1f);
-        drawText(g, "▶", 0, 0, hover ? 0xFF80FF90 : 0xFF506050);
+        g.drawString(font, "▶", 0, 0, hover ? 0x80FF90 : 0x506050);
         g.pose().popPose();
     }
 
     /** Card textures over buttons — no extra dimming renderBackground from super.render(). */
-    protected void renderCardTextures(GuiGraphics g) {
+    private void renderCardTextures(GuiGraphics g) {
         if (heroRom != null) {
-            int x = 10, y = heroY(), h = 68, tw = 84;
+            int x = 10, y = 54, h = 68, tw = 84;
             TextureCache.Tex thumb = TextureCache.get(SaveStates.thumbFor(heroRom.id()));
             if (thumb != null) {
-                g.blit(thumb.location(), x + 4, y + 4, tw, h - 8, 0f, 0f, thumb.width(), thumb.height(), thumb.width(), thumb.height());
+                g.blit(thumb.location(), x + 4, y + 4, tw, h - 8, 0f, 0f,
+                        thumb.width(), thumb.height(), thumb.width(), thumb.height());
             } else {
                 g.fill(x + 4, y + 4, x + 4 + tw, y + h - 4, dim(heroRom.system().color, 0.3f));
-                centerText(g, heroRom.system().badge, x + 4 + tw / 2, y + h / 2 - 4, 0xFFFFFFFF);
+                g.drawCenteredString(font, heroRom.system().badge, x + 4 + tw / 2, y + h / 2 - 4, 0xFFFFFF);
             }
         }
         if (tabs.isEmpty()) return;
@@ -560,14 +523,15 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
                     ? ClientArtCache.get(s.folder)
                     : TextureCache.get(ArtGenerator.artDir().resolve(s.folder + ".png"));
             if (art != null) {
-                g.blit(art.location(), x, y, cw, artH, 0f, 0f, art.width(), art.height(), art.width(), art.height());
+                g.blit(art.location(), x, y, cw, artH, 0f, 0f,
+                        art.width(), art.height(), art.width(), art.height());
             } else {
                 g.fill(x, y, x + cw, y + artH, dim(s.color, 0.22f));
                 g.fill(x, y + artH - 12, x + cw, y + artH, dim(s.color, 0.35f));
                 g.pose().pushPose();
                 g.pose().translate(x + cw / 2f, y + artH / 2f - 8, 0);
                 g.pose().scale(2f, 2f, 1f);
-                centerText(g, s.badge, 0, 0, 0xFFFFFFFF);
+                g.drawCenteredString(font, s.badge, 0, 0, 0xFFFFFFFF);
                 g.pose().popPose();
             }
         }
@@ -575,12 +539,12 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     }
 
     /** Unscrolled tab rectangles: [x, w, index]; index -1 = "All". */
-    protected List<int[]> tabRectsRaw() {
+    private List<int[]> tabRectsRaw() {
         boolean counts = tabCountsFit();
         List<int[]> out = new ArrayList<>();
         int x = 0;
         for (int i = -1; i < tabs.size(); i++) {
-            int w = textWidth(tabLabel(i < 0 ? null : tabs.get(i), counts)) + 14;
+            int w = font.width(tabLabel(i < 0 ? null : tabs.get(i), counts)) + 14;
             out.add(new int[]{x, w, i});
             x += w + 3;
         }
@@ -588,57 +552,57 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     }
 
     /** Tab rectangles as drawn: strip offset applied, in screen coordinates. */
-    protected List<int[]> tabRects() {
+    private List<int[]> tabRects() {
         int origin = tabOriginX() - tabScroll;
         List<int[]> out = new ArrayList<>();
         for (int[] r : tabRectsRaw()) out.add(new int[]{origin + r[0], r[1], r[2]});
         return out;
     }
 
-    protected int tabsWidth() {
+    private int tabsWidth() {
         List<int[]> raw = tabRectsRaw();
         return raw.isEmpty() ? 0 : raw.get(raw.size() - 1)[0] + raw.get(raw.size() - 1)[1];
     }
 
-    protected boolean tabsOverflow() {
+    private boolean tabsOverflow() {
         return tabsWidth() > width - 2 * TAB_EDGE;
     }
 
     /** Left edge of the strip; the arrow buttons take TAB_ARROW on each side when it scrolls. */
-    protected int tabOriginX() {
+    private int tabOriginX() {
         return TAB_EDGE + (tabsOverflow() ? TAB_ARROW : 0);
     }
 
-    protected int tabViewportW() {
+    private int tabViewportW() {
         return Math.max(1, width - 2 * TAB_EDGE - (tabsOverflow() ? 2 * TAB_ARROW : 0));
     }
 
-    protected int maxTabScroll() {
+    private int maxTabScroll() {
         return Math.max(0, tabsWidth() - tabViewportW());
     }
 
-    protected void clampTabScroll() {
+    private void clampTabScroll() {
         tabScroll = Math.max(0, Math.min(tabScroll, maxTabScroll()));
     }
 
-    protected int[] tabArrowRect(boolean left) {
+    private int[] tabArrowRect(boolean left) {
         int x = left ? TAB_EDGE : width - TAB_EDGE - TAB_ARROW;
-        return new int[]{x, tabTop(), TAB_ARROW, TAB_H};
+        return new int[]{x, TAB_TOP, TAB_ARROW, TAB_H};
     }
 
-    protected boolean tabArrowHit(double mx, double my, boolean left) {
+    private boolean tabArrowHit(double mx, double my, boolean left) {
         int[] r = tabArrowRect(left);
         return mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3];
     }
 
-    protected void scrollTabs(int dir) {
+    private void scrollTabs(int dir) {
         tabScroll += dir * Math.max(ITEM_H, tabViewportW() - 30);
         clampTabScroll();
         blip(1.0f);
     }
 
     /** Scrolls the strip just enough to show a drawn tab rectangle. */
-    protected void ensureTabVisible(int[] rect) {
+    private void ensureTabVisible(int[] rect) {
         if (!tabsOverflow()) {
             tabScroll = 0;
             return;
@@ -649,7 +613,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         clampTabScroll();
     }
 
-    protected void ensureActiveTabVisible() {
+    private void ensureActiveTabVisible() {
         int index = activeTab == null ? -1 : tabs.indexOf(activeTab);
         for (int[] rect : tabRects()) {
             if (rect[2] == index) {
@@ -659,14 +623,14 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         }
     }
 
-    protected boolean tabCountsFit() {
+    private boolean tabCountsFit() {
         int x = 10;
         for (int i = -1; i < tabs.size(); i++)
-            x += textWidth(tabLabel(i < 0 ? null : tabs.get(i), true)) + 17;
+            x += font.width(tabLabel(i < 0 ? null : tabs.get(i), true)) + 17;
         return x <= width - 10;
     }
 
-    protected String tabLabel(GameSystem s, boolean counts) {
+    private String tabLabel(GameSystem s, boolean counts) {
         if (s == null) {
             return ModTexts.tabLabel(null, counts, lib.roms.size());
         }
@@ -675,22 +639,22 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         return ModTexts.tabLabel(s, true, n);
     }
 
-    protected void renderTabs(GuiGraphics g, int mx, int my) {
+    private void renderTabs(GuiGraphics g, int mx, int my) {
         clampTabScroll();
         boolean counts = tabCountsFit();
         boolean overflow = tabsOverflow();
         int viewX = tabOriginX(), viewW = tabViewportW();
-        g.enableScissor(viewX, tabTop(), viewX + viewW, tabTop() + TAB_H);
+        g.enableScissor(viewX, TAB_TOP, viewX + viewW, TAB_TOP + TAB_H);
         for (int[] rect : tabRects()) {
             GameSystem s = rect[2] < 0 ? null : tabs.get(rect[2]);
             boolean active = activeTab == s;
-            boolean hover = mx >= rect[0] && mx < rect[0] + rect[1] && my >= tabTop() && my < tabTop() + TAB_H;
-            g.fill(rect[0], tabTop(), rect[0] + rect[1], tabTop() + TAB_H,
+            boolean hover = mx >= rect[0] && mx < rect[0] + rect[1] && my >= TAB_TOP && my < TAB_TOP + TAB_H;
+            g.fill(rect[0], TAB_TOP, rect[0] + rect[1], TAB_TOP + TAB_H,
                     active ? COL_SEL : hover ? COL_HOVER : COL_PANEL);
-            g.fill(rect[0], tabTop() + TAB_H - 2, rect[0] + rect[1], tabTop() + TAB_H,
+            g.fill(rect[0], TAB_TOP + TAB_H - 2, rect[0] + rect[1], TAB_TOP + TAB_H,
                     active ? (s == null ? 0xFF80A0FF : s.color) : COL_EDGE);
-            centerText(g, tabLabel(s, counts),
-                    rect[0] + rect[1] / 2, tabTop() + 5, active ? 0xFFFFFFFF : hover ? 0xFFD0D0D0 : 0xFF909090);
+            g.drawCenteredString(font, tabLabel(s, counts),
+                    rect[0] + rect[1] / 2, TAB_TOP + 5, active ? 0xFFFFFF : hover ? 0xD0D0D0 : 0x909090);
         }
         g.disableScissor();
         if (overflow) {
@@ -699,16 +663,16 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         }
     }
 
-    protected void drawTabArrow(GuiGraphics g, int mx, int my, boolean left, boolean enabled) {
+    private void drawTabArrow(GuiGraphics g, int mx, int my, boolean left, boolean enabled) {
         int[] r = tabArrowRect(left);
         boolean hover = enabled && mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3];
         g.fill(r[0], r[1], r[0] + r[2], r[1] + r[3], hover ? COL_HOVER : COL_PANEL_2);
         g.fill(left ? r[0] + r[2] - 1 : r[0], r[1], left ? r[0] + r[2] : r[0] + 1, r[1] + r[3], COL_EDGE);
-        centerText(g, left ? "\u25C0" : "\u25B6",
-                r[0] + r[2] / 2, r[1] + 5, enabled ? (hover ? 0xFFFFFFFF : 0xFFB0B8C0) : 0xFF404850);
+        g.drawCenteredString(font, left ? "\u25C0" : "\u25B6",
+                r[0] + r[2] / 2, r[1] + 5, enabled ? (hover ? 0xFFFFFF : 0xB0B8C0) : 0x404850);
     }
 
-    protected void renderGameList(GuiGraphics g, int mx, int my, int x, int w) {
+    private void renderGameList(GuiGraphics g, int mx, int my, int x, int w) {
         int top = listTop(), viewH = listHeight();
         int first = (int) (scrollRoms / ITEM_H);
         for (int i = first; i < shown.size(); i++) {
@@ -726,28 +690,28 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
 
             int textX = x + 8;
             if (sel && (Util.getMillis() / 400) % 2 == 0)
-                drawText(g, "►", textX, y + 4, 0xFF80FF90);
+                g.drawString(font, "►", textX, y + 4, 0x80FF90);
             textX += 10;
 
             String badge = rom.system().badge;
-            int badgeW = textWidth(badge) + 6;
+            int badgeW = font.width(badge) + 6;
             g.fill(textX, y + 2, textX + badgeW, y + ITEM_H - 3,
                     playable ? rom.system().color : 0xFF505050);
-            drawText(g, badge, textX + 3, y + 4, 0xFF101010, false);
+            g.drawString(font, badge, textX + 3, y + 4, 0xFF101010, false);
 
             long pt = PlayStats.playtimeSec(rom.id());
             String right = (SaveStates.hasSave(rom.id()) ? "§a●§r " : "")
                     + (pt > 0 ? "§7" + PlayStats.formatPlaytime(pt) + "§r  " : "")
                     + "§8" + formatSize(rom.size());
-            int rightW = textWidth(right);
+            int rightW = font.width(right);
 
             String warn = rom.misplaced() ? " ⚠" : "";
             int nameX = textX + badgeW + 6;
-            int avail = x + w - nameX - rightW - 12 - (fav ? 12 : 0) - textWidth(warn);
-            String name = trimText(rom.displayName(), avail);
-            int color = !playable ? 0xFF707070 : sel ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8;
-            drawText(g, (fav ? "§e★ §r" : "") + name + warn, nameX, y + 4, color);
-            drawText(g, right, x + w - rightW - 4, y + 4, 0xFFFFFFFF);
+            int avail = x + w - nameX - rightW - 12 - (fav ? 12 : 0) - font.width(warn);
+            String name = font.plainSubstrByWidth(rom.displayName(), avail);
+            int color = !playable ? 0x707070 : sel ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8;
+            g.drawString(font, (fav ? "§e★ §r" : "") + name + warn, nameX, y + 4, color);
+            g.drawString(font, right, x + w - rightW - 4, y + 4, 0xFFFFFF);
         }
         renderScrollbar(g, x + w, top, viewH, shown.size(), scrollRoms);
 
@@ -755,12 +719,12 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             String hint = !searchBox.getValue().isEmpty() ? ModTexts.s("gui.no_results")
                     : activeTab != null ? emptyTabHint(activeTab)
                     : emptyLibraryHint();
-            centerText(g, hint, x + w / 2, top + 24, 0xFF808890);
+            g.drawCenteredString(font, hint, x + w / 2, top + 24, 0x808890);
         }
     }
 
-    protected void renderCoreList(GuiGraphics g, int mx, int my) {
-        int x = 10, w = coreW(), top = listTop(), viewH = listHeight();
+    private void renderCoreList(GuiGraphics g, int mx, int my) {
+        int x = 10, w = width / 2 - 18, top = listTop(), viewH = listHeight();
         int first = (int) (scrollCores / ITEM_H);
         for (int i = first; i < lib.cores.size(); i++) {
             int y = top + i * ITEM_H - (int) scrollCores;
@@ -771,18 +735,18 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             g.fill(x, y, x + w, y + ITEM_H - 1,
                     sel ? COL_SEL : hover ? COL_HOVER : (i % 2 == 0 ? COL_ROW_A : COL_ROW_B));
             g.fill(x, y, x + 3, y + ITEM_H - 1, core.system().color);
-            drawText(g, trimText(core.displayName(), w - 12),
-                    x + 8, y + 4, sel ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8);
+            g.drawString(font, font.plainSubstrByWidth(core.displayName(), w - 12),
+                    x + 8, y + 4, sel ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8);
         }
         renderScrollbar(g, x + w, top, viewH, lib.cores.size(), scrollCores);
         if (lib.cores.isEmpty())
-            centerText(g, serverLibrary
+            g.drawCenteredString(font, serverLibrary
                             ? ModTexts.s("empty.cores.server")
                             : ModTexts.s("empty.cores.local"),
-                    x + w / 2, top + 24, 0xFF808890);
+                    x + w / 2, top + 24, 0x808890);
     }
 
-    protected void renderInfoBar(GuiGraphics g) {
+    private void renderInfoBar(GuiGraphics g) {
         RomLibrary.Core core = view == View.MANUAL ? selectedCore : coreFor(selectedRom);
         boolean ready = selectedRom != null && core != null;
         startBtn.active = ready;
@@ -799,56 +763,61 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             if (pt > 0) left += " • " + PlayStats.formatPlaytime(pt);
             long st = SaveStates.saveTime(selectedRom.id());
             if (st > 0) left += ModTexts.s("info.save_short") + PlayStats.formatAgo(st);
-            drawText(g, trimText(left, rightLimit - 230), 16, y + 6, 0xFFFFFFFF);
+            int rightWidth = Math.min(220, (rightLimit - 16) / 2);
+            g.drawString(font, font.plainSubstrByWidth(left, rightLimit - 24 - rightWidth), 16, y + 6, 0xFFFFFF);
             String right = ready ? "§a" + core.displayName()
                     : view == View.MANUAL ? ModTexts.s("info.pick_core_manual")
                     : ModTexts.s("info.pick_core_list");
-            drawText(g, trimText(right, 220),
-                    rightLimit - Math.min(220, textWidth(right)), y + 6, 0xFFFFFFFF);
+            g.drawString(font, font.plainSubstrByWidth(right, rightWidth),
+                    rightLimit - Math.min(rightWidth, font.width(right)), y + 6, 0xFFFFFF);
         } else {
-            drawText(g, ModTexts.s("info.hint"),
-                    16, y + 6, 0xFFFFFFFF);
+            g.drawString(font, font.plainSubstrByWidth(ModTexts.s("info.hint"), width - 32),
+                    16, y + 6, 0xFFFFFF);
         }
     }
 
-    protected void renderHelp(GuiGraphics g) {
-g.pose().pushPose(); g.pose().translate(0,0,400); try {
+    private void renderHelp(GuiGraphics g) {
+        g.pose().pushPose();
+        g.pose().translate(0, 0, 400);
         g.fill(0, 0, width, height, 0xB0000000);
         String[] lines = ModTexts.helpLines(serverLibrary);
         int w = 0;
-        for (String l : lines) w = Math.max(w, textWidth(l));
+        for (String l : lines) w = Math.max(w, font.width(l));
         int cardW = w + 32, cardH = lines.length * 12 + 24;
-        int x = (width - cardW) / 2, y = (height - cardH) / 2;
+        float scale = Math.min(1f, Math.min((width - 12f) / cardW, (height - 12f) / cardH));
+        int x = (int) ((width / scale - cardW) / 2), y = (int) ((height / scale - cardH) / 2);
+        g.pose().scale(scale, scale, 1f);
         g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, 0xFF3C4250);
         g.fill(x, y, x + cardW, y + cardH, COL_PANEL_2);
         int ty = y + 12;
         for (String l : lines) {
-            drawText(g, l, x + 16, ty, 0xFFE0E0E0);
+            g.drawString(font, l, x + 16, ty, 0xE0E0E0);
             ty += 12;
         }
-    } finally { g.pose().popPose(); }
-}
+        g.pose().popPose();
+    }
 
     /** Core picker window geometry: [x, y, w, h, visible rows]. */
-    protected int[] pickerGeom() {
+    private int[] pickerGeom() {
         int w = 240;
-        for (RomLibrary.Core c : lib.cores) w = Math.max(w, textWidth(c.displayName()) + 48);
+        for (RomLibrary.Core c : lib.cores) w = Math.max(w, font.width(c.displayName()) + 48);
         w = Math.min(w, width - 40);
         int visible = Math.max(1, Math.min(lib.cores.size(), (height - 110) / ITEM_H));
         int h = visible * ITEM_H + 46;
         return new int[]{(width - w) / 2, (height - h) / 2, w, h, visible};
     }
 
-    protected void renderCorePicker(GuiGraphics g, int mx, int my) {
+    private void renderCorePicker(GuiGraphics g, int mx, int my) {
         int[] geo = pickerGeom();
         int x = geo[0], y = geo[1], w = geo[2], h = geo[3], visible = geo[4];
-g.pose().pushPose(); g.pose().translate(0,0,400); try {
+        g.pose().pushPose();
+        g.pose().translate(0, 0, 400);
         g.fill(0, 0, width, height, 0xB0000000);
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, 0xFF3C4250);
         g.fill(x, y, x + w, y + h, COL_PANEL_2);
 
         String title = ModTexts.s("picker.title", selectedRom != null ? selectedRom.displayName() : "");
-        drawText(g, trimText(title, w - 24), x + 12, y + 9, 0xFFFFFFFF);
+        g.drawString(font, font.plainSubstrByWidth(title, w - 24), x + 12, y + 9, 0xFFFFFF);
 
         RomLibrary.Core current = coreFor(selectedRom);
         int listY = y + 24;
@@ -861,18 +830,18 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
                     hover ? COL_SEL : (i % 2 == 0 ? COL_ROW_A : COL_ROW_B));
             g.fill(x + 6, ry, x + 9, ry + ITEM_H - 1, core.system().color);
             String label = (isCur ? "✔ " : "") + core.displayName();
-            drawText(g, trimText(label, w - 28), x + 14, ry + 4,
-                    isCur ? 0xFF80FF90 : hover ? 0xFFFFFFFF : 0xFFC8C8C8);
+            g.drawString(font, font.plainSubstrByWidth(label, w - 28), x + 14, ry + 4,
+                    isCur ? 0x80FF90 : hover ? 0xFFFFFF : 0xC8C8C8);
         }
         if (lib.cores.size() > visible) {
             String more = ModTexts.s("picker.scroll");
-            drawText(g, more, x + w - textWidth(more) - 10, y + h - 14, 0xFF707880);
+            g.drawString(font, more, x + w - font.width(more) - 10, y + h - 14, 0x707880);
         }
-        drawText(g, ModTexts.s("picker.cancel"), x + 12, y + h - 14, 0xFFFFFFFF);
-    } finally { g.pose().popPose(); }
-}
+        g.drawString(font, ModTexts.s("picker.cancel"), x + 12, y + h - 14, 0xFFFFFF);
+        g.pose().popPose();
+    }
 
-    protected void renderScrollbar(GuiGraphics g, int x, int top, int viewH, int count, double scroll) {
+    private void renderScrollbar(GuiGraphics g, int x, int top, int viewH, int count, double scroll) {
         int contentH = count * ITEM_H;
         if (contentH <= viewH) return;
         int barH = Math.max(12, viewH * viewH / contentH);
@@ -882,10 +851,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        double mx = mouseX;
-        double my = mouseY;
-        
+    public boolean mouseClicked(double mx, double my, int button) {
         if (showCorePicker) {
             int[] geo = pickerGeom();
             int listY = geo[1] + 24;
@@ -940,10 +906,10 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             popupSystem = null;
             return true;
         }
-        if (super.mouseClicked(mouseX, mouseY, button)) return true;
+        if (super.mouseClicked(mx, my, button)) return true;
 
         if (view == View.CARDS) {
-            if (heroRom != null && mx >= 10 && mx < width - 10 && my >= heroY() && my < heroY() + 68) {
+            if (heroRom != null && mx >= 10 && mx < width - 10 && my >= 54 && my < 122) {
                 selectedRom = heroRom;
                 boolean shift = (button == 0) && hasShiftDown();
                 startEmulator(!shift && SaveStates.hasSave(heroRom.id()));
@@ -963,7 +929,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             return false;
         }
 
-        if (view == View.LIST && my >= tabTop() && my < tabTop() + TAB_H) {
+        if (view == View.LIST && my >= TAB_TOP && my < TAB_TOP + TAB_H) {
             if (tabsOverflow()) {
                 if (tabArrowHit(mx, my, true)) { scrollTabs(-1); return true; }
                 if (tabArrowHit(mx, my, false)) { scrollTabs(1); return true; }
@@ -983,7 +949,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
 
         int top = listTop(), viewH = listHeight();
         if (my >= top && my < top + viewH) {
-            if (view == View.MANUAL && mx >= 10 && mx < 10 + coreW()) {
+            if (view == View.MANUAL && mx >= 10 && mx < width / 2 - 8) {
                 int idx = (int) ((my - top + scrollCores) / ITEM_H);
                 if (idx >= 0 && idx < lib.cores.size()) {
                     selectedCore = lib.cores.get(idx);
@@ -991,8 +957,8 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
                     return true;
                 }
             }
-            int gx = gameX();
-            int gw = gameW();
+            int gx = view == View.LIST ? 10 : width / 2 + 8;
+            int gw = view == View.LIST ? width - 20 : width / 2 - 18;
             if (mx >= gx && mx < gx + gw) {
                 int idx = (int) ((my - top + scrollRoms) / ITEM_H);
                 if (idx >= 0 && idx < shown.size()) {
@@ -1020,7 +986,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     }
 
     @Override
-    public boolean mouseScrolled(double mx, double my, double hx, double hy) {
+    public boolean mouseScrolled(double mx, double my, double hy) {
         if (showCorePicker) {
             int visible = pickerGeom()[4];
             pickerScroll = Math.max(0, Math.min(pickerScroll - (int) Math.signum(hy),
@@ -1033,7 +999,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
                     Math.max(0, popupRoms.size() - visible)));
             return true;
         }
-        if (view == View.LIST && my >= tabTop() && my < tabTop() + TAB_H && tabsOverflow()) {
+        if (view == View.LIST && my >= TAB_TOP && my < TAB_TOP + TAB_H && tabsOverflow()) {
             tabScroll += (int) Math.round(-hy * ITEM_H * 1.5);
             clampTabScroll();
             return true;
@@ -1046,7 +1012,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             return true;
         }
         int viewH = listHeight();
-        if (view == View.MANUAL && mx < gameX()) {
+        if (view == View.MANUAL && mx < width / 2.0) {
             targetCores = clamp(targetCores - hy * ITEM_H * 2, lib.cores.size(), viewH);
         } else {
             targetRoms = clamp(targetRoms - hy * ITEM_H * 2, shown.size(), viewH);
@@ -1055,8 +1021,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        int key = keyCode;
+    public boolean keyPressed(int key, int scan, int mods) {
         if (showCorePicker && key == GLFW.GLFW_KEY_ESCAPE) { showCorePicker = false; return true; }
         if (showHelp && (key == GLFW.GLFW_KEY_ESCAPE || key == GLFW.GLFW_KEY_ENTER)) {
             showHelp = false;
@@ -1117,23 +1082,23 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
                 return true;
             }
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        return super.keyPressed(key, scan, mods);
     }
 
     @Override
     public boolean isPauseScreen() { return false; }
 
-    protected void blip(float pitch) {
+    private void blip(float pitch) {
         Minecraft.getInstance().getSoundManager().play(
                 SimpleSoundInstance.forUI(SoundEvents.NOTE_BLOCK_HAT, pitch));
     }
 
-    protected static double approach(double current, double target) {
+    private static double approach(double current, double target) {
         double next = current + (target - current) * 0.5;
         return Math.abs(target - next) < 0.5 ? target : next;
     }
 
-    protected void loadPrefs() {
+    private void loadPrefs() {
         Properties p = new Properties();
         RomLibrary.loadProps(p, ClientPlayerData.uiFile());
         try { view = View.valueOf(p.getProperty("view", "CARDS")); } catch (Exception ignored) {}
@@ -1154,7 +1119,7 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         }
     }
 
-    protected void savePrefs() {
+    private void savePrefs() {
         Properties p = new Properties();
         p.setProperty("view", view.name());
         if (selectedRom != null) p.setProperty("rom", selectedRom.id());
@@ -1167,30 +1132,30 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         RomLibrary.saveProps(p, ClientPlayerData.uiFile(), "retroconsole ui prefs");
     }
 
-    protected double clamp(double v, int count, int viewH) {
+    private double clamp(double v, int count, int viewH) {
         return Math.max(0, Math.min(v, Math.max(0, count * ITEM_H - viewH)));
     }
 
-    protected static String formatSize(long bytes) {
+    private static String formatSize(long bytes) {
         if (bytes >= 1024L * 1024 * 1024) return String.format(Locale.ROOT, "%.1f GB", bytes / 1073741824.0);
         if (bytes >= 1024 * 1024) return String.format(Locale.ROOT, "%.1f MB", bytes / 1048576.0);
         if (bytes >= 1024) return (bytes / 1024) + " KB";
         return bytes + " B";
     }
 
-    protected String emptyLibraryHint() {
+    private String emptyLibraryHint() {
         return serverLibrary
                 ? ModTexts.s("empty.library.server")
                 : ModTexts.s("empty.library.local");
     }
 
-    protected String emptyTabHint(GameSystem tab) {
+    private String emptyTabHint(GameSystem tab) {
         return serverLibrary
                 ? ModTexts.s("empty.tab.server", tab.folder)
                 : ModTexts.s("empty.tab.local", tab.folder);
     }
 
-    protected static int dim(int color, float f) {
+    private static int dim(int color, float f) {
         int r = (int) (((color >> 16) & 0xFF) * f);
         int gr = (int) (((color >> 8) & 0xFF) * f);
         int b = (int) ((color & 0xFF) * f);

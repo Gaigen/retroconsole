@@ -1,43 +1,19 @@
-name: Build
-
-on:
-  push:
-    branches: [master, main]
-  pull_request:
-    branches: [master, main]
-
+name: Backport 1.20.1 build
+on: [push, pull_request, workflow_dispatch]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Install native build deps
-        run: sudo apt-get update && sudo apt-get install -y libegl-dev libgl-dev
-
-      - name: Build Linux native from source
-        run: bash neoforge/build_headless_gl.sh
-
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
-
+          java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-
-      - name: Build mod (both loaders)
-        run: ./gradlew build -Pfabric --no-daemon
-
-      - name: Upload NeoForge JAR artifact
-        uses: actions/upload-artifact@v4
+      - run: chmod +x gradlew && ./gradlew build :fabric:runGamepadSmokeTest
+      - uses: actions/upload-artifact@v4
         with:
-          name: retroconsole-jar
-          path: neoforge/build/libs/retroconsole-*.jar
-          if-no-files-found: error
-
-      - name: Upload Fabric JAR artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: retroconsole-jar-fabric
-          path: fabric/build/libs/retroconsole-*.jar
-          if-no-files-found: error
+          name: retroconsole-1.20.1
+          path: |
+            forge/build/libs/*.jar
+            fabric/build/libs/*.jar

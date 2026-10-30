@@ -105,7 +105,7 @@ public final class TvBezelRenderer {
 
         String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
         Minecraft mc = Minecraft.getInstance();
-        ResourceLocation id = ResourceLocation.fromNamespaceAndPath(
+        ResourceLocation id = new ResourceLocation(
                 "retroconsole", "bezel/" + Math.abs(key.hashCode()));
 
         try {

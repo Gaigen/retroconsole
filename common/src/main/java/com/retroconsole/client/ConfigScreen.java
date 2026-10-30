@@ -8,6 +8,7 @@ import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
@@ -35,12 +36,13 @@ import java.util.function.Supplier;
  * <p>Edits go straight into the live config object (which is what
  * {@code RetroSettings} reads), and {@code Done} persists the file.
  */
-public final class ConfigScreen extends TrackedWidgetScreen {
+public final class ConfigScreen extends Screen {
 
     private static final String KEY = "retroconsole.configuration.";
     private static final int TABS_Y = 26;
     private static final int PATH_Y = 50;
     private static final int TOP = 66;
+    // 1.20.1 AbstractSliderButton hardcodes a 20 px handle, even for shorter tracks.
     private static final int ROW_H = 22;
     private static final int FOOTER = 34;
     private static final int WIDGET_W = 168;
@@ -48,12 +50,6 @@ public final class ConfigScreen extends TrackedWidgetScreen {
     private enum Tab { PATHS, STREAMING, LIMITS, VIDEO, INPUT, DEBUG }
 
     private final Screen parent;
-    private boolean modern;
-    private int modernTop;
-    private int modernLeft;
-    private int modernWidth;
-    private int modernRowH = 22;
-    private int rowOffset, maxRowOffset, modernTotal;
     private Tab tab = Tab.STREAMING;
     private int page;
     private List<Row> visible = List.of();
@@ -73,8 +69,6 @@ public final class ConfigScreen extends TrackedWidgetScreen {
 
     @Override
     protected void init() {
-        modern = ClientUi.modern();
-        if (modern) { initModern(); return; }
         int tabW = (width - 24) / Tab.values().length - 2;
         int x = 12;
         for (Tab t : Tab.values()) {
@@ -88,6 +82,7 @@ public final class ConfigScreen extends TrackedWidgetScreen {
                     .bounds(x, TABS_Y, tabW, 18)
                     .build());
             b.active = t != tab;
+            b.setTooltip(Tooltip.create(b.getMessage()));
             x += tabW + 2;
         }
 
@@ -103,15 +98,10 @@ public final class ConfigScreen extends TrackedWidgetScreen {
         widgets.clear();
         for (int i = 0; i < visible.size(); i++) {
             AbstractWidget widget = addRenderableWidget(
-                    visible.get(i).create(widgetX, TOP + i * ROW_H, WIDGET_W, 18));
+                    visible.get(i).create(widgetX, TOP + i * ROW_H, WIDGET_W, 20));
+            widget.setTooltip(Tooltip.create(visible.get(i).label()));
             widgets.add(widget);
         }
-
-        addRenderableWidget(Button.builder(ModTexts.c("appearance.title"), b -> {
-                    if (parent instanceof CoreSelectScreen library) library.savePrefs();
-                    minecraft.setScreen(new UiAppearanceScreen(this, () -> this));
-                })
-                .bounds(12, height - 26, 84, 18).build());
 
         int doneW = 100;
         addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, b -> onClose())
@@ -136,57 +126,7 @@ public final class ConfigScreen extends TrackedWidgetScreen {
         }
     }
 
-    private void initModern() {
-        modernWidth = Math.min(720, width - 24);
-        modernLeft = (width-modernWidth)/2;
-        int cols = width < 500 ? 3 : 6;
-        int tabW = (modernWidth - (cols-1)*4)/cols;
-        int index=0;
-        for (Tab t:Tab.values()) {
-            int i=index++;
-            addRenderableWidget(new LibraryButton(modernLeft+(i%cols)*(tabW+4), 26+(i/cols)*22, tabW,18,
-                Component.translatable(KEY+t.name().toLowerCase(Locale.ROOT)), b -> {tab=t;rowOffset=0;page=0;rebuildWidgets();}).selected(() -> tab==t));
-        }
-        modernTop = 26 + ((6+cols-1)/cols)*22 + 8;
-        modernRowH = 22;
-        List<Row> all=rows(tab);modernTotal=all.size();
-        int per=perPage();maxRowOffset=Math.max(0,all.size()-per);
-        rowOffset=Mth.clamp(rowOffset,0,maxRowOffset);
-        visible=all.subList(rowOffset,Math.min(all.size(),rowOffset+per));
-        widgets.clear();
-        int widgetW=Math.max(100,modernWidth*44/100), widgetX=modernLeft+modernWidth-widgetW;
-        for(int i=0;i<visible.size();i++) widgets.add(addRenderableWidget(visible.get(i).create(widgetX,modernTop+i*modernRowH,widgetW,18)));
-        int y=height-28;
-        addRenderableWidget(new LibraryButton(modernLeft,y,94,20,ModTexts.c("appearance.title"),b -> {
-            if(parent instanceof CoreSelectScreen library) library.savePrefs();
-            minecraft.setScreen(new UiAppearanceScreen(this,()->this));
-        }));
-        addRenderableWidget(new LibraryButton(modernLeft+modernWidth-94,y,94,20,CommonComponents.GUI_DONE,b->onClose()).primary());
-        if(maxRowOffset>0) {
-            var prev=addRenderableWidget(new LibraryButton(width/2-24,y,22,20,Component.literal("↑"),b->scrollRows(-1)));prev.active=rowOffset>0;
-            var next=addRenderableWidget(new LibraryButton(width/2+2,y,22,20,Component.literal("↓"),b->scrollRows(1)));next.active=rowOffset<maxRowOffset;
-        }
-    }
-
-    private void scrollRows(int delta) {
-        int next=Mth.clamp(rowOffset+delta,0,maxRowOffset);
-        if(next!=rowOffset) {rowOffset=next;rebuildWidgets();}
-    }
-    @Override public boolean mouseScrolled(double mx,double my,double hx,double hy) {
-        if(modern&&my>=modernTop&&my<height-32) {
-            if(hy!=0)scrollRows(hy>0?-1:1);return true;
-        }
-        return super.mouseScrolled(mx,my,hx,hy);
-    }
-    @Override public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if(modern&&!(getFocused() instanceof EditBox)) {
-            if(keyCode==266||keyCode==267) {scrollRows(keyCode==266?-perPage():perPage());return true;}
-        }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
     private int perPage() {
-        if(modern) return Math.max(1,(height-modernTop-36)/modernRowH);
         return Math.max(1, (height - TOP - FOOTER) / ROW_H);
     }
 
@@ -288,12 +228,9 @@ public final class ConfigScreen extends TrackedWidgetScreen {
     }
 
     private Row bool(String labelKey, BooleanSupplier get, Consumer<Boolean> set) {
-        return new TableRow(labelKey, (x,y,w,h) -> {
-            if(!modern) return CycleButton.onOffBuilder(get.getAsBoolean()).create(x,y,w,h,Component.empty(),(button,value)->set.accept(value));
-            return new LibraryButton(x,y,w,h,Component.translatable(get.getAsBoolean()?"options.on":"options.off"), b->{
-                set.accept(!get.getAsBoolean()); b.setMessage(Component.translatable(get.getAsBoolean()?"options.on":"options.off"));
-            });
-        });
+        return new TableRow(labelKey, (x, y, w, h) -> CycleButton.onOffBuilder(get.getAsBoolean())
+                .displayOnlyValue()
+                .create(x, y, w, h, Component.empty(), (button, value) -> set.accept(value)));
     }
 
     private Row preset(Supplier<String> get, Consumer<String> set) {
@@ -302,16 +239,11 @@ public final class ConfigScreen extends TrackedWidgetScreen {
             if (!"performance".equals(current) && !"quality".equals(current)) {
                 current = "balanced";
             }
-            if(modern) {
-                final String[] values={"performance","balanced","quality"};
-                return new LibraryButton(x,y,w,h,Component.translatable(KEY+"preset."+current),b->{
-                    int index=java.util.Arrays.asList(values).indexOf(get.get());
-                    String next=values[(index+1)%values.length];set.accept(next);b.setMessage(Component.translatable(KEY+"preset."+next));
-                });
-            }
             return CycleButton
-                    .<String>builder(v -> Component.translatable(KEY + "preset." + v)).withInitialValue(current)
+                    .builder((String v) -> Component.translatable(KEY + "preset." + v))
                     .withValues("performance", "balanced", "quality")
+                    .withInitialValue(current)
+                    .displayOnlyValue()
                     .create(x, y, w, h, Component.empty(), (button, value) -> set.accept(value));
         });
     }
@@ -329,7 +261,7 @@ public final class ConfigScreen extends TrackedWidgetScreen {
 
     private Row text(String labelKey, Supplier<String> get, Consumer<String> set) {
         return new TableRow(labelKey, (x, y, w, h) -> {
-            EditBox box = new EditBox(modern ? UiTypography.editingFont(font) : font, x, y, w, h, Component.translatable(KEY + labelKey));
+            EditBox box = new EditBox(font, x, y, w, h, Component.translatable(KEY + labelKey));
             box.setMaxLength(128);
             box.setValue(get.get());
             box.setResponder(set);
@@ -341,38 +273,12 @@ public final class ConfigScreen extends TrackedWidgetScreen {
 
     @Override
     public void render(GuiGraphics g, int mx, int my, float partialTick) {
-        renderBackground(g,mx,my,partialTick);
-        if(modern) {
-            g.fill(0,0,width,height,0xFF101318);
-            g.drawString(font,UiTypography.text(title),modernLeft,10,0xFFE8EAF0,false);
-            g.fill(modernLeft,modernTop-7,modernLeft+modernWidth,modernTop-6,0xFF353F50);
-            int widgetX=modernLeft+modernWidth-modernWidth*44/100;
-            for(int i=0;i<visible.size();i++) {
-                int y=modernTop+i*modernRowH;
-                String label=UiTypography.trim(font,visible.get(i).label().getString(),widgetX-modernLeft-12);
-                g.drawString(font,UiTypography.text(label),modernLeft,y+5,0xFFE8EAF0,false);
-                g.fill(modernLeft,y+modernRowH-3,modernLeft+modernWidth,y+modernRowH-2,0xFF242C39);
-            }
-            if(maxRowOffset>0) {
-                int bottom=modernTop+perPage()*modernRowH;
-                int trackH=bottom-modernTop,thumbH=Math.max(12,trackH*perPage()/modernTotal);
-                int sy=modernTop+(trackH-thumbH)*rowOffset/maxRowOffset;
-                int sx=modernLeft+modernWidth+4;
-                g.fill(sx,modernTop,sx+2,bottom,0xFF353F50);g.fill(sx,sy,sx+2,sy+thumbH,0xFF818FBF);
-            }
-            renderTrackedWidgets(g,mx,my,partialTick);
-            for(int i=0;i<visible.size();i++) {
-                int y=modernTop+i*modernRowH;
-                if(mx>=modernLeft&&mx<widgetX-8&&my>=y&&my<y+modernRowH && UiTypography.width(font,visible.get(i).label().getString())>widgetX-modernLeft-12)
-                    g.renderTooltip(font,UiTypography.text(visible.get(i).label()),mx,my);
-            }
-            return;
-        }
-        g.drawCenteredString(font, title, width / 2, 12, 0xFFFFFFFF);
+        renderBackground(g);
+        g.drawCenteredString(font, title, width / 2, 12, 0xFFFFFF);
         // Below the tab row on purpose: the tabs are 18 px tall and used to sit
         // on top of this line at GUI scale 3.
         g.drawCenteredString(font, Component.literal(elide(RetroConfigJson.file().toString(), width - 24)),
-                width / 2, PATH_Y, 0xFF707880);
+                width / 2, PATH_Y, 0x707880);
 
         int widgetX = width - 12 - WIDGET_W;
         int labelW = widgetX - 24;
@@ -380,9 +286,9 @@ public final class ConfigScreen extends TrackedWidgetScreen {
             int y = TOP + i * ROW_H;
             // Sliders show only their value, so every row keeps its name here.
             g.drawString(font, elide(visible.get(i).label().getString(), labelW),
-                    14, y + 5, 0xFFC8C8C8, false);
+                    14, y + 5, 0xC8C8C8, false);
         }
-        renderTrackedWidgets(g, mx, my, partialTick);
+        super.render(g, mx, my, partialTick);
     }
 
     /** Truncates to {@code maxW} and marks the cut with an ellipsis. */
@@ -396,19 +302,14 @@ public final class ConfigScreen extends TrackedWidgetScreen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics g, int mx, int my, float partialTick) {
-        g.fill(0, 0, width, height, modern ? 0xFF101318 : 0xE00C0E12);
+    public void renderBackground(GuiGraphics g) {
+        g.fill(0, 0, width, height, 0xFF0C0E12);
     }
 
     @Override
     public void onClose() {
         RetroConfigJson.get().save();
-        if (parent instanceof CoreSelectScreen library
-                && ((library instanceof ModernCoreSelectScreen) != ClientUi.modern())) {
-            minecraft.setScreen(ClientUi.library(library.consolePos()));
-        } else {
-            minecraft.setScreen(parent);
-        }
+        minecraft.setScreen(parent);
     }
 
     @Override
@@ -419,10 +320,6 @@ public final class ConfigScreen extends TrackedWidgetScreen {
     // ----- widgets ---------------------------------------------------------
 
     private static final class IntSlider extends AbstractSliderButton {
-        private final boolean modern = ClientUi.modern();
-        @Override public void renderWidget(GuiGraphics g,int mx,int my,float pt) {
-            if(modern) {UiSlider.paint(g,this,value);} else super.renderWidget(g,mx,my,pt);
-        }
 
         private final int min;
         private final int max;
@@ -466,10 +363,6 @@ public final class ConfigScreen extends TrackedWidgetScreen {
     }
 
     private static final class DoubleSlider extends AbstractSliderButton {
-        private final boolean modern = ClientUi.modern();
-        @Override public void renderWidget(GuiGraphics g,int mx,int my,float pt) {
-            if(modern) {UiSlider.paint(g,this,value);} else super.renderWidget(g,mx,my,pt);
-        }
 
         private final double min;
         private final double max;

@@ -94,12 +94,17 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         int colW1 = left.stream().mapToInt(font::width).max().orElse(0);
         int colW2 = right.stream().mapToInt(font::width).max().orElse(0);
         int rows = Math.max(left.size(), right.size());
-        int cardW = pad * 2 + colW1 + gap + colW2;
+        int cardW = Math.max(pad * 2 + colW1 + gap + colW2,
+                font.width(ModTexts.s("gamepad.hints.footer")) + pad * 2);
         int cardH = pad * 2 + 14 + rows * 12 + 14;
-        int x = (this.width - cardW) / 2;
-        int y = (this.height - cardH) / 2;
+        float scale = Math.min(1f, Math.min((this.width - 12f) / cardW,
+                (this.height - 12f) / cardH));
+        int x = (int) ((this.width / scale - cardW) / 2);
+        int y = (int) ((this.height / scale - cardH) / 2);
 
         g.fill(0, 0, this.width, this.height, 0x80000000);
+        g.pose().pushPose();
+        g.pose().scale(scale, scale, 1f);
         g.fill(x - 1, y - 1, x + cardW + 1, y + cardH + 1, 0xFF3C4250);
         g.fill(x, y, x + cardW, y + cardH, 0xFF14161C);
         g.drawString(font, ModTexts.s("tv.hints.title"), x + pad, y + pad, 0xFFFFFF);
@@ -111,6 +116,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
             g.drawString(font, right.get(i), x + pad + colW1 + gap, ty + i * 12, 0xE0E0E0);
         }
         g.drawString(font, ModTexts.s("gamepad.hints.footer"), x + pad, y + cardH - 12 - 2, 0xFFFFFF);
+        g.pose().popPose();
     }
 
     private static String hintLine(KeyMapping key, String action) {
@@ -213,7 +219,7 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
     }
 
     @Override
-    public void renderBackground(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+    public void renderBackground(GuiGraphics guiGraphics) {
         // Keep the world visible.
     }
 }

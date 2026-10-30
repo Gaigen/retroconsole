@@ -1,19 +1,16 @@
 package com.retroconsole.block;
 
-import com.mojang.serialization.MapCodec;
 import com.retroconsole.item.ScreenItem;
 import com.retroconsole.style.RetroTone;
 import com.retroconsole.style.ScreenDesign;
 import com.retroconsole.style.ScreenMount;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
-import net.minecraft.world.ItemInteractionResult;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.component.BlockItemStateProperties;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.BlockGetter;
@@ -38,7 +35,6 @@ import java.util.function.UnaryOperator;
 
 public class ScreenBlock extends BaseEntityBlock {
 
-    public static final MapCodec<ScreenBlock> CODEC = simpleCodec(ScreenBlock::new);
 
     /** Куда смотрит экран (стена) / горизонтальная ось картинки (пол/потолок). */
     public static final EnumProperty<Direction> FACING = BlockStateProperties.HORIZONTAL_FACING;
@@ -102,8 +98,6 @@ public class ScreenBlock extends BaseEntityBlock {
         return shapes;
     }
 
-    @Override
-    protected MapCodec<? extends BaseEntityBlock> codec() { return CODEC; }
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
@@ -111,7 +105,7 @@ public class ScreenBlock extends BaseEntityBlock {
     }
 
     @Override
-    protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
+    public VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
         return SHAPES.get(state.getValue(DESIGN))
                 .get(state.getValue(MOUNT))
                 .get(state.getValue(ORIENTATION))
@@ -130,20 +124,21 @@ public class ScreenBlock extends BaseEntityBlock {
      * the held item and the block is never asked, so flipping uses a plain click.
      */
     @Override
-    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level,
+    public InteractionResult use(BlockState state, Level level,
                                           BlockPos pos, Player player, InteractionHand hand,
                                           BlockHitResult hitResult) {
+        ItemStack stack = player.getItemInHand(hand);
         if (stack.getItem() instanceof net.minecraft.world.item.DyeItem) {
             RetroTone tone = RetroTone.ofStack(stack);
             if (tone == null || tone == state.getValue(TONE)) {
-                return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+                return InteractionResult.PASS;
             }
             if (!level.isClientSide()) {
                 changeWall(level, pos, s -> s.setValue(TONE, tone));
                 player.displayClientMessage(Component.translatable("retroconsole.tone.painted",
                         Component.translatable(tone.translationKey())), true);
             }
-            return ItemInteractionResult.SUCCESS;
+            return InteractionResult.SUCCESS;
         }
         if (stack.getItem() instanceof ScreenItem) {
             if (!level.isClientSide()) {
@@ -152,10 +147,10 @@ public class ScreenBlock extends BaseEntityBlock {
                 player.displayClientMessage(Component.translatable("retroconsole.screen.mount.changed",
                         Component.translatable(mount.translationKey())), true);
             }
-            return ItemInteractionResult.SUCCESS;
+            return InteractionResult.SUCCESS;
         }
         if (!stack.isEmpty() || !player.isShiftKeyDown()) {
-            return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+            return InteractionResult.PASS;
         }
         if (!level.isClientSide()) {
             ScreenDesign design = state.getValue(DESIGN).next();
@@ -163,7 +158,7 @@ public class ScreenBlock extends BaseEntityBlock {
             player.displayClientMessage(Component.translatable("retroconsole.screen.design.changed",
                     Component.translatable(design.translationKey())), true);
         }
-        return ItemInteractionResult.SUCCESS;
+        return InteractionResult.SUCCESS;
     }
 
     /** Shell, finish and mount belong to the screen, not to one cell of it. */
@@ -192,9 +187,12 @@ public class ScreenBlock extends BaseEntityBlock {
         }
         // A picked-up screen keeps the shell, finish and mount it was broken with.
         BlockState placed = defaultBlockState();
-        BlockItemStateProperties stored = context.getItemInHand().get(DataComponents.BLOCK_STATE);
+        net.minecraft.nbt.CompoundTag stored = context.getItemInHand().getTagElement("BlockStateTag");
         if (stored != null) {
-            placed = stored.apply(placed);
+            for (String key : stored.getAllKeys()) {
+                var property = placed.getBlock().getStateDefinition().getProperty(key);
+                if (property != null) placed = applyProperty(placed, property, stored.getString(key));
+            }
         }
         return placed
                 .setValue(FACING, context.getHorizontalDirection().getOpposite())
@@ -238,5 +236,8 @@ public class ScreenBlock extends BaseEntityBlock {
             ScreenMultiblocks.rebuildAfterRemoval(level, pos, state);
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
+    }
+    private static <T extends Comparable<T>> BlockState applyProperty(BlockState state, net.minecraft.world.level.block.state.properties.Property<T> property, String value) {
+        return property.getValue(value).map(v -> state.setValue(property,v)).orElse(state);
     }
 }

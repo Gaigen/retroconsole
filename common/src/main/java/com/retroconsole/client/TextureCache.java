@@ -28,7 +28,7 @@ public final class TextureCache {
         if (Files.exists(png)) {
             try (InputStream in = Files.newInputStream(png)) {
                 NativeImage img = NativeImage.read(in);
-                ResourceLocation rl = ResourceLocation.fromNamespaceAndPath(
+                ResourceLocation rl = new ResourceLocation(
                         "retroconsole", "dyn/" + (counter++));
                 Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(img));
                 tex = new Tex(rl, img.getWidth(), img.getHeight());
@@ -45,7 +45,7 @@ public final class TextureCache {
         if (png != null && png.length > 0) {
             try (InputStream in = new ByteArrayInputStream(png)) {
                 NativeImage img = NativeImage.read(in);
-                ResourceLocation rl = ResourceLocation.fromNamespaceAndPath(
+                ResourceLocation rl = new ResourceLocation(
                         "retroconsole", "dyn/" + (counter++));
                 Minecraft.getInstance().getTextureManager().register(rl, new DynamicTexture(img));
                 tex = new Tex(rl, img.getWidth(), img.getHeight());

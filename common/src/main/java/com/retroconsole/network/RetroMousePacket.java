@@ -2,8 +2,8 @@ package com.retroconsole.network;
 
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
+import com.retroconsole.network.codec.ByteBufCodecs;
+import com.retroconsole.network.codec.StreamCodec;
 
 /**
  * C2S: relative mouse state for a console (Doom 3 and other keyboard+mouse cores).
@@ -23,7 +23,7 @@ public record RetroMousePacket(
 
     public static final StreamCodec<ByteBuf, RetroMousePacket> STREAM_CODEC =
             StreamCodec.composite(
-                    BlockPos.STREAM_CODEC, RetroMousePacket::pos,
+                    com.retroconsole.network.codec.ByteBufCodecs.BLOCK_POS, RetroMousePacket::pos,
                     ByteBufCodecs.VAR_INT, RetroMousePacket::dx,
                     ByteBufCodecs.VAR_INT, RetroMousePacket::dy,
                     ByteBufCodecs.VAR_INT, RetroMousePacket::buttons,

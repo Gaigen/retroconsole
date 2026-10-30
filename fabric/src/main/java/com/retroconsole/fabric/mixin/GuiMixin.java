@@ -1,7 +1,6 @@
 package com.retroconsole.fabric.mixin;
 
 import com.retroconsole.client.GamepadScreen;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiGraphics;
@@ -16,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *
  * <p>NeoForge can cancel individual GUI layers by name; Fabric has no such hook
  * for 1.21.1, so the two renderers behind those layers are cancelled at their
- * heads. Vanilla draws the hotbar in {@code renderItemHotbar} (NeoForge splits
+ * heads. Vanilla draws the hotbar in {@code renderHotbar} (NeoForge splits
  * that one method out of {@code renderHotbarAndDecorations} and names it the
  * hotbar layer), so cancelling it leaves health and experience on screen.
  */
@@ -24,14 +23,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class GuiMixin {
 
     @Inject(method = "renderCrosshair", at = @At("HEAD"), cancellable = true)
-    private void retroconsole$hideCrosshair(GuiGraphics graphics, DeltaTracker delta, CallbackInfo ci) {
+    private void retroconsole$hideCrosshair(GuiGraphics graphics, CallbackInfo ci) {
         if (Minecraft.getInstance().screen instanceof GamepadScreen) {
             ci.cancel();
         }
     }
 
-    @Inject(method = "renderItemHotbar", at = @At("HEAD"), cancellable = true)
-    private void retroconsole$hideHotbar(GuiGraphics graphics, DeltaTracker delta, CallbackInfo ci) {
+    @Inject(method = "renderHotbar", at = @At("HEAD"), cancellable = true)
+    private void retroconsole$hideHotbar(float delta, GuiGraphics graphics, CallbackInfo ci) {
         if (Minecraft.getInstance().screen instanceof GamepadScreen) {
             ci.cancel();
         }
