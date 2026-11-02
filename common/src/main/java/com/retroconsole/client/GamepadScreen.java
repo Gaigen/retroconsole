@@ -85,8 +85,8 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
         right.add(ModTexts.s("tv.hints.system"));
         right.add(hintLine(ModKeys.BTN_START, "Start"));
         right.add(hintLine(ModKeys.BTN_SELECT, "Select"));
-        right.add(ModTexts.s("tv.hints.save"));
-        right.add(ModTexts.s("tv.hints.load"));
+        right.add(hintLine(ModKeys.SAVE_STATE, ModTexts.s("tv.hints.save")));
+        right.add(hintLine(ModKeys.LOAD_STATE, ModTexts.s("tv.hints.load")));
         right.add(ModTexts.s("tv.hints.exit"));
 
         int pad = 14;
@@ -170,11 +170,11 @@ public class GamepadScreen extends net.minecraft.client.gui.screens.Screen {
             showHints = !showHints;
             return true;
         }
-        if (keyCode == InputConstants.KEY_F5) {
+        if (ModKeys.isActiveAndMatches(ModKeys.SAVE_STATE, InputConstants.getKey(keyCode, scanCode))) {
             NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, true, false));
             return true;
         }
-        if (keyCode == InputConstants.KEY_F6) {
+        if (ModKeys.isActiveAndMatches(ModKeys.LOAD_STATE, InputConstants.getKey(keyCode, scanCode))) {
             NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, false, false));
             return true;
         }

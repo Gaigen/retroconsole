@@ -193,7 +193,7 @@ public class TvScreen extends TrackedWidgetScreen {
             renderTrackedWidgets(guiGraphics, mouseX, mouseY, partialTick);
         } else if(menu.isOpen()) menu.render(guiGraphics,mouseX,mouseY,partialTick);
         else if (frameX >= 74 && System.currentTimeMillis()-openedAtMs < 6000) {
-            guiGraphics.drawString(font,UiTypography.text(ModTexts.s("play.open_hint")),8,height-18,0xFFADB7C8,false);
+            guiGraphics.drawString(font,UiTypography.text(ModTexts.s("play.open_hint",ModKeys.OPEN_MENU.getTranslatedKeyMessage().getString())),8,height-18,0xFFADB7C8,false);
         }
         if ((!modern || !menu.isOpen()) && inputProfile == CoreInputProfile.TOUCH_DUAL_SCREEN) {
             renderTouchCursor(guiGraphics);
@@ -360,8 +360,8 @@ public class TvScreen extends TrackedWidgetScreen {
             right.add(line(ModKeys.BTN_CURSOR_TOUCH, ModTexts.s("tv.hints.tap_action")));
             right.add(ModTexts.s("tv.hints.ds_extra"));
         }
-        right.add(ModTexts.s("tv.hints.save"));
-        right.add(ModTexts.s("tv.hints.load"));
+        right.add(line(ModKeys.SAVE_STATE, ModTexts.s("tv.hints.save")));
+        right.add(line(ModKeys.LOAD_STATE, ModTexts.s("tv.hints.load")));
         right.add(ModTexts.s("tv.hints.help"));
         right.add(ModTexts.s("tv.hints.exit"));
         if (isKeyboardMouse()) {
@@ -527,8 +527,9 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
         if (modern) {
             if(menu.isOpen()) { menu.keyPressed(keyCode, scanCode, modifiers); return true; }
             if(keyCode==InputConstants.KEY_ESCAPE){onClose();return true;}
-            if(keyCode==InputConstants.KEY_F4){menu.open(TvMenu.Page.MAIN);return true;}
-            if(keyCode==InputConstants.KEY_F1){menu.open(TvMenu.Page.CONTROLS);return true;}
+            InputConstants.Key panelKey = InputConstants.getKey(keyCode, scanCode);
+            if(ModKeys.isActiveAndMatches(ModKeys.OPEN_MENU, panelKey)){menu.open(TvMenu.Page.MAIN);return true;}
+            if(ModKeys.isActiveAndMatches(ModKeys.OPEN_CONTROLS, panelKey)){menu.open(TvMenu.Page.CONTROLS);return true;}
         }
         if (keyCode == InputConstants.KEY_ESCAPE) {
             if (showHints) {
@@ -547,12 +548,12 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
             showHints = !showHints;
             return true;
         }
-        if (keyCode == InputConstants.KEY_F5) {
-            NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, true, false));
+        if (ModKeys.isActiveAndMatches(ModKeys.SAVE_STATE, InputConstants.getKey(keyCode, scanCode))) {
+            requestState(true);
             return true;
         }
-        if (keyCode == InputConstants.KEY_F6) {
-            NetAccess.sendToServer(RetroPayloads.SAVE_STATE, new RetroSaveStatePacket(consolePos, 0, false, false));
+        if (ModKeys.isActiveAndMatches(ModKeys.LOAD_STATE, InputConstants.getKey(keyCode, scanCode))) {
+            requestState(false);
             return true;
         }
 

@@ -224,8 +224,8 @@ public final class ModernCoreSelectScreen extends CoreSelectScreen {
         return new HelpSection[]{
             new HelpSection(ModTexts.s("modern.help.library"),ModTexts.s(serverLibrary?"modern.help.server":"modern.help.local")),
             new HelpSection(ModTexts.s("modern.help.files"),ModTexts.s("modern.help.files_body")),
-            new HelpSection(ModTexts.s("modern.help.play"),ModTexts.s("play.menu_hint")+"\n\n"+ModTexts.s("play.capture_hint")),
-            new HelpSection(ModTexts.s("modern.help.states"),ModTexts.s("modern.help.states_body"))};
+            new HelpSection(ModTexts.s("modern.help.play"),ModTexts.s("play.menu_hint",ModKeys.OPEN_MENU.getTranslatedKeyMessage().getString(),ModKeys.OPEN_CONTROLS.getTranslatedKeyMessage().getString(),ModKeys.SAVE_STATE.getTranslatedKeyMessage().getString(),ModKeys.LOAD_STATE.getTranslatedKeyMessage().getString())+"\n\n"+ModTexts.s("play.capture_hint")),
+            new HelpSection(ModTexts.s("modern.help.states"),ModTexts.s("modern.help.states_body",ModKeys.SAVE_STATE.getTranslatedKeyMessage().getString(),ModKeys.LOAD_STATE.getTranslatedKeyMessage().getString()))};
     }
     private int helpSection(GuiGraphics g,HelpSection section,int x,int y,int w) {
         drawText(g,section.title(),x,y,ACCENT);y+=18;

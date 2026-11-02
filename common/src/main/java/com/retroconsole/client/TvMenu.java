@@ -2,6 +2,7 @@ package com.retroconsole.client;
 
 import com.retroconsole.client.bezel.BezelSettingsScreen;
 import com.retroconsole.client.library.SoundPrefs;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
@@ -71,8 +72,8 @@ final class TvMenu extends Screen {
             }
             case SAVES -> {
                 note(ModTexts.s("play.save_slot"));
-                button(ModTexts.c("play.save"),()->owner.requestState(true),false);
-                button(ModTexts.c("play.load"),()->owner.requestState(false),false);
+                button(ModTexts.c("play.save",ModKeys.SAVE_STATE.getTranslatedKeyMessage().getString()),()->owner.requestState(true),false);
+                button(ModTexts.c("play.load",ModKeys.LOAD_STATE.getTranslatedKeyMessage().getString()),()->owner.requestState(false),false);
                 note(ModTexts.s("play.save_notice"));
             }
             case CONTROLS -> controls();
@@ -120,7 +121,7 @@ final class TvMenu extends Screen {
             cursor+=3*row;
         }
         cursor+=3;
-        lines.add(new Line(ModTexts.s("play.controls_keys"),cursor,0xFFADB7C8));cursor+=12;
+        lines.add(new Line(ModTexts.s("play.controls_keys",ModKeys.OPEN_MENU.getTranslatedKeyMessage().getString()),cursor,0xFFADB7C8));cursor+=12;
         if(owner.keyboardProfile()) {
             lines.add(new Line(ModTexts.s("play.capture_compact"),cursor,0xFFADB7C8));cursor+=12;
         }
@@ -196,11 +197,12 @@ g.pose().pushPose(); g.pose().translate(0,0,400); try {
     } finally { g.pose().popPose(); }
 }
     @Override public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if(keyCode==293){closeMenu();return true;}
+        InputConstants.Key key = InputConstants.getKey(keyCode, scanCode);
+        if(ModKeys.isActiveAndMatches(ModKeys.OPEN_MENU, key)){closeMenu();return true;}
         if(page==Page.BEZEL)return bezel.keyPressed(keyCode, scanCode, modifiers);
         if(keyCode==256){if(page==Page.MAIN)closeMenu();else page(Page.MAIN);return true;}
-        if(keyCode==294){owner.requestState(true);return true;}
-        if(keyCode==295){owner.requestState(false);return true;}
+        if(ModKeys.isActiveAndMatches(ModKeys.SAVE_STATE, key)){owner.requestState(true);return true;}
+        if(ModKeys.isActiveAndMatches(ModKeys.LOAD_STATE, key)){owner.requestState(false);return true;}
         if(keyCode==266||keyCode==267){scrollBy(keyCode==266?-72:72);return true;}
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
