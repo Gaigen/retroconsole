@@ -63,8 +63,8 @@ final class TvMenu extends Screen {
             }
             case SAVES -> {
                 note(ModTexts.s("play.save_slot"));
-                button(ModTexts.c("play.save"),()->owner.requestState(true),false);
-                button(ModTexts.c("play.load"),()->owner.requestState(false),false);
+                button(ModTexts.c("play.save",ModKeys.SAVE_STATE.getTranslatedKeyMessage().getString()),()->owner.requestState(true),false);
+                button(ModTexts.c("play.load",ModKeys.LOAD_STATE.getTranslatedKeyMessage().getString()),()->owner.requestState(false),false);
                 note(ModTexts.s("play.save_notice"));
             }
             case CONTROLS -> controls();
@@ -112,7 +112,7 @@ final class TvMenu extends Screen {
             cursor+=3*row;
         }
         cursor+=3;
-        lines.add(new Line(ModTexts.s("play.controls_keys"),cursor,0xFFADB7C8));cursor+=12;
+        lines.add(new Line(ModTexts.s("play.controls_keys",ModKeys.OPEN_MENU.getTranslatedKeyMessage().getString()),cursor,0xFFADB7C8));cursor+=12;
         if(owner.keyboardProfile()) {
             lines.add(new Line(ModTexts.s("play.capture_compact"),cursor,0xFFADB7C8));cursor+=12;
         }
@@ -187,11 +187,11 @@ final class TvMenu extends Screen {
         for(var widget:chrome)widget.extractRenderState(g,mx,my,pt);
     }
     @Override public boolean keyPressed(KeyEvent event) {
-        if(event.key()==293){closeMenu();return true;}
+        if(ModKeys.isActiveAndMatches(ModKeys.OPEN_MENU, event)){closeMenu();return true;}
         if(page==Page.BEZEL)return bezel.keyPressed(event);
         if(event.key()==256){if(page==Page.MAIN)closeMenu();else page(Page.MAIN);return true;}
-        if(event.key()==294){owner.requestState(true);return true;}
-        if(event.key()==295){owner.requestState(false);return true;}
+        if(ModKeys.isActiveAndMatches(ModKeys.SAVE_STATE, event)){owner.requestState(true);return true;}
+        if(ModKeys.isActiveAndMatches(ModKeys.LOAD_STATE, event)){owner.requestState(false);return true;}
         if(event.key()==266||event.key()==267){scrollBy(event.key()==266?-72:72);return true;}
         return super.keyPressed(event);
     }
