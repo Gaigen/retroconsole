@@ -160,7 +160,9 @@ public final class Pcsx2MemcardSync {
         try {
             if (Files.exists(link)) return;
             Files.createDirectories(link.getParent());
-            if (createDirectoryJunction(link, target)) {
+            if (DirectoryJunction.isSupported()
+                    && DirectoryJunction.ensure(link, target)
+                    && hasBiosFiles(link)) {
                 LOGGER.info("PS2 BIOS junction {} -> {}", link, target);
                 return;
             }
@@ -179,22 +181,6 @@ public final class Pcsx2MemcardSync {
             LOGGER.warn("PS2 BIOS junction failed; copied/linked files into {}", link);
         } catch (IOException ex) {
             LOGGER.warn("Failed to prepare BIOS at {}: {}", link, ex.getMessage());
-        }
-    }
-
-    private static boolean createDirectoryJunction(Path link, Path target) {
-        try {
-            Process p = new ProcessBuilder(
-                    "cmd.exe", "/c", "mklink", "/J",
-                    link.toAbsolutePath().toString(),
-                    target.toAbsolutePath().toString())
-                    .redirectErrorStream(true)
-                    .start();
-            int code = p.waitFor();
-            return code == 0 && Files.isDirectory(link);
-        } catch (Exception ex) {
-            LOGGER.debug("mklink /J failed: {}", ex.getMessage());
-            return false;
         }
     }
 

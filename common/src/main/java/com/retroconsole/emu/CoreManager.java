@@ -1,6 +1,7 @@
 package com.retroconsole.emu;
 
 import com.retroconsole.bridge.LibretroCore;
+import com.retroconsole.platform.CitraSession;
 import com.retroconsole.platform.Pcsx2MemcardSync;
 import com.retroconsole.platform.PlayerPaths;
 import com.retroconsole.platform.SessionSaveSetup;
@@ -160,11 +161,19 @@ public class CoreManager {
         String systemDir = pcsx2Session != null
                 ? pcsx2Session.systemDir().toString()
                 : playerPaths.systemDir().toString();
+        // Citra builds a very long save tree under GET_SAVE_DIRECTORY and calls
+        // Win32 without \\?\, so feed it a short junction to the real per-player
+        // dir (data still lands in saves/players/<uuid>). See CitraSession.
+        String saveDir = playerPaths.saveDir().toString();
+        if (corePath.getFileName().toString().toLowerCase().contains("citra")) {
+            Path citraShort = CitraSession.shortSaveDir(playerPaths);
+            if (citraShort != null) saveDir = citraShort.toString();
+        }
         try {
             LibretroCore core = LibretroCore.load(
                     corePath,
                     systemDir,
-                    playerPaths.saveDir().toString());
+                    saveDir);
 
             if (!core.loadGame(romPath)) {
                 core.close();

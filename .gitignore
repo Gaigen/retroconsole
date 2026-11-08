@@ -32,3 +32,6 @@ docs/
 # Local game dir / dev sandboxes (ROMs, cores, BIOS, Ren'Py SDKs, loader experiments)
 /config/
 /.hermes/
+
+
+run/
