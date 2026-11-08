@@ -29,6 +29,9 @@ dependencies {
     compileOnly "net.neoforged:neoforge:${neo_version}"
     // JNA for loading native libretro cores (.so/.dll)
     compileOnly 'net.java.dev.jna:jna:5.14.0'
+    testImplementation 'net.java.dev.jna:jna:5.14.0'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.3'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 sourceSets.main.resources { srcDir 'src/generated/resources' }
@@ -51,4 +54,8 @@ idea {
         downloadSources = true
         downloadJavadoc = true
     }
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
 }
