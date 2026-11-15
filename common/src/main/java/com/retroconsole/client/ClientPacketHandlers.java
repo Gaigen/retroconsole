@@ -3,6 +3,8 @@ package com.retroconsole.client;
 import com.retroconsole.network.RetroArtPacket;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
+import com.retroconsole.network.RetroFrameChunk;
+import com.retroconsole.network.FrameChunkAssembler;
 import com.retroconsole.network.RetroLibraryPacket;
 import com.retroconsole.network.RetroOpenScreenPacket;
 import com.retroconsole.network.RetroStopConsolePacket;
@@ -28,9 +30,14 @@ public final class ClientPacketHandlers {
 
     private ClientPacketHandlers() {}
 
+    private static final FrameChunkAssembler FRAME_ASSEMBLER = new FrameChunkAssembler();
     private static final Map<String, NetHandler<?>> HANDLERS = new HashMap<>();
 
     static {
+        HANDLERS.put(RetroPayloads.FRAME_CHUNK.id(), (NetHandler<RetroFrameChunk>) (pkt, ctx) -> {
+            RetroFramePacket frame = FRAME_ASSEMBLER.accept(pkt);
+            if (frame != null) handleFrame(frame, ctx);
+        });
         HANDLERS.put(RetroPayloads.FRAME.id(), (NetHandler<RetroFramePacket>) ClientPacketHandlers::handleFrame);
         HANDLERS.put(RetroPayloads.AUDIO.id(), (NetHandler<RetroAudioPayload>) ClientPacketHandlers::handleAudio);
         HANDLERS.put(RetroPayloads.STOP_CONSOLE.id(), (NetHandler<RetroStopConsolePacket>) ClientPacketHandlers::handleStopConsole);
@@ -64,6 +71,7 @@ public final class ClientPacketHandlers {
     }
 
     public static void handleStopConsole(RetroStopConsolePacket pkt, NetContext ctx) {
+        FRAME_ASSEMBLER.remove(pkt.consoleId());
         ctx.enqueue(() -> {
             ClientConsoles.dispose(pkt.consoleId());
             ClientAudioHandler.stop(pkt.consoleId());
@@ -78,7 +86,7 @@ public final class ClientPacketHandlers {
     public static void handleOpenScreen(RetroOpenScreenPacket pkt, NetContext ctx) {
         ctx.enqueue(() -> {
             if (pkt.romId() == null || pkt.romId().isEmpty()) {
-                Minecraft.getInstance().setScreen(new CoreSelectScreen(pkt.pos()));
+                Minecraft.getInstance().setScreen(ClientUi.library(pkt.pos()));
             } else {
                 Minecraft.getInstance().setScreen(
                         new TvScreen(pkt.pos(), pkt.consoleId(), pkt.romId(), pkt.systemId()));

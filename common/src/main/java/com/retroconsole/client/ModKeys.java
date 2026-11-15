@@ -66,6 +66,14 @@ public final class ModKeys {
     public static final KeyMapping BTN_LAYOUT = key("btn_layout", GLFW.GLFW_KEY_U);
     public static final KeyMapping BTN_LID = key("btn_lid", GLFW.GLFW_KEY_O);
 
+    /** Quick save/load state. Were hardcoded to F5/F6; now real mappings so they rebind (issue #7). */
+    public static final KeyMapping SAVE_STATE = key("save_state", GLFW.GLFW_KEY_F5);
+    public static final KeyMapping LOAD_STATE = key("load_state", GLFW.GLFW_KEY_F6);
+
+    /** Open / toggle the console menu panel and its controls page. Were hardcoded to F4/F1. */
+    public static final KeyMapping OPEN_MENU = key("open_menu", GLFW.GLFW_KEY_F4);
+    public static final KeyMapping OPEN_CONTROLS = key("open_controls", GLFW.GLFW_KEY_F1);
+
     /** Everything a loader has to register, in one list. */
     public static final List<KeyMapping> ALL = List.of(
             DPAD_UP, DPAD_DOWN, DPAD_LEFT, DPAD_RIGHT,
@@ -74,7 +82,8 @@ public final class ModKeys {
             BTN_START, BTN_SELECT,
             ANALOG_LEFT_UP, ANALOG_LEFT_DOWN, ANALOG_LEFT_LEFT, ANALOG_LEFT_RIGHT,
             ANALOG_RIGHT_UP, ANALOG_RIGHT_DOWN, ANALOG_RIGHT_LEFT, ANALOG_RIGHT_RIGHT,
-            BTN_MIC, BTN_LAYOUT, BTN_LID, BTN_CURSOR_TOUCH, VIRTUAL_STYLUS);
+            BTN_MIC, BTN_LAYOUT, BTN_LID, BTN_CURSOR_TOUCH, VIRTUAL_STYLUS,
+            SAVE_STATE, LOAD_STATE, OPEN_MENU, OPEN_CONTROLS);
 
     /**
      * True when {@code key} is the key currently bound to {@code mapping}.

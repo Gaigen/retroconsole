@@ -6,6 +6,7 @@ import com.retroconsole.config.RetroSettings;
 import com.retroconsole.network.NetAccess;
 import com.retroconsole.network.RetroAudioPayload;
 import com.retroconsole.network.RetroFramePacket;
+import com.retroconsole.network.RetroFrameChunk;
 import com.retroconsole.network.payload.RetroPayloads;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
@@ -41,6 +42,8 @@ public class FrameSenderThread extends Thread {
 
     private int[] buf;
     private int[] scaledBuf = new int[0];
+    private long nextFrameId;
+    private static final int MAX_SINGLE_FRAME_BYTES = 900 * 1024;
     private short[] audioChunk = new short[4096];
     private volatile boolean running = true;
     private long lastBatterySaveNs = System.nanoTime();
@@ -261,10 +264,7 @@ public class FrameSenderThread extends Thread {
             long buildStartNs = System.nanoTime();
             fullPacket = RetroFramePacket.create(consoleId, buf, w, h);
             noteVideoStats(fullPacket.compressedFrame().length, System.nanoTime() - buildStartNs);
-            for (ServerPlayer player : fullRes) {
-                if (!canSendToServer(server)) return;
-                NetAccess.sendToPlayer(player, RetroPayloads.FRAME, fullPacket);
-            }
+            sendFrame(server, fullPacket, fullRes);
         }
 
         if (!worldRes.isEmpty()) {
@@ -284,9 +284,25 @@ public class FrameSenderThread extends Thread {
                 noteVideoStats(worldPacket.compressedFrame().length,
                         System.nanoTime() - buildStartNs);
             }
-            for (ServerPlayer player : worldRes) {
+            sendFrame(server, worldPacket, worldRes);
+        }
+    }
+
+    /** Send large frames in ordered parts; never recompress or reduce resolution. */
+    private void sendFrame(MinecraftServer server, RetroFramePacket packet, List<ServerPlayer> recipients) {
+        if (packet.compressedFrame().length <= MAX_SINGLE_FRAME_BYTES) {
+            for (ServerPlayer player : recipients) {
                 if (!canSendToServer(server)) return;
-                NetAccess.sendToPlayer(player, RetroPayloads.FRAME, worldPacket);
+                if (!player.hasDisconnected()) NetAccess.sendToPlayer(player, RetroPayloads.FRAME, packet);
+            }
+        } else {
+            var chunks = RetroFrameChunk.split(packet, nextFrameId++);
+            for (ServerPlayer player : recipients) {
+                for (RetroFrameChunk chunk : chunks) {
+                    if (!canSendToServer(server)) return;
+                    if (player.hasDisconnected()) break;
+                    NetAccess.sendToPlayer(player, RetroPayloads.FRAME_CHUNK, chunk);
+                }
             }
         }
     }

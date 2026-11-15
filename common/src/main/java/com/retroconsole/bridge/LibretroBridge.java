@@ -222,6 +222,12 @@ public interface LibretroBridge extends Library {
 
     /** struct retro_game_info */
     class RetroGameInfo extends Structure {
+        public RetroGameInfo() {
+            // libretro paths are UTF-8. JNA otherwise uses native.encoding,
+            // which on Windows may be a legacy code page and corrupt ROM paths.
+            setStringEncoding(java.nio.charset.StandardCharsets.UTF_8.name());
+        }
+
         public String path;
         public Pointer data;
         public long size;

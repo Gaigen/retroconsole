@@ -8,7 +8,7 @@ import net.minecraftforge.network.simple.SimpleChannel;
 import io.netty.handler.codec.DecoderException;
 import java.util.function.Supplier;
 public final class ForgeNetwork {
- private static final String VERSION="1.20.1-1";
+ private static final String VERSION="1.20.1-2";
  public static final SimpleChannel CHANNEL=NetworkRegistry.newSimpleChannel(new ResourceLocation("retroconsole","main"),()->VERSION,VERSION::equals,VERSION::equals);
  public record ToClient(NetPayload<?> definition,Object value){}
  public record ToServer(NetPayload<?> definition,Object value){}

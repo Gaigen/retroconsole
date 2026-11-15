@@ -7,6 +7,7 @@ import com.retroconsole.network.RetroAudioSettingsPacket;
 import com.retroconsole.network.RetroCoopPacket;
 import com.retroconsole.network.RetroCoreSelectPacket;
 import com.retroconsole.network.RetroFramePacket;
+import com.retroconsole.network.RetroFrameChunk;
 import com.retroconsole.network.RetroInputPacket;
 import com.retroconsole.network.RetroKeyPacket;
 import com.retroconsole.network.RetroLibraryPacket;
@@ -44,6 +45,8 @@ public final class RetroPayloads {
 
     public static final NetPayload<RetroFramePacket> FRAME =
             NetPayload.of("frame", RetroFramePacket.STREAM_CODEC);
+    public static final NetPayload<RetroFrameChunk> FRAME_CHUNK =
+            NetPayload.of("frame_chunk", RetroFrameChunk.STREAM_CODEC);
     public static final NetPayload<RetroAudioPayload> AUDIO =
             NetPayload.of("audio", RetroAudioPayload.STREAM_CODEC);
     public static final NetPayload<RetroStopConsolePacket> STOP_CONSOLE =
@@ -83,7 +86,7 @@ public final class RetroPayloads {
             NetPayload.of("audio_settings", RetroAudioSettingsPacket.STREAM_CODEC);
 
     public static final List<NetPayload<?>> CLIENT_BOUND = List.<NetPayload<?>>of(
-            FRAME, AUDIO, STOP_CONSOLE, OPEN_SCREEN, LIBRARY, ART);
+            FRAME, AUDIO, STOP_CONSOLE, OPEN_SCREEN, LIBRARY, ART, FRAME_CHUNK);
 
     public static final List<NetPayload<?>> SERVER_BOUND = List.<NetPayload<?>>of(
             POINTER, KEY, MOUSE, INPUT, ANALOG, VIEW, CORE_SELECT, SAVE_STATE,
