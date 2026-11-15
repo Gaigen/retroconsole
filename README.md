@@ -8,7 +8,7 @@
 
 Forge and Fabric mod for **Minecraft 1.20.1** that runs [libretro](https://www.libretro.com/) cores inside the game. Place a console block in the world, pick a game from the built-in library UI, and play on an in-world TV screen or in a fullscreen viewer.
 
-**Version:** 0.3.4-backport-wip (early release — client testing still needed)
+**Version:** 0.3.4 (early release)
 
 ## Download
 
@@ -16,8 +16,8 @@ Build the JARs locally using the commands below, or use a matching build supplie
 
 | Loader | Build artifact |
 |--------|----------------|
-| Forge | `retroconsole-0.3.4-backport-wip+1.20.1-forge.jar` |
-| Fabric | `retroconsole-0.3.4-backport-wip+1.20.1-fabric.jar` (needs Fabric API) |
+| Forge | `retroconsole-0.3.4+1.20.1-forge.jar` |
+| Fabric | `retroconsole-0.3.4+1.20.1-fabric.jar` (needs Fabric API) |
 
 Requirements: Minecraft **1.20.1**, Forge **47.4.0** or Fabric Loader **0.16.14** and Fabric API **0.92.2+1.20.1**, and Java **17**. Libretro cores, BIOS and ROMs are not included. Back up worlds and saves before testing.
 
@@ -25,7 +25,7 @@ Requirements: Minecraft **1.20.1**, Forge **47.4.0** or Fabric Loader **0.16.14*
 
 - The new interface from 0.3.2 and rebindable save, load and console menu keys from 0.3.3 have been ported.
 - Citra save and Unicode ROM path fixes from 0.3.4 have been ported.
-- Forge and Fabric JARs build; automated tests and Forge GameTests pass. The 0.3.4 clients and actual Citra cores still require in-game testing.
+- Forge and Fabric JARs build; automated tests pass. Forge has been tested with Citra; the Fabric client and other cores still need in-game testing.
 
 ## What's new in 0.3.2
 
@@ -359,8 +359,8 @@ In the **library** UI: arrow keys navigate, Enter launches, right-click toggles 
 
 Outputs:
 
-- `forge/build/libs/retroconsole-0.3.4-backport-wip+1.20.1-forge.jar`
-- `fabric/build/libs/retroconsole-0.3.4-backport-wip+1.20.1-fabric.jar`
+- `forge/build/libs/retroconsole-0.3.4+1.20.1-forge.jar`
+- `fabric/build/libs/retroconsole-0.3.4+1.20.1-fabric.jar`
 
 To rebuild the optional headless GL native helper, use `./gradlew :forge:buildHeadlessGL` with the required platform compiler and EGL/OpenGL development headers installed. Ordinary Java builds use the prebuilt helpers.
 
